@@ -1,0 +1,2 @@
+# Normalize line endings: LF in the repository and in working trees (Prettier expects LF).
+* text=auto eol=lf
