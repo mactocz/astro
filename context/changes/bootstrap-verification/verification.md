@@ -304,3 +304,9 @@ Recorded 2026-10-13, after the user chose to adopt the starter's dependency set 
 | `npm audit`         | 0 CRITICAL, 9 HIGH, 2 MODERATE, 0 LOW (was 2/21/9/2 on the old lockfile); direct: `wrangler` (HIGH, non-major fix available)                       |
 | `npm run smoke`     | not run (needs a reachable Supabase instance, e.g. Docker + Supabase CLI)                                                                           |
 | esbuild / workerd   | binaries run (0.28.2 / 2026-09-11); their postinstall scripts are still not approved in `allowScripts`                                              |
+### Update (same day)
+
+- `.gitattributes` added (`* text=auto eol=lf`) and tracked files re-checked out as LF. `npm run lint` now exits 0 with the repository's own configuration (the earlier 1086 `Delete ␍` errors were the CRLF working tree).
+- `README.md` and `CLAUDE.md` synced with the starter (Astro 7, TypeScript 6, `npm run smoke`, CI jobs); both differed from upstream only by those lines.
+- Install scripts for `esbuild@0.28.1`, `esbuild@0.28.2` and `workerd@1.20260911.1` approved (pinned `allowScripts` in `package.json`); `npm rebuild` ran them successfully and `npm run build` still passes. Note: `npm install-scripts approve --dry-run` wrote the entries instead of only previewing them (npm 11.19.1).
+- `npm install-scripts ls`: no packages with unreviewed install scripts.
