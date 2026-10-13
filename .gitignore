@@ -26,3 +26,9 @@ pnpm-debug.log*
 
 # jetbrains setting folder
 .idea/
+
+# AI tooling and course materials (installed locally, not part of the app)
+.agents/
+.claude/
+.10x-cli.json
+skills-lock.json
