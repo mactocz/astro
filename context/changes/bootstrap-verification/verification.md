@@ -281,3 +281,26 @@ Useful manual steps in the meantime:
 - `git init` (if you have not already) to start your own repo history.
 - Review any `.scaffold` siblings the conflict policy created and decide which version of each file to keep.
 - Address audit findings per your project's risk tolerance - the full breakdown is in this log.
+## Post-bootstrap follow-up
+
+Recorded 2026-10-13, after the user chose to adopt the starter's dependency set (option A).
+
+**Reconciliation of the 47 `.scaffold` siblings**
+
+- 12 files replaced by the starter's versions: `package.json`, `package-lock.json`, `eslint.config.js`, `tsconfig.json`, `.github/workflows/ci.yml`, `src/components/{Topbar,Welcome}.astro`, `src/layouts/Layout.astro`, `src/pages/auth/{signin,signup,confirm-email}.astro`, `src/lib/supabase.ts`. The diffs held only formatter changes, version bumps and compatibility fixes; no project-specific application code existed yet.
+- `README.md` and `CLAUDE.md` were kept as they were. They still say Astro 6 / TypeScript 5, and `CLAUDE.md` lacks the `npm run smoke` line; the starter copies differ only by those lines.
+- 33 identical copies and the 2 retained copies were deleted; no `.scaffold` file remains.
+- Added `AGENTS.md` (a symlink to `CLAUDE.md`, as upstream) and `scripts/smoke.mjs`.
+
+**Verification after adoption** (Windows, Node v24.20.0, placeholder `SUPABASE_URL` / `SUPABASE_KEY`)
+
+| Gate                | Result                                                                                                                                              |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm ls --depth=0`  | consistent with the lockfile (exit 0)                                                                                                               |
+| `astro sync`        | ok                                                                                                                                                  |
+| `astro check`       | 0 errors, 0 warnings, 0 hints (29 files)                                                                                                            |
+| `npm run build`     | ok (server output, Cloudflare adapter)                                                                                                              |
+| `npm run lint`      | 1086 `prettier/prettier` errors, all "Delete ␍": the working tree is CRLF (`core.autocrlf=true`) and Prettier expects LF. With `endOfLine: auto` lint exits 0 |
+| `npm audit`         | 0 CRITICAL, 9 HIGH, 2 MODERATE, 0 LOW (was 2/21/9/2 on the old lockfile); direct: `wrangler` (HIGH, non-major fix available)                       |
+| `npm run smoke`     | not run (needs a reachable Supabase instance, e.g. Docker + Supabase CLI)                                                                           |
+| esbuild / workerd   | binaries run (0.28.2 / 2026-09-11); their postinstall scripts are still not approved in `allowScripts`                                              |
