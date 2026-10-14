@@ -84,7 +84,7 @@ Zespół wdrożył Shiftly na darmowym planie Workers, bo "stos był gotowy". W 
 - **`cloudflare-pages` jest nieaktualne** dla adaptera v14: polecenia z tutoriali dla Pages (`wrangler pages deploy`) nie pasują; właściwe to `npx astro build` i `npx wrangler deploy`.
 - **Serwer deweloperski Astro 6+ już działa na `workerd`**, więc osobne `wrangler dev` nie jest potrzebne; do testu zbliżonego do produkcji służy `astro preview`.
 - **Sekrety są opcjonalne w schemacie `astro:env`** (`SUPABASE_URL`, `SUPABASE_KEY` z `optional: true`), więc ich brak nie przerwie budowania, tylko pojawi się baner o braku konfiguracji w działającej aplikacji.
-- **Powiązania `SESSION` (KV) i `IMAGES`** są włączane przez adapter automatycznie (log budowania), ale przy pierwszym wdrożeniu trzeba sprawdzić, czy zasoby istnieją na koncie.
+- **Powiązania `SESSION` (KV) i `IMAGES`** są włączane przez adapter automatycznie. Zweryfikowane 2026-10-14: pierwszy `wrangler deploy` utworzył namespace KV `shiftly-session`, a `--dry-run` listuje `env.SESSION`, `env.IMAGES`, `env.ASSETS`. Uwaga: `--dry-run` nie wypisuje nazwy Workera, nazwę sprawdza się w `dist/server/wrangler.json` (musi być przebudowany po zmianie `name`).
 - **Brak kroku wdrożenia w CI:** `tech-stack.md` zakłada "auto-deploy-on-merge", a `.github/workflows/ci.yml` go nie ma; potrzebny Workers Builds albo job z `CLOUDFLARE_API_TOKEN` i `CLOUDFLARE_ACCOUNT_ID`.
 
 ## Operational Story
@@ -93,13 +93,13 @@ Zespół wdrożył Shiftly na darmowym planie Workers, bo "stos był gotowy". W 
 - **Secrets**: `npx wrangler secret put SUPABASE_URL` i `SUPABASE_KEY`; lokalnie `.dev.vars` (w `.gitignore`); zmienne niewrażliwe w bloku `vars` pliku `wrangler.jsonc`. Dostęp do wartości wynika z uprawnień konta Cloudflare.
 - **Rollback**: `npx wrangler rollback` (interaktywnie lub z ID wersji) albo Dashboard > Workers & Pages > Deployments > Rollback; wersja staje się aktywna natychmiast. Dotyczy tylko kodu (ostatnie 100 wersji), nie schematu bazy ani sekretów.
 - **Approval**: człowiek zatwierdza wdrożenie na produkcję, rotację kluczy Supabase, zmianę planu i migracje bazy; agent może bez nadzoru budować (`astro build`), lintować i sprawdzać (`astro check`). Reguła proponowana, nie wynika ze źródeł platformy.
-- **Logs**: `observability.enabled: true` jest już w `wrangler.jsonc` (Workers Logs w dashboardzie); polecenie `wrangler tail` do zweryfikowania w wersji wrangler 4.131.
+- **Logs**: `observability.enabled: true` jest już w `wrangler.jsonc` (Workers Logs w dashboardzie). Zweryfikowane 2026-10-14 na wrangler 4.131.1: `npx wrangler tail shiftly --format json` zwraca zdarzenia z polami `outcome`, `cpuTime`, `wallTime`, `exceptions`, `scriptVersion` (JSON wielowierszowy, parsować jako strumień obiektów). Do odczytu tylko do odczytu przez agenta.
 
 ## Risk Register
 
 | Risk | Source | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| Przekroczenie 10 ms CPU na darmowym planie | Devil's advocate / Research finding | H | H | Plan Paid ($5/mies.) przed pilotażem; test czasu generowania grafiku dla 30 osób |
+| Przekroczenie 10 ms CPU na darmowym planie | Devil's advocate / Research finding | H | H | Plan Paid ($5/mies.) przed pilotażem; test czasu generowania grafiku dla 30 osób. Pomiar 2026-10-14: 17 do 28 ms CPU przy pierwszym renderze stron auth, wynik `ok`; plan konta do ustalenia (zob. `context/deployment/deploy-plan.md`) |
 | Uzależnienie od powiązań Cloudflare (KV, Images) | Devil's advocate | M | M | Trzymać logikę domeny (walidator) w czystych funkcjach bez zależności od `cloudflare:workers` |
 | Zależność CommonJS nie działa w `workerd` | Devil's advocate / Research finding | M | M | Wybierać biblioteki ESM; testować w `astro dev` (workerd) od pierwszego dnia |
 | Rollback kodu niezgodny ze schematem bazy | Pre-mortem | M | H | Migracje wstecznie zgodne; nowy kod i migracja w osobnych wdrożeniach |

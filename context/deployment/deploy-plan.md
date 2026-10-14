@@ -7,7 +7,8 @@ worker_name: shiftly
 inputs:
   - context/foundation/infrastructure.md
   - context/foundation/tech-stack.md
-executed: pending
+executed: 2026-10-14
+url: https://shiftly.mto-astro.workers.dev
 ---
 
 # Plan pierwszego wdrożenia
@@ -83,3 +84,58 @@ usunąć osobno. Od drugiego wdrożenia: `npx wrangler rollback` (cofa kod, nie 
 - `/` 200 bez banera; `/dashboard` 302 `/auth/signin`; pełny cykl rejestracji i logowania na własnym adresie.
 - `wrangler tail`: brak `exceededCpu` i błędów 5xx w serii żądań.
 - Żaden sekret nie trafił do repozytorium, czatu ani logów.
+
+## Result
+
+Wykonano 2026-10-14. Adres produkcyjny: `https://shiftly.mto-astro.workers.dev`.
+
+### Wersje (`wrangler deployments list --name shiftly`)
+
+| Czas (UTC) | Źródło | Wersja |
+|---|---|---|
+| 05:19:40 | Upload (pierwsze wdrożenie, bez sekretów) | `e6165383` |
+| 05:35:18 | Secret Change | `8722280a` |
+| 05:35:32 | Secret Change (aktywna, 100%) | `724bac53` |
+
+### Sekrety i zasoby
+
+- Sekrety (tylko nazwy): `SUPABASE_URL`, `SUPABASE_KEY` (`wrangler secret list`).
+- Namespace KV `shiftly-session` utworzony automatycznie przy pierwszym `wrangler deploy` (binding `SESSION`).
+- Bindingi widoczne w dry-run i przy wdrożeniu: `env.SESSION` (KV), `env.IMAGES` (Images), `env.ASSETS`.
+- Paczka: 2067 KiB, po kompresji 456 KiB (28 modułów).
+
+### Kontrole
+
+| Kontrola | Wynik |
+|---|---|
+| `wrangler deploy --dry-run` | bez błędów; **nie wypisuje nazwy Workera**, nazwę potwierdza `dist/server/wrangler.json` (`shiftly`) |
+| `GET /` przed sekretami | 200, baner o braku konfiguracji Supabase (zgodnie z oczekiwaniem) |
+| `GET /` po sekretach | 200, bez banera |
+| `GET /dashboard` (anonim) | 302 na `/auth/signin` |
+| `GET /auth/signin`, `/auth/signup` | 200 |
+| Nieistniejąca ścieżka | 404 |
+| Rejestracja, logowanie | wykonane przez użytkownika na adresie produkcyjnym (zgłoszone, nie weryfikowane przez agenta) |
+| `wrangler tail` (15 żądań GET, wersja `724bac53`) | `outcome: ok` 15/15, 0 wyjątków |
+
+### Czas CPU z `wrangler tail`
+
+Próba 15 żądań: średnio 6,3 ms; wartości 1, 1, 1, 1, 2, 2, 2, 2, 2, 4, 4, 5, **17, 23, 28** ms.
+Trzy wartości powyżej 10 ms to pierwsze renderowania stron `/auth/signin` i `/auth/signup` w nowym izolacie
+(drugie wejście na tę samą stronę: 4 do 5 ms). Wszystkie zakończyły się `ok`.
+
+Plan konta (Free czy Paid) nie został ustalony. Jeśli to Free, wartości 17 do 28 ms przekraczają nominalny limit
+10 ms CPU, a mimo to nie dały błędu, więc ryzyko z `infrastructure.md` jest **niepotwierdzone i niewykluczone**.
+Do sprawdzenia w dashboardzie (Workers & Pages, Plans) i do powtórzenia pomiaru dla strony z grafikiem.
+
+### Ustalenia poza planem
+
+- **Istnieje starszy Worker `10x-astro-starter`** (wdrożony 2026-09-01, 5 wersji, w tym 2 zmiany sekretów),
+  odpowiada 200 pod `https://10x-astro-starter.mto-astro.workers.dev/`, z własnym KV `10x-astro-starter-session`.
+  To pozostałość sprzed tego wdrożenia, publiczna i z włączonymi sekretami. Decyzja użytkownika: zostawić czy usunąć
+  (`npx wrangler delete 10x-astro-starter`, osobno namespace KV).
+- Subdomena `mto-astro.workers.dev` istniała już na koncie, więc rejestracja subdomeny nie była potrzebna.
+- Tytuł strony nadal brzmi "10x Astro Starter"; `/sitemap-index.xml` zwraca 404 (brak `site` w konfiguracji).
+
+### Wycofanie
+
+Są trzy wersje, więc `npx wrangler rollback` ma cel (np. `e6165383`, wersja bez sekretów). Nie ćwiczone.
