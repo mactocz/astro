@@ -127,14 +127,25 @@ Plan konta (Free czy Paid) nie został ustalony. Jeśli to Free, wartości 17 do
 10 ms CPU, a mimo to nie dały błędu, więc ryzyko z `infrastructure.md` jest **niepotwierdzone i niewykluczone**.
 Do sprawdzenia w dashboardzie (Workers & Pages, Plans) i do powtórzenia pomiaru dla strony z grafikiem.
 
+### Decyzja o planie konta (2026-10-16)
+
+Użytkownik zdecydował: konto zostaje na planie **Workers Free**; Paid nie jest wymagany do dalszych prac.
+Obowiązują więc limity Free (10 ms CPU na żądanie, 100 000 żądań na dobę; odczyt ze strony limitów 2026-10-13).
+Pomiar z 2026-10-14 (17 do 28 ms, wynik `ok`) nie wywołał błędu, ale to próba 15 żądań, a nie gwarancja.
+
+Proponowany wyzwalacz powrotu do Paid: pierwszy wynik inny niż `ok` w `wrangler tail` (np. `exceededCpu`) albo błąd
+1102 w odpowiedzi. Pomiar powtórzyć po dodaniu pierwszej strony z grafikiem lub walidatora reguł.
+
 ### Ustalenia poza planem
 
 - **Istnieje starszy Worker `10x-astro-starter`** (wdrożony 2026-09-01, 5 wersji, w tym 2 zmiany sekretów),
   odpowiada 200 pod `https://10x-astro-starter.mto-astro.workers.dev/`, z własnym KV `10x-astro-starter-session`.
-  To pozostałość sprzed tego wdrożenia, publiczna i z włączonymi sekretami. Decyzja użytkownika: zostawić czy usunąć
-  (`npx wrangler delete 10x-astro-starter`, osobno namespace KV).
+  To pozostałość sprzed tego wdrożenia, publiczna i z włączonymi sekretami. Decyzja użytkownika (zostawić czy usunąć:
+  `npx wrangler delete 10x-astro-starter`, osobno namespace KV) jeszcze niepodjęta; stan na 2026-10-16: nadal odpowiada 200.
 - Subdomena `mto-astro.workers.dev` istniała już na koncie, więc rejestracja subdomeny nie była potrzebna.
 - Tytuł strony nadal brzmi "10x Astro Starter"; `/sitemap-index.xml` zwraca 404 (brak `site` w konfiguracji).
+- **Formatowanie `wrangler.jsonc`:** `wrangler deploy` przepisuje ten plik w katalogu roboczym (tabulatory, bez końcowego
+  newline) bez zmiany treści; zmianę formatowania należy odrzucić (`git restore wrangler.jsonc`), nie commitować.
 
 ### Wycofanie
 

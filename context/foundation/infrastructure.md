@@ -99,7 +99,7 @@ Zespół wdrożył Shiftly na darmowym planie Workers, bo "stos był gotowy". W 
 
 | Risk | Source | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| Przekroczenie 10 ms CPU na darmowym planie | Devil's advocate / Research finding | H | H | Plan Paid ($5/mies.) przed pilotażem; test czasu generowania grafiku dla 30 osób. Pomiar 2026-10-14: 17 do 28 ms CPU przy pierwszym renderze stron auth, wynik `ok`; plan konta do ustalenia (zob. `context/deployment/deploy-plan.md`) |
+| Przekroczenie 10 ms CPU na darmowym planie | Devil's advocate / Research finding | H | H | Plan Paid ($5/mies.) przed pilotażem; test czasu generowania grafiku dla 30 osób. Pomiar 2026-10-14: 17 do 28 ms CPU przy pierwszym renderze stron auth, wynik `ok`; decyzja użytkownika 2026-10-16: plan zostaje Free, proponowany wyzwalacz powrotu do Paid to pierwszy wynik inny niż `ok` w `wrangler tail` (zob. `context/deployment/deploy-plan.md`) |
 | Uzależnienie od powiązań Cloudflare (KV, Images) | Devil's advocate | M | M | Trzymać logikę domeny (walidator) w czystych funkcjach bez zależności od `cloudflare:workers` |
 | Zależność CommonJS nie działa w `workerd` | Devil's advocate / Research finding | M | M | Wybierać biblioteki ESM; testować w `astro dev` (workerd) od pierwszego dnia |
 | Rollback kodu niezgodny ze schematem bazy | Pre-mortem | M | H | Migracje wstecznie zgodne; nowy kod i migracja w osobnych wdrożeniach |
