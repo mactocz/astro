@@ -47,8 +47,8 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | proposed |
 | S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | proposed |
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | proposed |
-| S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | blocked  |
-| S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | blocked  |
+| S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | proposed |
+| S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | proposed |
 | S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | proposed |
 | S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | proposed |
 | S-09 | schedule-generation         | wygenerować propozycję grafiku bez nadpisywania wpisów ręcznych   | S-05, S-07, F-02 | FR-009, FR-011, US-01                         | proposed |
@@ -149,7 +149,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Parallel with:** F-02, S-10
 - **Blockers:** —
 - **Unknowns:** —
-- **Risk:** Model okresu tygodniowego i obsady jest podstawą wszystkich reguł; generowanie celowo wydzielone (S-09), żeby ten wycinek nie rozrósł się o algorytm.
+- **Risk:** Model okresu tygodniowego i obsady jest podstawą wszystkich reguł; generowanie celowo wydzielone (S-09), żeby ten wycinek nie rozrósł się o algorytm. Decyzja D6 (`work-time-rules.md`, 2026-10-16): grafik tygodniowy zostaje, a UI i dokumentacja informują, że nie zastępuje formalnego rozkładu czasu pracy (art. 129 § 3: co najmniej miesiąc, przekazany z tygodniowym wyprzedzeniem).
 - **Status:** proposed
 
 ### S-04: Ręczne obsadzanie zmian
@@ -166,17 +166,18 @@ Foundations below assume these are present and do NOT re-scaffold them.
 
 ### S-05: Naruszenia reguł na żywo
 
-- **Outcome:** Planista może zobaczyć podczas układania krytyczne naruszenia (odpoczynek dobowy, odpoczynek tygodniowy, limit godzin zależny od etatu) oraz ostrzeżenia o brakach obsady, każde z czytelnym powodem i miejscem w grafiku.
+- **Outcome:** Planista może zobaczyć podczas układania krytyczne naruszenia (odpoczynek dobowy, odpoczynek tygodniowy, limit 8 godzin na dobę, limit godzin zależny od etatu) oraz ostrzeżenia o brakach obsady, każde z czytelnym powodem i miejscem w grafiku.
 - **Change ID:** live-rule-violations
 - **PRD refs:** FR-010, US-01
 - **Prerequisites:** S-04, F-02
 - **Parallel with:** S-06, S-10
 - **Blockers:** —
 - **Unknowns:**
-  - Jakie są wartości progów (odpoczynek dobowy, odpoczynek tygodniowy, limit godzin zależny od etatu) oraz definicja doby i tygodnia, według źródeł prawnych? — Owner: user. Block: yes.
+  - Wartości progów i definicja doby i tygodnia — rozstrzygnięte 2026-10-16: wartości z tekstu Kodeksu pracy i decyzje D1 do D6 zaakceptowane przez autora, zob. `context/foundation/work-time-rules.md`. — Owner: user. Block: no.
+  - Jak liczyć dobę przy zmianach przechodzących przez północ (dokument zaleca potwierdzenie na przykładach testowych)? — Owner: user. Block: no.
   - Czy reguły i ich waga (krytyczne czy ostrzeżenie) odpowiadają potrzebom prawdziwego planisty (rozmowa z osobą, która układała taki grafik)? — Owner: user. Block: no.
-- **Risk:** To rdzeń hipotezy produktu i największe ryzyko poprawności: błędny próg po cichu daje fałszywe poczucie zgodności z prawem (PRD: narzędzie ostrzega, nie gwarantuje), więc wejdzie wcześnie, z testami powtarzalności z F-02.
-- **Status:** blocked
+- **Risk:** To rdzeń hipotezy produktu i największe ryzyko poprawności: błędna interpretacja progu po cichu daje fałszywe poczucie zgodności z prawem (PRD: narzędzie ostrzega, nie gwarantuje), więc wejdzie wcześnie, z testami powtarzalności z F-02 i przypadkami z `work-time-rules.md`. Zmiany dłuższe niż 8 godzin (system równoważny) są poza MVP i mają dawać czytelny komunikat, nie fałszywą zgodność.
+- **Status:** proposed
 
 ### S-06: Obciążenie względem normy
 
@@ -187,9 +188,10 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Parallel with:** S-05, S-07, S-08, S-09, S-10
 - **Blockers:** —
 - **Unknowns:**
-  - Jaka jest norma godzin dla pełnego etatu i jak liczyć ją dla niepełnego (ta sama decyzja o wartościach prawnych co w S-05)? — Owner: user. Block: yes.
-- **Risk:** Mierzalna równomierność obciążenia jest decyzją PRD (bez progu i bez blokady), więc wycinek jest mały; blokuje go tylko brak źródła normy.
-- **Status:** blocked
+  - Norma dla pełnego i niepełnego etatu — rozstrzygnięte 2026-10-16: wzór z art. 130 Kodeksu pracy, okres rozliczeniowy = miesiąc kalendarzowy, niepełny etat proporcjonalnie, święta wyliczane z ustawy (D2, D4, D5 w `context/foundation/work-time-rules.md`). — Owner: user. Block: no.
+  - Jak zestawiać grafik tygodniowy z miesięcznym okresem rozliczeniowym, gdy tydzień obejmuje dwa miesiące? — Owner: user. Block: no.
+- **Risk:** Mierzalna równomierność obciążenia jest decyzją PRD (bez progu i bez blokady), więc wycinek jest mały; proporcję dla niepełnego etatu potwierdza tylko źródło wtórne (biznes.gov.pl), więc kod ma trzymać ją w jednym miejscu, łatwym do poprawki.
+- **Status:** proposed
 
 ### S-07: Wpisywanie nieobecności
 
@@ -314,8 +316,8 @@ Foundations below assume these are present and do NOT re-scaffold them.
 | S-02       | shift-dictionary           | Słownik zmian                                                 | no                    | Czeka na F-01                                                 |
 | S-03       | weekly-schedule-draft      | Grafik tygodniowy: formularz, obsada na zmianę, lista         | no                    | Czeka na S-01, S-02                                           |
 | S-04       | manual-shift-assignment    | Ręczne obsadzanie zmian w grafiku roboczym                    | no                    | Czeka na S-03                                                 |
-| S-05       | live-rule-violations       | Naruszenia reguł i braki obsady na żywo                       | no                    | Zablokowane: wartości progów prawnych; czeka na S-04, F-02    |
-| S-06       | workload-vs-norm           | Suma godzin pracownika względem normy z etatu                 | no                    | Zablokowane: norma godzin wg etatu; czeka na S-04             |
+| S-05       | live-rule-violations       | Naruszenia reguł i braki obsady na żywo                       | no                    | Progi rozstrzygnięte (`work-time-rules.md`); czeka na S-04, F-02 |
+| S-06       | workload-vs-norm           | Suma godzin pracownika względem normy z etatu                 | no                    | Norma rozstrzygnięta (`work-time-rules.md`); czeka na S-04    |
 | S-07       | absence-entry              | Wpisywanie nieobecności i kolizja w grafiku                   | no                    | Czeka na S-01, S-05                                           |
 | S-08       | schedule-approval          | Zatwierdzanie grafiku z blokadą krytycznych naruszeń          | no                    | Czeka na S-05                                                 |
 | S-09       | schedule-generation        | Generowanie propozycji grafiku                                | no                    | Czeka na S-05, S-07, F-02                                     |
@@ -329,7 +331,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 ## Open Roadmap Questions
 
 1. **Brak zweryfikowanego, konkretnego przypadku.** — Ból pochodzi z ogólnej analizy procesu, nie z osobistego doświadczenia autora; brak rozmowy z osobą, która układała taki grafik w ostatnim miesiącu. Konsekwencja: PRD opiera się na hipotezie; ryzyko zbudowania reguł niepotwierdzonych przez planistę. Owner: autor. Block: roadmap-wide (najmocniej dotyka S-05).
-2. **Wartości progów zasad czasu pracy.** — Dokładne wartości (odpoczynek dobowy, odpoczynek tygodniowy, limit godzin zależny od etatu) trzeba zweryfikować w źródłach prawnych przed implementacją. Konsekwencja: walidacja nie da się zaimplementować i przetestować bez nich. Owner: autor. Block: S-05, S-06.
+2. **Wartości progów zasad czasu pracy.** — Dokładne wartości (odpoczynek dobowy, odpoczynek tygodniowy, limit godzin zależny od etatu) trzeba zweryfikować w źródłach prawnych przed implementacją. Konsekwencja: walidacja nie da się zaimplementować i przetestować bez nich. Owner: autor. **Rozwiązane 2026-10-16:** wartości z tekstu Kodeksu pracy (Dz.U. 2026 poz. 1245) i decyzje D1 do D6 zaakceptowane przez autora, zob. `context/foundation/work-time-rules.md`. Block: none.
 3. **Skala: `target_scale.qps` i `target_scale.data_volume` nie zostały określone.** — Dwie linie `# TODO` we frontmatterze PRD; liczba użytkowników (`medium`, dziesiątki do stu osób) jest ustalona. Owner: autor. Block: none (nie wpływa na kolejność).
 4. **Czy przed pilotażem potrzebne jest śledzenie błędów w aplikacji, poza logami Workera?** — Baseline: logi Workera są włączone, ale kod aplikacji nie loguje ani nie zgłasza błędów; PRD nie stawia na to osobnego wymagania. Owner: user. Block: none.
 5. **Które wycinki ze strumienia pracownika odciąć w pierwszej kolejności, jeśli zabraknie czasu?** — Przy celu "poprawność reguł przed szybkością" wycinki S-05 do S-09 są chronione; kandydaci do odcięcia to S-13 do S-15 (nieobecności i urlopy od strony pracownika), ale PRD świadomie odrzuciło zmniejszanie zakresu. Owner: user. Block: none.

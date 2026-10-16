@@ -1,6 +1,6 @@
 ---
 title: Reguły czasu pracy w MVP (Polska) — wartości progów i źródła
-status: draft — do weryfikacji przez autora (nie jest poradą prawną)
+status: decyzje D1-D6 zaakceptowane przez autora 2026-10-16; wartości z aktów zweryfikowane w tekście (nie jest poradą prawną)
 researched_at: 2026-10-16
 jurisdiction: PL, Kodeks pracy
 legal_state: Kodeks pracy, tekst jednolity Dz.U. 2026 poz. 1245 (stan na 2026-08-27); ustawa o dniach wolnych od pracy, tekst jednolity Dz.U. 2025 poz. 296
@@ -12,10 +12,11 @@ feeds: roadmap S-05 (live-rule-violations) i S-06 (workload-vs-norm); PRD Open Q
 Dokument odpowiada na Otwarte pytanie nr 2 z PRD ("wartości progów zasad czasu pracy") dla czterech reguł MVP:
 odpoczynek dobowy, odpoczynek tygodniowy, limit godzin zależny od etatu, kolizja z nieobecnością.
 Wartości pochodzą z **tekstu aktów**, nie z opracowań (wyjątek: niepełny etat, zob. niżej). Zestawienie przygotował
-asystent AI; zgodnie z PRD narzędzie **ostrzega i nie gwarantuje zgodności z prawem**, a wartości wymagają potwierdzenia
-przez autora (a w razie wątpliwości przez prawnika lub PIP) przed użyciem w produkcie.
+asystent AI; zgodnie z PRD narzędzie **ostrzega i nie gwarantuje zgodności z prawem**. Autor zaakceptował decyzje D1 do D6
+w proponowanym kształcie (2026-10-16); w razie wątpliwości co do interpretacji warto je potwierdzić u prawnika lub w PIP
+przed użyciem produktu przez prawdziwy zespół.
 
-Założenie (do potwierdzenia, D1): prawo polskie, podstawowy system czasu pracy (art. 129).
+Założenie (D1, zaakceptowane): prawo polskie, podstawowy system czasu pracy (art. 129).
 
 ## Wartości progów
 
@@ -69,20 +70,24 @@ próg spada do 24 h. Dokładną interpretację "doby" przy przechodzeniu przez p
 1. **Doba i tydzień zależą od rozkładu i okresu rozliczeniowego**, więc model musi znać godzinę rozpoczęcia pracy pracownika i początek okresu rozliczeniowego, a nie tylko dni kalendarzowe.
 2. **Pułapka dla zmian dłuższych niż 8 godzin.** Przy limicie 8 godzin na dobę zmiany 12-godzinne (częste w pracy zmianowej) wyjdą jako naruszenie, chyba że obowiązuje system równoważny (art. 135: do 12 godzin, okres rozliczeniowy do 1 miesiąca, a w uzasadnionych przypadkach do 3 lub 4). Systemy z art. 135 do 138 są poza regułami MVP (PRD: stała lista czterech reguł).
 3. **Rozkład czasu pracy ma wymagania formalne** (art. 129 § 3, w brzmieniu zmienionym ustawą z 4.12.2025, w mocy od 27.01.2026, Dz.U. 2026 poz. 25): rozkład sporządzony na okres krótszy niż okres rozliczeniowy obejmuje **co najmniej 1 miesiąc**, może być papierowy lub elektroniczny, a pracodawca przekazuje go pracownikowi **co najmniej na 1 tydzień przed** rozpoczęciem pracy w tym okresie. Art. 129 § 4 wymienia przypadki, gdy rozkładu sporządzać nie trzeba. PRD planuje grafiki **tygodniowe** (FR-008, FR-009): nie przesądzam, czy to sprzeczność, ale warto to skonsultować (D6).
-## Decyzje do zamknięcia (dla autora)
+## Decyzje (zaakceptowane przez autora 2026-10-16)
 
-Proponowane wartości domyślne oznaczone jako **propozycja**; to Twoja decyzja.
+Autor zaakceptował wszystkie sześć propozycji bez zmian.
 
-| # | Pytanie | Propozycja | Odblokowuje |
+| # | Pytanie | Decyzja | Dotyczy |
 | --- | --- | --- | --- |
 | D1 | Czy MVP zakłada prawo polskie i podstawowy system czasu pracy (art. 129)? | tak | S-05, S-06 |
-| D2 | Jaki jest okres rozliczeniowy w MVP i kiedy się zaczyna (od tego zależy "tydzień" i wymiar)? | jeden stały okres, np. miesiąc kalendarzowy | S-05, S-06 |
-| D3 | Czy limit **8 godzin na dobę** wchodzi do reguły "limit godzin"? PRD wymienia "limity czasu pracy i odpoczynku", a nie podaje, czy chodzi o dobę. | tak, z wyraźnym komunikatem, że systemy równoważne nie są obsługiwane | S-05 |
-| D4 | Czy niepełny etat to norma pełnoetatowa × ułamek etatu? (Kodeks nie podaje wzoru; źródło wtórne: biznes.gov.pl) | tak, proporcjonalnie | S-06 |
-| D5 | Skąd wziąć kalendarz świąt do wymiaru: wyliczać z ustawy (14 dat, w tym ruchome) czy wpisuje je planista? | wyliczać (lista z art. 1 ustawy) | S-06 |
-| D6 | Jak potraktować wymóg rozkładu na co najmniej miesiąc i przekazania z tygodniowym wyprzedzeniem (art. 129 § 3) względem grafików tygodniowych? | zostawić grafik tygodniowy, ale ostrzegać w UI i w dokumentacji, że to nie zastępuje formalnego rozkładu | S-03 (zapis), S-05 |
+| D2 | Jaki jest okres rozliczeniowy w MVP i kiedy się zaczyna (od tego zależy "tydzień" i wymiar)? | jeden stały okres: miesiąc kalendarzowy | S-05, S-06 |
+| D3 | Czy limit **8 godzin na dobę** wchodzi do reguły "limit godzin"? | tak, z wyraźnym komunikatem, że systemy równoważne nie są obsługiwane | S-05 |
+| D4 | Czy niepełny etat to norma pełnoetatowa × ułamek etatu? (Kodeks nie podaje wzoru; źródło wtórne: biznes.gov.pl) | tak, proporcjonalnie; proporcja w jednym miejscu kodu, łatwym do poprawki | S-06 |
+| D5 | Skąd wziąć kalendarz świąt do wymiaru? | wyliczać z art. 1 ustawy o dniach wolnych od pracy (w tym święta ruchome) | S-06 |
+| D6 | Jak potraktować wymóg rozkładu na co najmniej miesiąc i przekazania z tygodniowym wyprzedzeniem (art. 129 § 3) względem grafików tygodniowych? | grafik tygodniowy zostaje; UI i dokumentacja ostrzegają, że nie zastępuje formalnego rozkładu | S-03, S-05 |
 
-Po potwierdzeniu D1 do D5 niewiadome w S-05 i S-06 w roadmapie przestają blokować (status `blocked` zmieni się na `proposed`).
+Skutek w roadmapie: `S-05` i `S-06` zmieniły status z `blocked` na `proposed`; pytanie nr 2 z PRD jest rozwiązane.
+
+Pozostałe niewiadome, które ten dokument ujawnił, a nie rozstrzygnął (każda bez blokady planowania):
+interpretacja doby przy zmianach przechodzących przez północ (S-05) oraz zestawianie grafiku tygodniowego z miesięcznym okresem
+rozliczeniowym, gdy tydzień obejmuje dwa miesiące (S-06).
 
 ## Źródła
 
