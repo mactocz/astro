@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-10-16
+updated: 2026-10-19
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -42,7 +42,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | ID   | Change ID                   | Outcome (user can …)                                              | Prerequisites | PRD refs                                         | Status   |
 | ---- | --------------------------- | ----------------------------------------------------------------- | ------------- | ------------------------------------------------ | -------- |
 | F-01 | role-based-access           | (foundation) system rozróżnia planistę i pracownika               | —             | Access Control; NFR (własne dane pracownika)     | ready    |
-| F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | ready    |
+| F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | planning |
 | S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | proposed |
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | proposed |
 | S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | proposed |
@@ -110,7 +110,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Blockers:** —
 - **Unknowns:** —
 - **Risk:** Bez automatycznych testów zabezpieczenie PRD "te same dane, ten sam wynik" jest niesprawdzalne; celowo minimalne (uruchamianie, krok w CI, jeden przypadek), żeby nie budować warstwy testów na zapas.
-- **Status:** ready
+- **Status:** planning
 
 ## Slices
 
