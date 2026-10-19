@@ -1,7 +1,7 @@
 ---
 change_id: rules-verification-harness
 title: Rules verification harness
-status: planned
+status: implemented
 created: 2026-10-16
 updated: 2026-10-19
 archived_at: null

@@ -231,36 +231,36 @@ Brak danych do migracji. Wycofanie: cofnąć commity zmiany (zależności, `vite
 
 #### Automated
 
-- [ ] 1.1 Zależności instalują się z lockfile bez ostrzeżenia o niezatwierdzonych skryptach dla workerd: `npm ci`
-- [ ] 1.2 Testy sanity przechodzą w workerd: `npm test`
-- [ ] 1.3 Linting przechodzi: `npm run lint`
-- [ ] 1.4 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Zależności instalują się z lockfile bez ostrzeżenia o niezatwierdzonych skryptach dla workerd: `npm ci` — 7f752d3
+- [x] 1.2 Testy sanity przechodzą w workerd: `npm test` — 7f752d3
+- [x] 1.3 Linting przechodzi: `npm run lint` — 7f752d3
+- [x] 1.4 Sprawdzanie typów przechodzi: `npx astro check` — 7f752d3
 
 #### Manual
 
-- [ ] 1.5 Wpis `workerd@1.20261012.1` w `allowScripts` został przejrzany i zatwierdzony przez autora
+- [x] 1.5 Wpis `workerd@1.20261012.1` w `allowScripts` został przejrzany i zatwierdzony przez autora — 7f752d3
 
 ### Phase 2: Helper determinizmu
 
 #### Automated
 
-- [ ] 2.1 Testy determinizmu przechodzą (helper wykrywa zależność od kolejności i niedeterminizm): `npm test`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 2.1 Testy determinizmu przechodzą (helper wykrywa zależność od kolejności i niedeterminizm): `npm test` — 9e56b68
+- [x] 2.2 Linting przechodzi: `npm run lint` — 9e56b68
+- [x] 2.3 Sprawdzanie typów przechodzi: `npx astro check` — 9e56b68
 
 #### Manual
 
-- [ ] 2.4 Sygnatury w `determinism.ts` są czytelne i wystarczające dla zastosowania w S-05 (przegląd przez autora)
+- [x] 2.4 Sygnatury w `determinism.ts` są czytelne i wystarczające dla zastosowania w S-05 (przegląd przez autora) — 9e56b68
 
 ### Phase 3: CI i dokumentacja
 
 #### Automated
 
-- [ ] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 3.2 Plik `ci.yml` uruchamia `npm test` między `astro check` a `build`: `Select-String -Path .github/workflows/ci.yml -Pattern 'npm test'`
-- [ ] 3.3 `AGENTS.md` nie zawiera już twierdzenia o braku runnera testów: `Select-String -Path AGENTS.md -Pattern 'No unit-test runner'` nie zwraca dopasowań
+- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 5931550
+- [x] 3.2 Plik `ci.yml` uruchamia `npm test` między `astro check` a `build`: `Select-String -Path .github/workflows/ci.yml -Pattern 'npm test'` — 5931550
+- [x] 3.3 `AGENTS.md` nie zawiera już twierdzenia o braku runnera testów: `Select-String -Path AGENTS.md -Pattern 'No unit-test runner'` nie zwraca dopasowań — 5931550
 
 #### Manual
 
-- [ ] 3.4 Przebieg CI na pull requeście jest zielony, włącznie z nowym krokiem testów
-- [ ] 3.5 `npm test` działa w głównym katalogu autora po `npm ci`
+- [x] 3.4 Przebieg CI na pull requeście jest zielony, włącznie z nowym krokiem testów — 5931550
+- [x] 3.5 `npm test` działa w głównym katalogu autora po `npm ci` — 5931550
