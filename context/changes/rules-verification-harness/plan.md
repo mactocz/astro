@@ -244,21 +244,21 @@ Brak danych do migracji. Wycofanie: cofnąć commity zmiany (zależności, `vite
 
 #### Automated
 
-- [x] 2.1 Testy determinizmu przechodzą (helper wykrywa zależność od kolejności i niedeterminizm): `npm test`
-- [x] 2.2 Linting przechodzi: `npm run lint`
-- [x] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 2.1 Testy determinizmu przechodzą (helper wykrywa zależność od kolejności i niedeterminizm): `npm test` — 9e56b68
+- [x] 2.2 Linting przechodzi: `npm run lint` — 9e56b68
+- [x] 2.3 Sprawdzanie typów przechodzi: `npx astro check` — 9e56b68
 
 #### Manual
 
-- [x] 2.4 Sygnatury w `determinism.ts` są czytelne i wystarczające dla zastosowania w S-05 (przegląd przez autora)
+- [x] 2.4 Sygnatury w `determinism.ts` są czytelne i wystarczające dla zastosowania w S-05 (przegląd przez autora) — 9e56b68
 
 ### Phase 3: CI i dokumentacja
 
 #### Automated
 
-- [ ] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 3.2 Plik `ci.yml` uruchamia `npm test` między `astro check` a `build`: `Select-String -Path .github/workflows/ci.yml -Pattern 'npm test'`
-- [ ] 3.3 `AGENTS.md` nie zawiera już twierdzenia o braku runnera testów: `Select-String -Path AGENTS.md -Pattern 'No unit-test runner'` nie zwraca dopasowań
+- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 3.2 Plik `ci.yml` uruchamia `npm test` między `astro check` a `build`: `Select-String -Path .github/workflows/ci.yml -Pattern 'npm test'`
+- [x] 3.3 `AGENTS.md` nie zawiera już twierdzenia o braku runnera testów: `Select-String -Path AGENTS.md -Pattern 'No unit-test runner'` nie zwraca dopasowań
 
 #### Manual
 
