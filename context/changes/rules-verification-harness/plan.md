@@ -231,14 +231,14 @@ Brak danych do migracji. Wycofanie: cofnąć commity zmiany (zależności, `vite
 
 #### Automated
 
-- [ ] 1.1 Zależności instalują się z lockfile bez ostrzeżenia o niezatwierdzonych skryptach dla workerd: `npm ci`
-- [ ] 1.2 Testy sanity przechodzą w workerd: `npm test`
-- [ ] 1.3 Linting przechodzi: `npm run lint`
-- [ ] 1.4 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Zależności instalują się z lockfile bez ostrzeżenia o niezatwierdzonych skryptach dla workerd: `npm ci`
+- [x] 1.2 Testy sanity przechodzą w workerd: `npm test`
+- [x] 1.3 Linting przechodzi: `npm run lint`
+- [x] 1.4 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
-- [ ] 1.5 Wpis `workerd@1.20261012.1` w `allowScripts` został przejrzany i zatwierdzony przez autora
+- [x] 1.5 Wpis `workerd@1.20261012.1` w `allowScripts` został przejrzany i zatwierdzony przez autora
 
 ### Phase 2: Helper determinizmu
 
