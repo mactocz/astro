@@ -231,26 +231,26 @@ Brak danych do migracji. Wycofanie: cofnąć commity zmiany (zależności, `vite
 
 #### Automated
 
-- [x] 1.1 Zależności instalują się z lockfile bez ostrzeżenia o niezatwierdzonych skryptach dla workerd: `npm ci`
-- [x] 1.2 Testy sanity przechodzą w workerd: `npm test`
-- [x] 1.3 Linting przechodzi: `npm run lint`
-- [x] 1.4 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Zależności instalują się z lockfile bez ostrzeżenia o niezatwierdzonych skryptach dla workerd: `npm ci` — 7f752d3
+- [x] 1.2 Testy sanity przechodzą w workerd: `npm test` — 7f752d3
+- [x] 1.3 Linting przechodzi: `npm run lint` — 7f752d3
+- [x] 1.4 Sprawdzanie typów przechodzi: `npx astro check` — 7f752d3
 
 #### Manual
 
-- [x] 1.5 Wpis `workerd@1.20261012.1` w `allowScripts` został przejrzany i zatwierdzony przez autora
+- [x] 1.5 Wpis `workerd@1.20261012.1` w `allowScripts` został przejrzany i zatwierdzony przez autora — 7f752d3
 
 ### Phase 2: Helper determinizmu
 
 #### Automated
 
-- [ ] 2.1 Testy determinizmu przechodzą (helper wykrywa zależność od kolejności i niedeterminizm): `npm test`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 2.1 Testy determinizmu przechodzą (helper wykrywa zależność od kolejności i niedeterminizm): `npm test`
+- [x] 2.2 Linting przechodzi: `npm run lint`
+- [x] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
-- [ ] 2.4 Sygnatury w `determinism.ts` są czytelne i wystarczające dla zastosowania w S-05 (przegląd przez autora)
+- [x] 2.4 Sygnatury w `determinism.ts` są czytelne i wystarczające dla zastosowania w S-05 (przegląd przez autora)
 
 ### Phase 3: CI i dokumentacja
 
