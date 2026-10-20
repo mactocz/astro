@@ -28,7 +28,7 @@ Shiftly: a web app for planning shift schedules with labour-law checks (planner 
 
 - ESLint type-checked (`@eslint.config.js`) and Prettier (`@.prettierrc.json`: width 120, double quotes); `no-console` warns outside `scripts/`.
 - Use the `@/*` alias for `src/*` and `cn()` from `@/lib/utils` for class merging. No `"use client"` directives.
-- Required by `@CLAUDE.md` for new code, not yet present: hooks in `src/components/hooks/`, zod input validation in API routes (`zod` is not in `@package.json` yet), migrations in `supabase/migrations/` with RLS.
+- Required by `@CLAUDE.md` for new code, not yet present: hooks in `src/components/hooks/` and zod input validation in API routes (`zod` is not in `@package.json` yet).
 
 ## Commit & Pull Request Guidelines
 

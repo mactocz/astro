@@ -392,28 +392,28 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) przegląd kont w pane
 
 #### Automated
 
-- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 3.2 Kod aplikacji i dokumentacja nie odwołują się już do usuniętych tras rejestracji ani do `PROTECTED_ROUTES`: `Get-ChildItem src,README.md,CLAUDE.md,AGENTS.md -Recurse -File | Select-String -Pattern 'auth/signup|confirm-email|SignUpForm|PROTECTED_ROUTES'` nie zwraca dopasowań
-- [x] 3.3 Skrypt tworzy planistę na lokalnym Supabase, a ponowne uruchomienie dla tego samego adresu kończy się kodem 0 bez zmian: `node scripts/create-planner.mjs smoke-planner@example.com` (z `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PLANNER_PASSWORD`)
-- [x] 3.4 Skrypt odrzuca hasło niespełniające reguł NFR przed wysłaniem żądania: `$env:PLANNER_PASSWORD = "weak"; node scripts/create-planner.mjs x@example.com` kończy się kodem niezerowym
-- [x] 3.5 Smoke przechodzi razem z krokami zamkniętej rejestracji: `npm run smoke`
+- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 1155820
+- [x] 3.2 Kod aplikacji i dokumentacja nie odwołują się już do usuniętych tras rejestracji ani do `PROTECTED_ROUTES`: `Get-ChildItem src,README.md,CLAUDE.md,AGENTS.md -Recurse -File | Select-String -Pattern 'auth/signup|confirm-email|SignUpForm|PROTECTED_ROUTES'` nie zwraca dopasowań — 1155820
+- [x] 3.3 Skrypt tworzy planistę na lokalnym Supabase, a ponowne uruchomienie dla tego samego adresu kończy się kodem 0 bez zmian: `node scripts/create-planner.mjs smoke-planner@example.com` (z `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PLANNER_PASSWORD`) — 1155820
+- [x] 3.4 Skrypt odrzuca hasło niespełniające reguł NFR przed wysłaniem żądania: `$env:PLANNER_PASSWORD = "weak"; node scripts/create-planner.mjs x@example.com` kończy się kodem niezerowym — 1155820
+- [x] 3.5 Smoke przechodzi razem z krokami zamkniętej rejestracji: `npm run smoke` — 1155820
 
 #### Manual
 
 - [ ] 3.6 Hostowany Supabase: opcja zezwalająca na rejestrację nowych użytkowników jest wyłączona, a `POST <SUPABASE_URL>/auth/v1/signup` z kluczem anon zwraca błąd (wykonuje autor)
 - [ ] 3.7 Hostowany Supabase: pierwszy planista utworzony (lub istniejące konto awansowane) skryptem przed wdrożeniem; po ręcznym wdrożeniu loguje się na `https://shiftly.mto-astro.workers.dev` i widzi `/planner` (wykonuje autor)
-- [x] 3.8 Strona główna, logowanie i pasek górny nie zawierają już odnośników do rejestracji (przegląd wizualny)
+- [x] 3.8 Strona główna, logowanie i pasek górny nie zawierają już odnośników do rejestracji (przegląd wizualny) — 1155820
 
 ### Phase 4: Warstwa bazy
 
 #### Automated
 
-- [ ] 4.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [ ] 4.2 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 4.3 Smoke z krokami RPC i próbą podrobienia roli przechodzi: `npm run smoke`
+- [x] 4.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
+- [x] 4.2 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 4.3 Smoke z krokami RPC i próbą podrobienia roli przechodzi: `npm run smoke`
 
 #### Manual
 
-- [ ] 4.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list`
-- [ ] 4.5 Wzorzec polityk RLS w komentarzu migracji jest czytelny i wystarczający dla S-01 (przegląd przez autora)
+- [x] 4.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list`
+- [x] 4.5 Wzorzec polityk RLS w komentarzu migracji jest czytelny i wystarczający dla S-01 (przegląd przez autora)
 - [ ] 4.6 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki RPC)
