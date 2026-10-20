@@ -31,18 +31,29 @@ export interface DeterminismOptions<I> {
   variants?: readonly I[];
 }
 
+function isThenable(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "then" in value && typeof value.then === "function";
+}
+
 /**
  * Asserts that `fn` gives the same result on every repeated call with `input`, and on every equivalent variant of it.
  * Results are compared deeply and strictly, and array order matters, so a result must list its items in a canonical
  * order instead of echoing the input order. Returns the baseline result so callers can assert on its content.
+ * Throws instead of passing vacuously when `fn` returns a promise or when there is nothing to compare.
  */
 export function expectDeterministic<I, O>(fn: (input: I) => O, input: I, options: DeterminismOptions<I> = {}): O {
   const { runs = 5, variants = [] } = options;
   if (!Number.isInteger(runs) || runs < 1) {
     throw new RangeError(`expectDeterministic: runs must be a positive integer, got ${runs}`);
   }
+  if (runs === 1 && variants.length === 0) {
+    throw new RangeError("expectDeterministic: nothing to compare, use runs >= 2 or pass variants");
+  }
 
   const baseline = fn(input);
+  if (isThenable(baseline)) {
+    throw new TypeError("expectDeterministic: fn returned a promise, only synchronous functions are supported");
+  }
   for (let run = 2; run <= runs; run++) {
     expect(fn(input), `run ${run} of ${runs} differs from run 1 for the same input`).toStrictEqual(baseline);
   }
