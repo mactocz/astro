@@ -9,7 +9,7 @@ This file provides guidance to AI Agent when working with code in this repositor
 - `npm run preview` — preview production build
 - `npm run lint` — ESLint with type-checked rules
 - `npm run lint:fix` — auto-fix lint issues
-- `npm test` — Vitest in the Cloudflare workerd runtime (`@cloudflare/vitest-plugin`, config in `vitest.config.ts`); tests are `src/**/*.test.ts` next to the code, `npm run test:watch` for watch mode. Keep business rules as pure functions in `src/lib/services/` (no `astro:*` or `cloudflare:workers` imports) and use `expectDeterministic` from `src/lib/testing/determinism.ts` for repeatable results independent of input order.
+- `npm test` — Vitest in the Cloudflare workerd runtime (`@cloudflare/vitest-plugin`, config in `vitest.config.ts`); tests are `src/**/*.test.ts` next to the code but never under `src/pages/` (Astro would turn them into routes), `npm run test:watch` for watch mode. Keep business rules as pure functions in `src/lib/services/` (no `astro:*`, which does not resolve in tests, or `cloudflare:workers` imports) and use `expectDeterministic` from `src/lib/testing/determinism.ts` for repeatable results independent of input order.
 - `npm run format` — Prettier (includes prettier-plugin-astro + prettier-plugin-tailwindcss)
 - `npm run smoke` — dependency-free auth-flow smoke test (`scripts/smoke.mjs`) against a running server, `BASE_URL` env (default `http://localhost:4321`). Run after dependency upgrades; CI runs it against the production preview with a local Supabase.
 
