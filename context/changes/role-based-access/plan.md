@@ -50,15 +50,15 @@ Dodajemy do Shiftly rozróżnienie dwóch ról, planisty i pracownika (fundament
 
 ## Implementation Approach
 
-Od środka na zewnątrz: najpierw czysta, przetestowana polityka (Faza 1), potem jej podłączenie do middleware wraz ze smoke'iem, który tworzy prawdziwe konta w trzech stanach (planista, pracownik, konto bez roli) i sprawdza macierz odpowiedzi (Faza 2), potem zamknięcie rejestracji i skrypt pierwszego planisty (Faza 3), na końcu warstwa bazy z weryfikacją przez RPC (Faza 4). Każda faza kończy się zielonym CI.
+Od środka na zewnątrz: najpierw czysta, przetestowana polityka (Faza 1), potem jej podłączenie do middleware wraz ze smoke'iem, który tworzy prawdziwe konta w trzech stanach (planista, pracownik, konto bez roli) i sprawdza macierz odpowiedzi (Faza 2), potem zamknięcie rejestracji i skrypt pierwszego planisty (Faza 3), na końcu warstwa bazy z weryfikacją przez RPC (Faza 4). Każda faza kończy się zielonym CI. Fazy 2 i 3 trafiają do jednego PR i jednego wdrożenia: po Fazie 2 bramka już blokuje trasy rejestracji, a odnośniki do nich prowadzą na „Brak dostępu” aż do Fazy 3, więc samej Fazy 2 nie wdrażamy.
 
-Polityka "domyślnie odmów" zamienia pytanie "czy ta trasa jest chroniona?" na "czy ta trasa jest jawnie otwarta?": zapomniany wpis powoduje głośną odmowę (403), a nie wyciek danych. Konto z nieznaną wartością roli (np. `admin`) jest traktowane jak konto bez roli. Niezalogowany i zalogowany bez roli to dwa różne powody odmowy (401 i 403), a strona odmowy jest publiczna, aby przepisanie żądania w middleware nie wpadło w pętlę.
+Polityka "domyślnie odmów" zamienia pytanie "czy ta trasa jest chroniona?" na "czy ta trasa jest jawnie otwarta?": zapomniany wpis powoduje głośną odmowę (403), a nie wyciek danych. Konto z nieznaną wartością roli (np. `admin`) jest traktowane jak konto bez roli. Niezalogowany i zalogowany bez roli to dwa różne powody odmowy (401 i 403), a strona odmowy jest publiczna, aby dało się na nią wejść także bezpośrednio, bez kolejnej odmowy.
 
 Smoke przechodzi z modelu "zarejestruj się przez publiczną trasę" na "utwórz konto przez API administracyjne lokalnego Supabase" i odmawia uruchomienia przeciw nielokalnemu `SUPABASE_URL`, bo tworzy konta i potrzebuje klucza service-role.
 
 ## Critical Implementation Details
 
-**State sequencing (wdrożenie na produkcję):** kolejność ma znaczenie, bo konta na produkcji nie mają roli. Najpierw (z powłoki autora, przeciw hostowanemu projektowi) utworzyć lub awansować planistę skryptem, dopiero potem wdrożyć build z nową polityką (`npm run build`, `npx wrangler deploy`), na końcu wyłączyć rejestrację w panelu Supabase i zastosować migrację (`npx supabase db push`). Migracja jest addytywna, więc `wrangler rollback` kodu pozostaje bezpieczny.
+**State sequencing (wdrożenie na produkcję):** kolejność ma znaczenie, bo konta na produkcji nie mają roli. Najpierw przejrzeć konta hostowanego projektu w panelu Supabase i usunąć te, których autor nie rozpoznaje, potem (z powłoki autora, przeciw hostowanemu projektowi) utworzyć lub awansować planistę skryptem, dopiero potem wdrożyć build z nową polityką (`npm run build`, `npx wrangler deploy`), na końcu wyłączyć rejestrację w panelu Supabase i zastosować migrację (`npx supabase db push`). Migracja jest addytywna, więc `wrangler rollback` kodu pozostaje bezpieczny.
 
 **Security:** autoryzacja czyta wyłącznie `app_metadata.role` (i w SQL `auth.jwt() -> 'app_metadata'`); odczyt `user_metadata` byłby podatny na samodzielne nadanie roli przez użytkownika. Smoke ma to udowodnić próbą podrobienia (Faza 4).
 
@@ -92,7 +92,7 @@ Dodać czystą logikę rozstrzygania dostępu i parsowania roli wraz z tabelaryc
 | any-role | `/dashboard` | `planner` i `employee` |
 | planner-only | wszystko inne | tylko `planner` |
 
-Odmowa: `unauthenticated`, gdy `signedIn` jest fałszem; w przeciwnym razie `forbidden`. Zalogowany z `role === null` dostaje `forbidden` wszędzie poza warstwą public. Normalizacja przed dopasowaniem: pojedynczy końcowy `/` jest ignorowany (poza korzeniem `/`); dopasowanie jest dokładne i rozróżnia wielkość liter; ścieżka niezaczynająca się od `/` albo zawierająca `%`, `\`, znak sterujący, segment pusty (`//`) lub segment `.`/`..` nigdy nie pasuje do wpisu tabeli i wpada do warstwy planner-only. Tabela jest literałem obiektu (duplikat klucza jest błędem kompilacji), więc wynik nie zależy od kolejności wpisów.
+Odmowa: `unauthenticated`, gdy `signedIn` jest fałszem; w przeciwnym razie `forbidden`. Zalogowany z `role === null` dostaje `forbidden` wszędzie poza warstwą public. Normalizacja przed dopasowaniem: pojedynczy końcowy `/` jest ignorowany (poza korzeniem `/`); dopasowanie jest dokładne i rozróżnia wielkość liter; ścieżka niezaczynająca się od `/` albo zawierająca `%`, `\`, znak sterujący, segment pusty (`//`) lub segment `.`/`..` nigdy nie pasuje do wpisu tabeli i wpada do warstwy planner-only. Tabela jest literałem obiektu (duplikat klucza jest błędem kompilacji), więc wynik nie zależy od kolejności wpisów. Nieznane ścieżki i wewnętrzne trasy Astro (`/_image`, `/_server-islands/*`) oraz ścieżki spoza tabeli (np. `/favicon.ico`, `/robots.txt`, usunięte trasy rejestracji) są tylko dla planisty, więc anonim dostaje na nich 401 zamiast 404; wycinek, który potrzebuje publicznej ścieżki (np. strona publiczna z `<Image>` albo `server:defer`), wpisuje ją do tabeli.
 
 #### 3. Testy polityki
 
@@ -100,7 +100,7 @@ Odmowa: `unauthenticated`, gdy `signedIn` jest fałszem; w przeciwnym razie `for
 
 **Intent**: Udowodnić zachowanie dla każdej warstwy i każdego stanu użytkownika oraz dla ścieżek, które łatwo zepsuć.
 
-**Contract**: Przypadki (nazwane): (a) macierz warstwa × stan (anonim, konto bez roli, `employee`, `planner`) z oczekiwanym wynikiem i powodem odmowy; (b) higiena ścieżek: `/dashboard/` jak `/dashboard`; `/dashboardx`, `/dashboard/x`, `/auth/signin/extra`, `/Dashboard` wpadają do planner-only; `/%64ashboard`, `/dashboard%2F`, `//dashboard`, `/auth/signin/../../planner`, `/a\b`, `dashboard` (bez wiodącego `/`) i pusty ciąg nie dostają dostępu publicznego ani wspólnego; (c) domyślna odmowa: `/employees` (przyszła strona S-01) jest tylko dla planisty; (d) usunięta trasa `/auth/signup` jest tylko dla planisty; (e) `parseRole` dla wartości z kontraktu, w tym nieznane `"admin"` i `"Planner"`; (f) nieznana rola z `parseRole` traktowana jak brak roli daje `forbidden` poza public.
+**Contract**: Przypadki (nazwane): (a) macierz warstwa × stan (anonim, konto bez roli, `employee`, `planner`) z oczekiwanym wynikiem i powodem odmowy; (b) higiena ścieżek: `/dashboard/` jak `/dashboard`; `/dashboardx`, `/dashboard/x`, `/auth/signin/extra`, `/Dashboard` wpadają do planner-only; `/%64ashboard`, `/dashboard%2F`, `//dashboard`, `/auth/signin/../../planner`, `/a\b`, `dashboard` (bez wiodącego `/`) i pusty ciąg nie dostają dostępu publicznego ani wspólnego; (c) domyślna odmowa: `/employees` (przyszła strona S-01) jest tylko dla planisty; (d) `parseRole` dla wartości z kontraktu, w tym nieznane `"admin"` i `"Planner"`; (e) nieznana rola z `parseRole` traktowana jak brak roli daje `forbidden` poza public. Ani testy, ani `access.ts` (także w komentarzach) nie zawierają literałów z wzorca kryterium 3.2 (`auth/signup`, `confirm-email`, `SignUpForm`, `PROTECTED_ROUTES`), bo to kryterium przeszukuje `src`.
 
 ### Success Criteria:
 
@@ -130,9 +130,9 @@ Podłączyć politykę do middleware, dodać stronę odmowy, minimalną stronę 
 
 **File**: `src/env.d.ts`
 
-**Intent**: Udostępnić rolę i powód odmowy stronom i middleware w sposób typowany.
+**Intent**: Udostępnić rolę stronom i middleware w sposób typowany.
 
-**Contract**: `Locals` zyskuje `role: import("./types").Role | null` oraz `denial: import("./lib/services/access").AccessDenial | null`.
+**Contract**: `Locals` zyskuje `role: import("./types").Role | null`. Powód odmowy nie jest polem `Locals`: strona odmowy wyprowadza status (401 lub 403) z `Astro.locals.user`, bo stan ustawiany przed przepisaniem żądania nie jest niezawodnym nośnikiem (zob. zmiana 2).
 
 #### 2. Middleware
 
@@ -140,7 +140,7 @@ Podłączyć politykę do middleware, dodać stronę odmowy, minimalną stronę 
 
 **Intent**: Zastąpić listę `PROTECTED_ROUTES` wywołaniem `decideAccess` i obsłużyć odmowę.
 
-**Contract**: Po wyznaczeniu `locals.user` ustawić `locals.role = parseRole(user?.app_metadata.role)` (wyłącznie `app_metadata`) oraz `locals.denial = null`. Gdy `supabase` jest `null`, użytkownik to `null` (jak dziś). Dla odmowy: ścieżka zaczynająca się od `/api/` zwraca `Response` z JSON `{ "error": "<reason>" }`, statusem 401 (`unauthenticated`) lub 403 (`forbidden`) i `Cache-Control: no-store`; pozostałe ścieżki ustawiają `locals.denial` i wywołują `context.rewrite("/access-denied")`. Decyzja zapada przed routingiem, więc nieistniejąca ścieżka planisty także daje 401/403, a nie 404. `PROTECTED_ROUTES` znika.
+**Contract**: Po wyznaczeniu `locals.user` ustawić `locals.role = parseRole(user?.app_metadata.role)` (wyłącznie `app_metadata`). Gdy `supabase` jest `null`, użytkownik to `null` (jak dziś). Dla odmowy: ścieżka zaczynająca się od `/api/` zwraca `Response` z JSON `{ "error": "<reason>" }`, statusem 401 (`unauthenticated`) lub 403 (`forbidden`) i `Cache-Control: no-store`; pozostałe ścieżki zwracają `next("/access-denied")` (przepisanie przez argument `next`, nie `context.rewrite()`: w Astro 7 `rewrite()` ponownie uruchamia middleware na wspólnym `locals`, dokłada drugie `getUser()` na ciasteczkach z nagłówka żądania i kasuje stan ustawiony w pierwszym przebiegu, a `next(payload)` nie wchodzi ponownie w middleware, zachowuje `Astro.locals` i ciasteczka ustawione przez `getUser()`). Decyzja zapada przed routingiem, więc nieistniejąca ścieżka planisty także daje 401/403, a nie 404. `PROTECTED_ROUTES` znika.
 
 #### 3. Strona odmowy
 
@@ -148,13 +148,13 @@ Podłączyć politykę do middleware, dodać stronę odmowy, minimalną stronę 
 
 **Intent**: Pokazać komunikat o braku dostępu zgodnie z PRD, bez przekierowania.
 
-**Contract**: Strona publiczna (jest w tabeli polityki, więc przepisanie nie zapętla się). Ustawia `Astro.response.status` na 401 dla `locals.denial === "unauthenticated"`, a w pozostałych przypadkach (także bezpośrednie wejście) na 403, oraz `Cache-Control: no-store`. Treść po polsku: "Brak dostępu"; dla niezalogowanego odnośnik do `/auth/signin`; dla zalogowanego adres e-mail, rola (lub "brak roli") i formularz wylogowania `POST /api/auth/signout`. Styl jak istniejące strony auth (`src/pages/dashboard.astro`).
+**Contract**: Strona publiczna (jest w tabeli polityki, więc dostępna także przy bezpośrednim wejściu). Ustawia `Astro.response.status` we frontmatterze na 403, gdy `Astro.locals.user` jest ustawiony, a w przeciwnym razie na 401 (także przy bezpośrednim wejściu: anonim 401, zalogowany 403), oraz `Cache-Control: no-store`. Treść po polsku: "Brak dostępu"; dla niezalogowanego odnośnik do `/auth/signin`; dla zalogowanego adres e-mail, rola (lub "brak roli") i formularz wylogowania `POST /api/auth/signout`. Styl jak istniejące strony auth (`src/pages/dashboard.astro`).
 
 #### 4. Strona planisty i dashboard
 
 **File**: `src/pages/planner/index.astro` (nowy), `src/pages/dashboard.astro`
 
-**Intent**: Dać polityce prawdziwą stronę tylko dla planisty (cel dla smoke i punkt startowy planisty po logowaniu) oraz pokazać użytkownikowi jego rolę.
+**Intent**: Dać polityce prawdziwą stronę tylko dla planisty (cel dla smoke i strona dostępna z `/dashboard` dla planisty; logowanie nadal kieruje na `/`) oraz pokazać użytkownikowi jego rolę.
 
 **Contract**: `/planner` nie występuje w tabeli polityki (chroni ją reguła domyślna); pokazuje po polsku "Panel planisty", adres e-mail i wylogowanie, z komentarzem, że S-01 zastępuje ją nawigacją. `/dashboard` pokazuje rolę (planista/pracownik) i tylko dla `planner` odnośnik do `/planner`.
 
@@ -164,7 +164,7 @@ Podłączyć politykę do middleware, dodać stronę odmowy, minimalną stronę 
 
 **Intent**: Zastąpić zakładanie konta publiczną rejestracją tworzeniem kont przez API administracyjne lokalnego Supabase i sprawdzić, że bramka dostępu działa dla każdego stanu użytkownika.
 
-**Contract**: Wymaga zmiennych `SUPABASE_URL`, `SUPABASE_KEY` (anon) i `SUPABASE_SERVICE_ROLE_KEY`; kończy się błędem przed pierwszym żądaniem, gdy ich brakuje albo gdy host `SUPABASE_URL` nie jest `127.0.0.1` ani `localhost`. Konta tworzy `POST {SUPABASE_URL}/auth/v1/admin/users` (`email_confirm: true`, `app_metadata: { role }`, bez roli dla trzeciego konta) z nagłówkami `apikey` i `Authorization: Bearer <service key>`. Każdy aktor ma własny słoik ciasteczek. Oczekiwane statusy: anonim: `/` 200, `/dashboard` 401, `/planner` 401, `/employees` 401, `GET /api/employees` 401 z `content-type: application/json`; konto bez roli po zalogowaniu: `/dashboard` 403, `/planner` 403; pracownik: `/dashboard` 200, `/planner` 403, `/planner/` 403, `/%70lanner` 403, `//planner` 403, `/employees` 403; planista: `/dashboard` 200, `/planner` 200, `/planner/` 200, `/employees` 404 (bramka przepuszcza, strony nie ma); po wylogowaniu `/dashboard` znów 401; zły hasło nadal daje 302 na `/auth/signin?error=`. Krok z publiczną rejestracją znika (trasa jeszcze istnieje do Fazy 3, ale nie jest już ćwiczona).
+**Contract**: Wymaga zmiennych `SUPABASE_URL`, `SUPABASE_KEY` (anon) i `SUPABASE_SERVICE_ROLE_KEY`; kończy się błędem przed pierwszym żądaniem, gdy ich brakuje albo gdy host `SUPABASE_URL` nie jest `127.0.0.1` ani `localhost`. Strażnik widzi tylko własny `SUPABASE_URL`, a aplikacja pod testem czyta `.env`/`.dev.vars`, które muszą wskazywać ten sam lokalny stos (wartości z `supabase status -o env`, jak w `ci.yml:44-48`); gdy konto utworzone przez API administracyjne nie może się zalogować w pierwszym kroku logowania, smoke wypisuje „aplikacja pod testem nie używa SUPABASE_URL”. Konta tworzy `POST {SUPABASE_URL}/auth/v1/admin/users` (`email_confirm: true`, `app_metadata: { role }`, bez roli dla trzeciego konta) z nagłówkami `apikey` i `Authorization: Bearer <service key>`. Każdy aktor ma własny słoik ciasteczek. Oczekiwane statusy: anonim: `/` 200, `/dashboard` 401, `/planner` 401, `/employees` 401, `GET /api/employees` 401 z `content-type: application/json`; konto bez roli po zalogowaniu: `/dashboard` 403, `/planner` 403; pracownik: `/dashboard` 200, `/planner` 403, `/planner/` 403, `/%70lanner` 403, `//planner` 403, `/employees` 403; planista: `/dashboard` 200, `/planner` 200, `/planner/` 200, `/employees` 404 (bramka przepuszcza, strony nie ma); po wylogowaniu `/dashboard` znów 401; zły hasło nadal daje 302 na `/auth/signin?error=`. Krok z publiczną rejestracją znika (trasa jest już zablokowana bramką i zostaje usunięta w Fazie 3; smoke jej nie ćwiczy).
 
 #### 6. CI: klucz service-role tylko dla smoke
 
@@ -176,18 +176,18 @@ Podłączyć politykę do middleware, dodać stronę odmowy, minimalną stronę 
 
 #### 7. Dokumentacja
 
-**File**: `CLAUDE.md` (Auth flow, linia 29; Commands, linia 14), `AGENTS.md` (linie 15, 23)
+**File**: `CLAUDE.md` (Auth flow, linia 29; Commands, linia 14), `AGENTS.md` (linie 15, 23), `README.md` (linie 58, 148, 150, 172, 179)
 
 **Intent**: Opisać nowy model: middleware z polityką, role, nowe wymagania smoke.
 
-**Contract**: Zastąpić opis `PROTECTED_ROUTES` opisem `decideAccess` w `src/lib/services/access.ts` (default-deny, role w `app_metadata`) i dopisać do opisu smoke potrzebne zmienne oraz zakaz uruchamiania na hostowanym projekcie.
+**Contract**: Zastąpić opis `PROTECTED_ROUTES` opisem `decideAccess` w `src/lib/services/access.ts` (default-deny, role w `app_metadata`) i dopisać do opisu smoke potrzebne zmienne oraz zakaz uruchamiania na hostowanym projekcie. W `README.md`: linia 150 (zamiast tablicy `PROTECTED_ROUTES`: domyślna odmowa i tabela w `access.ts`), linia 148 (wiersz `/dashboard` nie przekierowuje już, tylko pokazuje „Brak dostępu”: 401 dla anonima, 403 dla konta bez roli), linie 58, 172 i 179 (smoke tworzy konta przez API administracyjne lokalnego Supabase, potrzebne zmienne, brak rejestracji).
 
 ### Success Criteria:
 
 #### Automated Verification:
 
 - Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- Smoke z macierzą ról przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview`, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`): `npm run smoke`
+- Smoke z macierzą ról przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
 - Smoke odmawia uruchomienia przeciw nielokalnemu adresowi, zanim wyśle jakiekolwiek żądanie: `$env:SUPABASE_URL = "https://example.supabase.co"; npm run smoke` kończy się kodem niezerowym
 
 #### Manual Verification:
@@ -231,7 +231,7 @@ Usunąć publiczną rejestrację z aplikacji i z konfiguracji Supabase oraz doda
 
 **Intent**: Dać autorowi bezpieczny, bezzależnościowy sposób utworzenia pierwszego planisty na hostowanym projekcie i awansowania istniejących kont (w tym kont testowych z produkcji).
 
-**Contract**: Użycie `node scripts/create-planner.mjs <email>`; zmienne środowiskowe `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (zawsze) i `PLANNER_PASSWORD` (wymagana tylko dla nowego konta). Skrypt wypisuje docelowy host, sprawdza hasło względem NFR z PRD (co najmniej 8 znaków, duża litera, cyfra, znak specjalny) przed jakimkolwiek żądaniem, tworzy konto (`email_confirm: true`, `app_metadata: { role: "planner" }`) albo, gdy adres już istnieje, ustawia `app_metadata.role = "planner"` bez zmiany hasła. Powtórne uruchomienie jest idempotentne (kod 0). Nigdy nie wypisuje hasła ani klucza; kody wyjścia niezerowe dla błędów wejścia i odpowiedzi API.
+**Contract**: Użycie `node scripts/create-planner.mjs <email>`; zmienne środowiskowe `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (zawsze) i `PLANNER_PASSWORD` (wymagana tylko dla nowego konta). Skrypt wypisuje docelowy host, sprawdza hasło względem NFR z PRD (co najmniej 8 znaków, duża litera, cyfra, znak specjalny) przed jakimkolwiek żądaniem, tworzy konto (`email_confirm: true`, `app_metadata: { role: "planner" }`) albo, gdy `POST /auth/v1/admin/users` odpowie `email_exists`, znajduje konto (nie zakładamy wyszukiwania po e-mailu) przez `GET /auth/v1/admin/users?page=N&per_page=1000`, kolejne strony, aż adres zgodzi się bez względu na wielkość liter, i `PUT /auth/v1/admin/users/{id}` ustawia `app_metadata: { role: "planner" }` bez zmiany hasła; brak dopasowania kończy się kodem niezerowym. Powtórne uruchomienie jest idempotentne (kod 0). Nigdy nie wypisuje hasła ani klucza; kody wyjścia niezerowe dla błędów wejścia i odpowiedzi API.
 
 #### 4. Smoke: rejestracja zamknięta
 
@@ -239,22 +239,22 @@ Usunąć publiczną rejestrację z aplikacji i z konfiguracji Supabase oraz doda
 
 **Intent**: Wykrywać przypadkowe ponowne otwarcie rejestracji.
 
-**Contract**: Dodać kroki: `POST /api/auth/signup` jako anonim daje 401 z JSON (trasa usunięta, bramka odmawia), a bezpośrednie `POST {SUPABASE_URL}/auth/v1/signup` z kluczem anon jest odrzucone (status 4xx).
+**Contract**: Dodać kroki: `POST /api/auth/signup` jako anonim daje 401 z JSON (sprawdzenie bramki: ten krok przechodzi już po Fazie 2, a usunięcie trasy dowodzi kryterium 3.2), a bezpośrednie `POST {SUPABASE_URL}/auth/v1/signup` z kluczem anon jest odrzucone (status 4xx).
 
 #### 5. Dokumentacja
 
-**File**: `CLAUDE.md` (Auth flow, linie 30-31), `README.md` (tabela tras, linie 146-147), `AGENTS.md`
+**File**: `CLAUDE.md` (Auth flow, linie 30-31), `README.md` (linie 131-139 oraz tabela tras, linie 146-147), `AGENTS.md`
 
 **Intent**: Usunąć opisy nieistniejących tras i opisać, jak utworzyć pierwszego planistę.
 
-**Contract**: Usunąć `signup` i `confirm-email` z list tras; dodać do sekcji Auth flow w `CLAUDE.md` krótki opis `scripts/create-planner.mjs` (zmienne, że klucz service-role nigdy nie trafia do `.env`/`.dev.vars`/sekretów Workera) oraz uwagę, że rejestracja jest zamknięta.
+**Contract**: Usunąć `signup` i `confirm-email` z list tras oraz przepisać sekcję README „Email confirmation in local development” (linie 131-139), która opisuje logowanie po rejestracji (konta tworzy API administracyjne z `email_confirm: true`); dodać do sekcji Auth flow w `CLAUDE.md` krótki opis `scripts/create-planner.mjs` (zmienne, że klucz service-role nigdy nie trafia do `.env`/`.dev.vars`/sekretów Workera) oraz uwagę, że rejestracja jest zamknięta.
 
 ### Success Criteria:
 
 #### Automated Verification:
 
 - Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- Kod aplikacji nie odwołuje się już do usuniętych tras rejestracji: `Get-ChildItem src -Recurse -File | Select-String -Pattern 'auth/signup|confirm-email|SignUpForm'` nie zwraca dopasowań
+- Kod aplikacji i dokumentacja nie odwołują się już do usuniętych tras rejestracji ani do `PROTECTED_ROUTES`: `Get-ChildItem src,README.md,CLAUDE.md,AGENTS.md -Recurse -File | Select-String -Pattern 'auth/signup|confirm-email|SignUpForm|PROTECTED_ROUTES'` nie zwraca dopasowań
 - Skrypt tworzy planistę na lokalnym Supabase, a ponowne uruchomienie dla tego samego adresu kończy się kodem 0 bez zmian: `node scripts/create-planner.mjs smoke-planner@example.com` (z `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PLANNER_PASSWORD`)
 - Skrypt odrzuca hasło niespełniające reguł NFR przed wysłaniem żądania: `$env:PLANNER_PASSWORD = "weak"; node scripts/create-planner.mjs x@example.com` kończy się kodem niezerowym
 - Smoke przechodzi razem z krokami zamkniętej rejestracji: `npm run smoke`
@@ -347,7 +347,7 @@ Brak dodatkowych zapytań do bazy w żądaniu: rola pochodzi z `getUser()`, któ
 
 ## Migration Notes
 
-Kolejność wdrożenia na produkcję (wykonuje autor): (1) `create-planner.mjs` przeciw hostowanemu projektowi (utworzenie lub awans), (2) `npm run build` i `npx wrangler deploy`, (3) wyłączenie rejestracji w panelu Supabase, (4) `npx supabase db push`. Istniejące konta bez roli po wdrożeniu widzą tylko strony publiczne i "Brak dostępu"; awansuje się je ponownym uruchomieniem skryptu. Wycofanie: `npx wrangler rollback` cofa kod; migracja jest addytywna (dwie funkcje), więc poprzednia wersja kodu działa na nowym schemacie, a ponowne włączenie rejestracji wymaga ręcznej zmiany w panelu Supabase. Rola w JWT odświeża się z tokenem (do godziny), więc awans lub odebranie roli dociera do polityk RLS z opóźnieniem, a do stron aplikacji od razu.
+Kolejność wdrożenia na produkcję (wykonuje autor): (1) przegląd kont w panelu Supabase (Authentication → Users) i usunięcie tych, których autor nie rozpoznaje (strona jest publiczna od 2026-10-14, a zaproszenie w S-10 po adresie, który ktoś już zarejestrował z własnym hasłem, trafiłoby na `email_exists`), (2) `create-planner.mjs` przeciw hostowanemu projektowi (utworzenie lub awans), (3) `npm run build` i `npx wrangler deploy`, (4) wyłączenie rejestracji w panelu Supabase, (5) `npx supabase db push`. Istniejące konta bez roli po wdrożeniu widzą tylko strony publiczne i "Brak dostępu"; awansuje się je ponownym uruchomieniem skryptu. Wycofanie: `npx wrangler rollback` cofa kod; migracja jest addytywna (dwie funkcje), więc poprzednia wersja kodu działa na nowym schemacie, a ponowne włączenie rejestracji wymaga ręcznej zmiany w panelu Supabase. Rola w JWT odświeża się z tokenem (do godziny), więc awans lub odebranie roli dociera do polityk RLS z opóźnieniem, a do stron aplikacji od razu.
 
 ## References
 
@@ -378,7 +378,7 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `create-planner.mjs` 
 #### Automated
 
 - [ ] 2.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 2.2 Smoke z macierzą ról przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview`, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`): `npm run smoke`
+- [ ] 2.2 Smoke z macierzą ról przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
 - [ ] 2.3 Smoke odmawia uruchomienia przeciw nielokalnemu adresowi, zanim wyśle jakiekolwiek żądanie: `$env:SUPABASE_URL = "https://example.supabase.co"; npm run smoke` kończy się kodem niezerowym
 
 #### Manual
@@ -393,7 +393,7 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `create-planner.mjs` 
 #### Automated
 
 - [ ] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 3.2 Kod aplikacji nie odwołuje się już do usuniętych tras rejestracji: `Get-ChildItem src -Recurse -File | Select-String -Pattern 'auth/signup|confirm-email|SignUpForm'` nie zwraca dopasowań
+- [ ] 3.2 Kod aplikacji i dokumentacja nie odwołują się już do usuniętych tras rejestracji ani do `PROTECTED_ROUTES`: `Get-ChildItem src,README.md,CLAUDE.md,AGENTS.md -Recurse -File | Select-String -Pattern 'auth/signup|confirm-email|SignUpForm|PROTECTED_ROUTES'` nie zwraca dopasowań
 - [ ] 3.3 Skrypt tworzy planistę na lokalnym Supabase, a ponowne uruchomienie dla tego samego adresu kończy się kodem 0 bez zmian: `node scripts/create-planner.mjs smoke-planner@example.com` (z `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PLANNER_PASSWORD`)
 - [ ] 3.4 Skrypt odrzuca hasło niespełniające reguł NFR przed wysłaniem żądania: `$env:PLANNER_PASSWORD = "weak"; node scripts/create-planner.mjs x@example.com` kończy się kodem niezerowym
 - [ ] 3.5 Smoke przechodzi razem z krokami zamkniętej rejestracji: `npm run smoke`
