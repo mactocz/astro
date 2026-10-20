@@ -11,7 +11,7 @@ This file provides guidance to AI Agent when working with code in this repositor
 - `npm run lint:fix` — auto-fix lint issues
 - `npm test` — Vitest in the Cloudflare workerd runtime (`@cloudflare/vitest-plugin`, config in `vitest.config.ts`); tests are `src/**/*.test.ts` next to the code but never under `src/pages/` (Astro would turn them into routes), `npm run test:watch` for watch mode. Keep business rules as pure functions in `src/lib/services/` (no `astro:*`, which does not resolve in tests, or `cloudflare:workers` imports) and use `expectDeterministic` from `src/lib/testing/determinism.ts` for repeatable results independent of input order.
 - `npm run format` — Prettier (includes prettier-plugin-astro + prettier-plugin-tailwindcss)
-- `npm run smoke` — dependency-free auth-flow smoke test (`scripts/smoke.mjs`) against a running server, `BASE_URL` env (default `http://localhost:4321`). Run after dependency upgrades; CI runs it against the production preview with a local Supabase.
+- `npm run smoke` — dependency-free auth-flow and role-matrix smoke test (`scripts/smoke.mjs`) against a running server, `BASE_URL` env (default `http://localhost:4321`). It creates planner, employee and role-less accounts through the admin API of a local Supabase, so it needs `SUPABASE_URL`, `SUPABASE_KEY` and `SUPABASE_SERVICE_ROLE_KEY` (values from `supabase status -o env`; the app under test must read the same stack), exits before any request unless the `SUPABASE_URL` host is `127.0.0.1` or `localhost`, and must never be run against a hosted project. Run after dependency upgrades; CI runs it against the production preview with a local Supabase.
 
 Pre-commit hooks: husky + lint-staged runs `eslint --fix` on `*.{ts,tsx,astro}` and `prettier --write` on `*.{json,css,md}`.
 
@@ -26,7 +26,7 @@ Full server-side rendering (`output: "server"` in astro.config.mjs). All pages a
 ### Auth flow
 
 - `src/lib/supabase.ts` — creates a Supabase SSR client using `@supabase/ssr` with cookie-based sessions. Uses `astro:env/server` for `SUPABASE_URL` and `SUPABASE_KEY` (server-only secrets declared in astro.config.mjs `env.schema`).
-- `src/middleware.ts` — runs on every request, resolves the current user, attaches to `context.locals.user`. Redirects unauthenticated users away from routes listed in `PROTECTED_ROUTES`.
+- `src/middleware.ts` — runs on every request, resolves the current user and role (`app_metadata.role`, never `user_metadata`), attaches them to `context.locals.user` / `context.locals.role`, and gates the request with `decideAccess` from `src/lib/services/access.ts`. Default deny: a path missing from the table in `access.ts` is planner-only. A denial is 401 (anonymous) or 403 (wrong role): JSON under `/api/`, otherwise the `/access-denied` page via `next("/access-denied")` (not `context.rewrite()`).
 - API endpoints: `src/pages/api/auth/{signin,signup,signout}.ts`
 - Auth pages: `src/pages/auth/{signin,signup,confirm-email}.astro`
 - Protected page example: `src/pages/dashboard.astro`

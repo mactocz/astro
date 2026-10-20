@@ -55,7 +55,7 @@ npm run dev
 - `npm run lint` - Run ESLint with type-checked rules
 - `npm run lint:fix` - Auto-fix ESLint issues
 - `npm run format` - Run Prettier
-- `npm run smoke` - Smoke test the auth flow against a running server (`BASE_URL`, defaults to `http://localhost:4321`)
+- `npm run smoke` - Smoke test the auth flow and role access against a running server (`BASE_URL`, defaults to `http://localhost:4321`); creates accounts in a local Supabase, see [Smoke test](#smoke-test)
 
 ## Project Structure
 
@@ -140,14 +140,14 @@ Users can then sign in immediately after sign-up without clicking a confirmation
 
 ### Auth routes
 
-| Route                 | Description                                                             |
-| --------------------- | ----------------------------------------------------------------------- |
-| `/auth/signin`        | Email/password sign-in form                                             |
-| `/auth/signup`        | Email/password sign-up form                                             |
-| `/auth/confirm-email` | Post-signup "check your inbox" page                                     |
-| `/dashboard`          | Example protected page (redirects to `/auth/signin` if unauthenticated) |
+| Route                 | Description                                                                                              |
+| --------------------- | -------------------------------------------------------------------------------------------------------- |
+| `/auth/signin`        | Email/password sign-in form                                                                              |
+| `/auth/signup`        | Email/password sign-up form                                                                              |
+| `/auth/confirm-email` | Post-signup "check your inbox" page                                                                      |
+| `/dashboard`          | Example protected page for any role; others see "Brak dostępu" (401 anonymous, 403 no role), no redirect |
 
-Route protection is handled in `src/middleware.ts`. Add paths to the `PROTECTED_ROUTES` array there to require authentication.
+Route protection is handled in `src/middleware.ts` through `decideAccess` in `src/lib/services/access.ts`. Access is denied by default: a path missing from the table in `access.ts` is planner-only, so a new route stays closed until you add it on purpose. Roles (`planner`, `employee`) are read from the user's `app_metadata.role`.
 
 ## Deployment
 
@@ -169,14 +169,15 @@ Set `SUPABASE_URL` and `SUPABASE_KEY` as secrets in your Cloudflare dashboard or
 
 ## Smoke test
 
-`scripts/smoke.mjs` is a dependency-free Node script that walks the whole auth flow (sign-up, sign-in, protected page, sign-out) over HTTP. Run it against the dev server or the production preview after dependency upgrades:
+`scripts/smoke.mjs` is a dependency-free Node script that creates real accounts (planner, employee and an account without a role) through the admin API of a local Supabase and walks the auth flow and the access matrix over HTTP (401 for anonymous, 403 for the wrong role, sign-in, sign-out). It does not use public sign-up. Run it against the dev server or the production preview after dependency upgrades:
 
 ```bash
 npm run dev            # or: npm run build && npm run preview
-BASE_URL=http://localhost:4321 npm run smoke
+# values from `npx supabase status -o env`: API_URL, ANON_KEY, SERVICE_ROLE_KEY
+BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> npm run smoke
 ```
 
-It needs a reachable Supabase instance (local or cloud) with email confirmation disabled.
+It needs a local Supabase stack (`npx supabase start`) that the app under test also uses (`.env` / `.dev.vars` with the same `SUPABASE_URL` and `SUPABASE_KEY`). The script exits before the first request unless the `SUPABASE_URL` host is `127.0.0.1` or `localhost`: never run it against a hosted project, and never put the service-role key in `.env` or `.dev.vars`.
 
 > **Note:** this script exists primarily to guard the development of the starter itself — it is a fast sanity check that dependency upgrades did not break the build, the Cloudflare adapter or the Supabase auth flow. It is **not** a substitute for a real test suite. Once you build your own product on top of this starter, add proper tests (unit, integration, end-to-end) suited to your application.
 

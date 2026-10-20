@@ -365,27 +365,27 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) przegląd kont w pane
 
 #### Automated
 
-- [x] 1.1 Testy polityki dostępu przechodzą w workerd: `npm test`
-- [x] 1.2 Linting przechodzi: `npm run lint`
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy polityki dostępu przechodzą w workerd: `npm test` — 34f8768
+- [x] 1.2 Linting przechodzi: `npm run lint` — 34f8768
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 34f8768
 
 #### Manual
 
-- [x] 1.4 Tabela ścieżek publicznych i wspólnych w `access.ts` została przejrzana i zatwierdzona przez autora (zgodna z PRD, sekcja Access Control)
+- [x] 1.4 Tabela ścieżek publicznych i wspólnych w `access.ts` została przejrzana i zatwierdzona przez autora (zgodna z PRD, sekcja Access Control) — 34f8768
 
 ### Phase 2: Egzekwowanie w aplikacji i smoke z rolami
 
 #### Automated
 
-- [ ] 2.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 2.2 Smoke z macierzą ról przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
-- [ ] 2.3 Smoke odmawia uruchomienia przeciw nielokalnemu adresowi, zanim wyśle jakiekolwiek żądanie: `$env:SUPABASE_URL = "https://example.supabase.co"; npm run smoke` kończy się kodem niezerowym
+- [x] 2.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 2.2 Smoke z macierzą ról przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
+- [x] 2.3 Smoke odmawia uruchomienia przeciw nielokalnemu adresowi, zanim wyśle jakiekolwiek żądanie: `$env:SUPABASE_URL = "https://example.supabase.co"; npm run smoke` kończy się kodem niezerowym
 
 #### Manual
 
-- [ ] 2.4 Przegląd `ci.yml`: klucz service-role trafia wyłącznie do polecenia smoke (nie do `.env`, `.dev.vars`, kroku build ani podglądu)
-- [ ] 2.5 Przeglądarka, planista: `/dashboard` pokazuje rolę i odnośnik do `/planner`, a `/planner` się otwiera
-- [ ] 2.6 Przeglądarka, pracownik i anonim: pracownik na `/planner` widzi stronę "Brak dostępu" ze statusem 403, anonim na `/dashboard` widzi ją ze statusem 401 i odnośnikiem do logowania bez przekierowania, a strona logowania nadal się hydratuje (formularz działa)
+- [x] 2.4 Przegląd `ci.yml`: klucz service-role trafia wyłącznie do polecenia smoke (nie do `.env`, `.dev.vars`, kroku build ani podglądu)
+- [x] 2.5 Przeglądarka, planista: `/dashboard` pokazuje rolę i odnośnik do `/planner`, a `/planner` się otwiera
+- [x] 2.6 Przeglądarka, pracownik i anonim: pracownik na `/planner` widzi stronę "Brak dostępu" ze statusem 403, anonim na `/dashboard` widzi ją ze statusem 401 i odnośnikiem do logowania bez przekierowania, a strona logowania nadal się hydratuje (formularz działa)
 - [ ] 2.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`)
 
 ### Phase 3: Zamknięcie rejestracji i pierwszy planista
