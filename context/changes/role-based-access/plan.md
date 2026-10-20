@@ -365,13 +365,13 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) przegląd kont w pane
 
 #### Automated
 
-- [ ] 1.1 Testy polityki dostępu przechodzą w workerd: `npm test`
-- [ ] 1.2 Linting przechodzi: `npm run lint`
-- [ ] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy polityki dostępu przechodzą w workerd: `npm test`
+- [x] 1.2 Linting przechodzi: `npm run lint`
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
-- [ ] 1.4 Tabela ścieżek publicznych i wspólnych w `access.ts` została przejrzana i zatwierdzona przez autora (zgodna z PRD, sekcja Access Control)
+- [x] 1.4 Tabela ścieżek publicznych i wspólnych w `access.ts` została przejrzana i zatwierdzona przez autora (zgodna z PRD, sekcja Access Control)
 
 ### Phase 2: Egzekwowanie w aplikacji i smoke z rolami
 
