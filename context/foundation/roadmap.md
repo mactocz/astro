@@ -41,7 +41,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 
 | ID   | Change ID                   | Outcome (user can …)                                              | Prerequisites | PRD refs                                         | Status   |
 | ---- | --------------------------- | ----------------------------------------------------------------- | ------------- | ------------------------------------------------ | -------- |
-| F-01 | role-based-access           | (foundation) system rozróżnia planistę i pracownika               | —             | Access Control; NFR (własne dane pracownika)     | ready    |
+| F-01 | role-based-access           | (foundation) system rozróżnia planistę i pracownika               | —             | Access Control; NFR (własne dane pracownika)     | in-progress |
 | F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | done |
 | S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | proposed |
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | proposed |
@@ -97,7 +97,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   - Jak powstaje pierwsze konto planisty (np. pierwszy rejestrujący się, ręczne nadanie roli) i czy publiczna rejestracja zostaje zamknięta? — Owner: user. Block: no.
   - Czy nadal obowiązuje zapis z PRD, że niezalogowany widzi komunikat o braku dostępu zamiast przekierowania na logowanie (dziś jest przekierowanie, a skrypt smoke je sprawdza)? — Owner: user. Block: no.
 - **Risk:** Stawiam to przed jakimkolwiek wycinkiem z danymi osobowymi pracowników (cel: poprawność); pomyłka tutaj uderza w prywatność wszystkich dalszych wycinków, więc zakres ograniczam do samego rozróżnienia ról i dostępu.
-- **Status:** ready
+- **Status:** in-progress
 
 ### F-02: Ścieżka weryfikacji reguł
 

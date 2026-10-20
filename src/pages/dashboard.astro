@@ -1,7 +1,11 @@
 ---
 import Layout from "@/layouts/Layout.astro";
+import type { Role } from "@/types";
 
-const { user } = Astro.locals;
+const { user, role } = Astro.locals;
+
+const ROLE_LABELS: Record<Role, string> = { planner: "planista", employee: "pracownik" };
+const roleLabel = role ? ROLE_LABELS[role] : "brak roli";
 ---
 
 <Layout title="Dashboard">
@@ -13,7 +17,17 @@ const { user } = Astro.locals;
       <p class="text-blue-100/80">
         Welcome, <span class="font-semibold text-white">{user?.email}</span>
       </p>
-      <p class="mt-2 text-sm text-blue-100/50">This page is only for authenticated users.</p>
+      <p class="mt-2 text-blue-100/80">
+        Role: <span class="font-semibold text-white">{roleLabel}</span>
+      </p>
+      <p class="mt-2 text-sm text-blue-100/50">This page is only for users with a role.</p>
+      {role === "planner" && (
+        <p class="mt-4">
+          <a href="/planner" class="text-purple-300 hover:underline">
+            Panel planisty
+          </a>
+        </p>
+      )}
       <form method="POST" action="/api/auth/signout" class="mt-6">
         <button
           type="submit"
