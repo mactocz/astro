@@ -1,7 +1,7 @@
 ---
 change_id: role-based-access
 title: Role based access
-status: new
+status: planned
 created: 2026-10-20
 updated: 2026-10-20
 archived_at: null
