@@ -1,9 +1,9 @@
 ---
 change_id: rules-verification-harness
 title: Rules verification harness
-status: implemented
+status: impl_reviewed
 created: 2026-10-16
-updated: 2026-10-19
+updated: 2026-10-20
 archived_at: null
 ---
 
