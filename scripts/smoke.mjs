@@ -1,14 +1,15 @@
-// Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together.
-// Zero dependencies on purpose. It creates real accounts with the service-role key, so it only runs against a LOCAL
+// Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
+// and that public registration stays closed. Zero dependencies on purpose. It creates real accounts with the service-role key, so it only runs against a LOCAL
 // Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:4321";
-const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+const { SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 const password = "Smoke-Test-Passw0rd!";
 const runId = Date.now();
+const throwawayEmail = `smoke-closed-${runId}@example.com`;
 
 function abort(message) {
   console.error(`smoke: ${message}`);
@@ -17,7 +18,7 @@ function abort(message) {
 
 // Runs before the first request, so the service-role key can never reach a hosted project.
 function requireLocalSupabase() {
-  // SUPABASE_KEY (anon) is the app's own variable; it is only required here so the invocation mirrors the app's setup.
+  // SUPABASE_KEY (anon) is the app's own variable; the direct sign-up step sends it the way any client holding it could.
   const missing = ["SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_SERVICE_ROLE_KEY"].filter((name) => !process.env[name]);
   if (missing.length > 0) {
     abort(`missing environment variable(s): ${missing.join(", ")}`);
@@ -94,6 +95,21 @@ async function createAccount(label, role) {
   return { label, email, jar: new Map() };
 }
 
+// The anon key is public, so Supabase must refuse sign-up even when the app is bypassed. Same headers as supabase-js.
+async function supabaseSignup() {
+  const response = await fetch(`${supabaseOrigin}/auth/v1/signup`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: throwawayEmail, password }),
+  });
+  return {
+    status: response.status,
+    location: "",
+    contentType: response.headers.get("content-type") ?? "",
+    body: await response.text(),
+  };
+}
+
 const anonymous = { label: "anonymous", jar: new Map() };
 const noRole = await createAccount("no-role", null);
 const employee = await createAccount("employee", "employee");
@@ -125,6 +141,14 @@ const steps = [
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
     { status: 401, contentType: "application/json" },
   ],
+
+  // Registration is closed, in the app and in Supabase itself.
+  [
+    `${anonymous.label}: POST /api/auth/signup`,
+    () => request(anonymous, "/api/auth/signup", { method: "POST", form: { email: throwawayEmail, password } }),
+    { status: 401, contentType: "application/json" },
+  ],
+  [`${anonymous.label}: Supabase rejects a direct sign-up`, supabaseSignup, { statusClass: 4 }],
 
   // Signed in without a role: every gated page is forbidden. This is the first sign-in against the app under test.
   signIn(noRole, "aplikacja pod testem nie używa SUPABASE_URL (sprawdź .env i .dev.vars)"),
@@ -170,6 +194,7 @@ for (const [name, run, expected, hint] of steps) {
   const actual = await run();
   const ok =
     (expected.status === undefined || actual.status === expected.status) &&
+    (expected.statusClass === undefined || Math.floor(actual.status / 100) === expected.statusClass) &&
     (expected.location === undefined || actual.location === expected.location) &&
     (expected.locationPrefix === undefined || actual.location.startsWith(expected.locationPrefix)) &&
     (expected.contentType === undefined || actual.contentType.startsWith(expected.contentType)) &&
@@ -179,7 +204,7 @@ for (const [name, run, expected, hint] of steps) {
   if (!ok) {
     failed++;
     const wanted = [
-      expected.status ?? "",
+      expected.status ?? (expected.statusClass === undefined ? "" : `${expected.statusClass}xx`),
       expected.location ?? expected.locationPrefix ?? "",
       expected.contentType ?? "",
       expected.bodyExcludes === undefined ? "" : `a body without "${expected.bodyExcludes}"`,

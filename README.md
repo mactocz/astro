@@ -128,24 +128,32 @@ SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_KEY=<anon-key>
 ```
 
-### Email confirmation in local development
+### Accounts and email confirmation
 
-By default Supabase requires email confirmation before a user can sign in. To skip this during local development:
+Public registration is closed. The app has no sign-up page or endpoint, and `supabase/config.toml` sets `[auth] enable_signup = false`, so Supabase also rejects a direct sign-up call made with the public anon key. Accounts are created through the Supabase Admin API with `email_confirm: true`, which needs no confirmation e-mail: the account can sign in right away. `scripts/smoke.mjs` creates its test accounts this way and `scripts/create-planner.mjs` creates the first planner (see [First planner](#first-planner)).
 
-1. Open the Supabase dashboard for your project
-2. Go to **Authentication → Email → Confirm email**
-3. Toggle it **off**
+On a hosted project also switch the sign-up option off in the dashboard (**Authentication → Sign In / Providers → User Signups → Allow new users to sign up**). Leave the **Email** provider itself enabled, otherwise nobody can sign in with e-mail and password.
 
-Users can then sign in immediately after sign-up without clicking a confirmation link.
+### First planner
+
+`scripts/create-planner.mjs` is a dependency-free Node script that creates the first planner, or promotes an existing account to planner by setting its `app_metadata.role`. It is meant to run against a hosted project too:
+
+```bash
+SUPABASE_URL=https://<project-ref>.supabase.co SUPABASE_SERVICE_ROLE_KEY=<service-role key> PLANNER_PASSWORD=<password> \
+  node scripts/create-planner.mjs planner@example.com
+```
+
+- `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are always required. `PLANNER_PASSWORD` is required only for a new account (at least 8 characters, with an upper-case letter, a digit and a special character); an existing account keeps its password and is only promoted. Without `PLANNER_PASSWORD` the script only promotes and fails when no account matches the address.
+- It prints the target host before the first request, never prints the password or the key, and checks the input before sending anything. Exit code `0` means done (running it again for the same address changes nothing), `1` an API error or no matching account, `2` invalid input.
+- The service-role key bypasses every access policy. Pass it in the environment of this one command and never store it in `.env`, `.dev.vars` or the Worker secrets. For the local stack use `http://127.0.0.1:54321` as `SUPABASE_URL` and `SERVICE_ROLE_KEY` from `npx supabase status -o env`.
+- An account without a role has no access to the app. Use the script to promote accounts that were created before registration was closed.
 
 ### Auth routes
 
-| Route                 | Description                                                                                              |
-| --------------------- | -------------------------------------------------------------------------------------------------------- |
-| `/auth/signin`        | Email/password sign-in form                                                                              |
-| `/auth/signup`        | Email/password sign-up form                                                                              |
-| `/auth/confirm-email` | Post-signup "check your inbox" page                                                                      |
-| `/dashboard`          | Example protected page for any role; others see "Brak dostępu" (401 anonymous, 403 no role), no redirect |
+| Route          | Description                                                                                              |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| `/auth/signin` | Email/password sign-in form                                                                              |
+| `/dashboard`   | Example protected page for any role; others see "Brak dostępu" (401 anonymous, 403 no role), no redirect |
 
 Route protection is handled in `src/middleware.ts` through `decideAccess` in `src/lib/services/access.ts`. Access is denied by default: a path missing from the table in `access.ts` is planner-only, so a new route stays closed until you add it on purpose. Roles (`planner`, `employee`) are read from the user's `app_metadata.role`.
 
@@ -169,7 +177,7 @@ Set `SUPABASE_URL` and `SUPABASE_KEY` as secrets in your Cloudflare dashboard or
 
 ## Smoke test
 
-`scripts/smoke.mjs` is a dependency-free Node script that creates real accounts (planner, employee and an account without a role) through the admin API of a local Supabase and walks the auth flow and the access matrix over HTTP (401 for anonymous, 403 for the wrong role, sign-in, sign-out). It does not use public sign-up. Run it against the dev server or the production preview after dependency upgrades:
+`scripts/smoke.mjs` is a dependency-free Node script that creates real accounts (planner, employee and an account without a role) through the admin API of a local Supabase and walks the auth flow and the access matrix over HTTP (401 for anonymous, 403 for the wrong role, sign-in, sign-out). It also checks that registration stays closed: an anonymous `POST` to the removed sign-up endpoint gets 401, and a direct sign-up call to Supabase with the anon key is rejected. Run it against the dev server or the production preview after dependency upgrades:
 
 ```bash
 npm run dev            # or: npm run build && npm run preview

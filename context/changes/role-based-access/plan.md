@@ -377,32 +377,32 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) przegląd kont w pane
 
 #### Automated
 
-- [x] 2.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 2.2 Smoke z macierzą ról przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
-- [x] 2.3 Smoke odmawia uruchomienia przeciw nielokalnemu adresowi, zanim wyśle jakiekolwiek żądanie: `$env:SUPABASE_URL = "https://example.supabase.co"; npm run smoke` kończy się kodem niezerowym
+- [x] 2.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 3d63cf5
+- [x] 2.2 Smoke z macierzą ról przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke` — 3d63cf5
+- [x] 2.3 Smoke odmawia uruchomienia przeciw nielokalnemu adresowi, zanim wyśle jakiekolwiek żądanie: `$env:SUPABASE_URL = "https://example.supabase.co"; npm run smoke` kończy się kodem niezerowym — 3d63cf5
 
 #### Manual
 
-- [x] 2.4 Przegląd `ci.yml`: klucz service-role trafia wyłącznie do polecenia smoke (nie do `.env`, `.dev.vars`, kroku build ani podglądu)
-- [x] 2.5 Przeglądarka, planista: `/dashboard` pokazuje rolę i odnośnik do `/planner`, a `/planner` się otwiera
-- [x] 2.6 Przeglądarka, pracownik i anonim: pracownik na `/planner` widzi stronę "Brak dostępu" ze statusem 403, anonim na `/dashboard` widzi ją ze statusem 401 i odnośnikiem do logowania bez przekierowania, a strona logowania nadal się hydratuje (formularz działa)
+- [x] 2.4 Przegląd `ci.yml`: klucz service-role trafia wyłącznie do polecenia smoke (nie do `.env`, `.dev.vars`, kroku build ani podglądu) — 3d63cf5
+- [x] 2.5 Przeglądarka, planista: `/dashboard` pokazuje rolę i odnośnik do `/planner`, a `/planner` się otwiera — 3d63cf5
+- [x] 2.6 Przeglądarka, pracownik i anonim: pracownik na `/planner` widzi stronę "Brak dostępu" ze statusem 403, anonim na `/dashboard` widzi ją ze statusem 401 i odnośnikiem do logowania bez przekierowania, a strona logowania nadal się hydratuje (formularz działa) — 3d63cf5
 - [ ] 2.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`)
 
 ### Phase 3: Zamknięcie rejestracji i pierwszy planista
 
 #### Automated
 
-- [ ] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 3.2 Kod aplikacji i dokumentacja nie odwołują się już do usuniętych tras rejestracji ani do `PROTECTED_ROUTES`: `Get-ChildItem src,README.md,CLAUDE.md,AGENTS.md -Recurse -File | Select-String -Pattern 'auth/signup|confirm-email|SignUpForm|PROTECTED_ROUTES'` nie zwraca dopasowań
-- [ ] 3.3 Skrypt tworzy planistę na lokalnym Supabase, a ponowne uruchomienie dla tego samego adresu kończy się kodem 0 bez zmian: `node scripts/create-planner.mjs smoke-planner@example.com` (z `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PLANNER_PASSWORD`)
-- [ ] 3.4 Skrypt odrzuca hasło niespełniające reguł NFR przed wysłaniem żądania: `$env:PLANNER_PASSWORD = "weak"; node scripts/create-planner.mjs x@example.com` kończy się kodem niezerowym
-- [ ] 3.5 Smoke przechodzi razem z krokami zamkniętej rejestracji: `npm run smoke`
+- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 3.2 Kod aplikacji i dokumentacja nie odwołują się już do usuniętych tras rejestracji ani do `PROTECTED_ROUTES`: `Get-ChildItem src,README.md,CLAUDE.md,AGENTS.md -Recurse -File | Select-String -Pattern 'auth/signup|confirm-email|SignUpForm|PROTECTED_ROUTES'` nie zwraca dopasowań
+- [x] 3.3 Skrypt tworzy planistę na lokalnym Supabase, a ponowne uruchomienie dla tego samego adresu kończy się kodem 0 bez zmian: `node scripts/create-planner.mjs smoke-planner@example.com` (z `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PLANNER_PASSWORD`)
+- [x] 3.4 Skrypt odrzuca hasło niespełniające reguł NFR przed wysłaniem żądania: `$env:PLANNER_PASSWORD = "weak"; node scripts/create-planner.mjs x@example.com` kończy się kodem niezerowym
+- [x] 3.5 Smoke przechodzi razem z krokami zamkniętej rejestracji: `npm run smoke`
 
 #### Manual
 
 - [ ] 3.6 Hostowany Supabase: opcja zezwalająca na rejestrację nowych użytkowników jest wyłączona, a `POST <SUPABASE_URL>/auth/v1/signup` z kluczem anon zwraca błąd (wykonuje autor)
 - [ ] 3.7 Hostowany Supabase: pierwszy planista utworzony (lub istniejące konto awansowane) skryptem przed wdrożeniem; po ręcznym wdrożeniu loguje się na `https://shiftly.mto-astro.workers.dev` i widzi `/planner` (wykonuje autor)
-- [ ] 3.8 Strona główna, logowanie i pasek górny nie zawierają już odnośników do rejestracji (przegląd wizualny)
+- [x] 3.8 Strona główna, logowanie i pasek górny nie zawierają już odnośników do rejestracji (przegląd wizualny)
 
 ### Phase 4: Warstwa bazy
 
