@@ -386,7 +386,7 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) przegląd kont w pane
 - [x] 2.4 Przegląd `ci.yml`: klucz service-role trafia wyłącznie do polecenia smoke (nie do `.env`, `.dev.vars`, kroku build ani podglądu) — 3d63cf5
 - [x] 2.5 Przeglądarka, planista: `/dashboard` pokazuje rolę i odnośnik do `/planner`, a `/planner` się otwiera — 3d63cf5
 - [x] 2.6 Przeglądarka, pracownik i anonim: pracownik na `/planner` widzi stronę "Brak dostępu" ze statusem 403, anonim na `/dashboard` widzi ją ze statusem 401 i odnośnikiem do logowania bez przekierowania, a strona logowania nadal się hydratuje (formularz działa) — 3d63cf5
-- [ ] 2.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`)
+- [x] 2.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`) — ad8a740
 
 ### Phase 3: Zamknięcie rejestracji i pierwszy planista
 
@@ -400,20 +400,20 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) przegląd kont w pane
 
 #### Manual
 
-- [ ] 3.6 Hostowany Supabase: opcja zezwalająca na rejestrację nowych użytkowników jest wyłączona, a `POST <SUPABASE_URL>/auth/v1/signup` z kluczem anon zwraca błąd (wykonuje autor)
-- [ ] 3.7 Hostowany Supabase: pierwszy planista utworzony (lub istniejące konto awansowane) skryptem przed wdrożeniem; po ręcznym wdrożeniu loguje się na `https://shiftly.mto-astro.workers.dev` i widzi `/planner` (wykonuje autor)
+- [x] 3.6 Hostowany Supabase: opcja zezwalająca na rejestrację nowych użytkowników jest wyłączona, a `POST <SUPABASE_URL>/auth/v1/signup` z kluczem anon zwraca błąd (wykonuje autor) — 173091a
+- [x] 3.7 Hostowany Supabase: pierwszy planista utworzony (lub istniejące konto awansowane) skryptem przed wdrożeniem; po ręcznym wdrożeniu loguje się na `https://shiftly.mto-astro.workers.dev` i widzi `/planner` (wykonuje autor) — 173091a
 - [x] 3.8 Strona główna, logowanie i pasek górny nie zawierają już odnośników do rejestracji (przegląd wizualny) — 1155820
 
 ### Phase 4: Warstwa bazy
 
 #### Automated
 
-- [x] 4.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [x] 4.2 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 4.3 Smoke z krokami RPC i próbą podrobienia roli przechodzi: `npm run smoke`
+- [x] 4.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset` — ad8a740
+- [x] 4.2 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — ad8a740
+- [x] 4.3 Smoke z krokami RPC i próbą podrobienia roli przechodzi: `npm run smoke` — ad8a740
 
 #### Manual
 
-- [x] 4.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list`
-- [x] 4.5 Wzorzec polityk RLS w komentarzu migracji jest czytelny i wystarczający dla S-01 (przegląd przez autora)
-- [ ] 4.6 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki RPC)
+- [x] 4.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list` — ad8a740
+- [x] 4.5 Wzorzec polityk RLS w komentarzu migracji jest czytelny i wystarczający dla S-01 (przegląd przez autora) — ad8a740
+- [x] 4.6 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki RPC) — ad8a740
