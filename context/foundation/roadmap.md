@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-10-20
+updated: 2026-10-21
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -41,7 +41,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 
 | ID   | Change ID                   | Outcome (user can …)                                              | Prerequisites | PRD refs                                         | Status   |
 | ---- | --------------------------- | ----------------------------------------------------------------- | ------------- | ------------------------------------------------ | -------- |
-| F-01 | role-based-access           | (foundation) system rozróżnia planistę i pracownika               | —             | Access Control; NFR (własne dane pracownika)     | in-progress |
+| F-01 | role-based-access           | (foundation) system rozróżnia planistę i pracownika               | —             | Access Control; NFR (własne dane pracownika)     | done |
 | F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | done |
 | S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | proposed |
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | proposed |
@@ -97,7 +97,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   - Jak powstaje pierwsze konto planisty (np. pierwszy rejestrujący się, ręczne nadanie roli) i czy publiczna rejestracja zostaje zamknięta? — Owner: user. Block: no.
   - Czy nadal obowiązuje zapis z PRD, że niezalogowany widzi komunikat o braku dostępu zamiast przekierowania na logowanie (dziś jest przekierowanie, a skrypt smoke je sprawdza)? — Owner: user. Block: no.
 - **Risk:** Stawiam to przed jakimkolwiek wycinkiem z danymi osobowymi pracowników (cel: poprawność); pomyłka tutaj uderza w prywatność wszystkich dalszych wycinków, więc zakres ograniczam do samego rozróżnienia ról i dostępu.
-- **Status:** in-progress
+- **Status:** done
 
 ### F-02: Ścieżka weryfikacji reguł
 
@@ -363,3 +363,4 @@ Foundations below assume these are present and do NOT re-scaffold them.
 
 - **<Slice ID>: <Outcome>** — Archived <YYYY-MM-DD> → `context/archive/<YYYY-MM-DD-change-id>/`. Lesson: <pointer to lessons.md if any, or `—`>.
 - **F-02: (foundation) testy automatyczne uruchamiają się lokalnie i w CI, z jednym przykładowym przypadkiem sprawdzającym, że ten sam wejściowy zestaw daje ten sam wynik; same reguły dochodzą dopiero w S-05.** — Archived 2026-10-20 → `context/archive/2026-10-16-rules-verification-harness/`. Lesson: —.
+- **F-01: (foundation) system rozróżnia planistę i pracownika: strony planisty są niedostępne dla pracownika i osoby niezalogowanej, a pracownik ma dostęp wyłącznie do własnych danych.** — Archived 2026-10-21 → `context/archive/2026-10-20-role-based-access/`. Lesson: —.

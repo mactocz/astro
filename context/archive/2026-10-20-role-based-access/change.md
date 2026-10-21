@@ -1,10 +1,10 @@
 ---
 change_id: role-based-access
 title: Role based access
-status: implemented
+status: archived
 created: 2026-10-20
 updated: 2026-10-21
-archived_at: null
+archived_at: 2026-10-21T05:59:03Z
 ---
 
 ## Notes
