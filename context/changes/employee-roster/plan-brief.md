@@ -53,7 +53,7 @@ Od środka na zewnątrz: czyste reguły w `src/lib/services/employee.ts` (walida
 
 ## Open Risks & Assumptions
 
-- Omyłkowo dodany pracownik zostaje na liście (brak usuwania i blokowania); autor usuwa go ręcznie w panelu Supabase. Rośnie to z każdym wycinkiem, który odwoła się do pracowników kluczem obcym.
+- Omyłkowo dodany pracownik zostaje na liście (brak usuwania i blokowania); autor usuwa go ręcznie w panelu Supabase. Rośnie to z każdym wycinkiem, który odwoła się do pracowników kluczem obcym. To dotyczy też pracownika, który odszedł z zespołu: S-03 i S-05 będą go widzieć, dopóki nie dojdzie FR-015 (zaparkowane); ryzyko zaakceptowane i zapisane w Risk wycinka S-03.
 - Edycja etatu nie ma historii: S-06 i S-08 muszą zapisać normę lub wskazania w chwili zatwierdzenia grafiku, inaczej edycja zmieniłaby zatwierdzone grafiki wstecz.
 - Brak testów jednostkowych hooka i komponentów (nie ma biblioteki do ich testowania); ryzyko ograniczone przez cienką logikę hooka i ręczny przegląd w Fazie 4.
 - Statusy PostgREST dla odmów (200 z pustą listą albo 4xx) mogą różnić się od oczekiwań, dlatego smoke dowodzi skutku (wiersz niezmieniony), a nie konkretnego kodu.

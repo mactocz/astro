@@ -149,7 +149,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Parallel with:** F-02, S-10
 - **Blockers:** —
 - **Unknowns:** —
-- **Risk:** Model okresu tygodniowego i obsady jest podstawą wszystkich reguł; generowanie celowo wydzielone (S-09), żeby ten wycinek nie rozrósł się o algorytm. Decyzja D6 (`work-time-rules.md`, 2026-10-16): grafik tygodniowy zostaje, a UI i dokumentacja informują, że nie zastępuje formalnego rozkładu czasu pracy (art. 129 § 3: co najmniej miesiąc, przekazany z tygodniowym wyprzedzeniem).
+- **Risk:** Model okresu tygodniowego i obsady jest podstawą wszystkich reguł; generowanie celowo wydzielone (S-09), żeby ten wycinek nie rozrósł się o algorytm. Decyzja D6 (`work-time-rules.md`, 2026-10-16): grafik tygodniowy zostaje, a UI i dokumentacja informują, że nie zastępuje formalnego rozkładu czasu pracy (art. 129 § 3: co najmniej miesiąc, przekazany z tygodniowym wyprzedzeniem). Brak blokowania i usuwania pracowników w S-01 (FR-015 zaparkowane) oznacza, że pracownik, który odszedł, zostaje na liście wyboru; wycinek musi to znieść albo FR-015 trzeba wtedy odparkować.
 - **Status:** proposed
 
 ### S-04: Ręczne obsadzanie zmian
