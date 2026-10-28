@@ -1,7 +1,10 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
-// that the database role helpers read the role from the token, and that public registration stays closed. Zero
-// dependencies on purpose. It creates real accounts with the service-role key, so it only runs against a LOCAL
-// Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come from `supabase status -o env`.
+// that the database role helpers read the role from the token, that only planners can read and write the employees
+// table through PostgREST, that the employee API routes keep to the role gate, the validation and their status codes,
+// that the employee pages open for the planner only, and that public registration stays closed. Zero dependencies on
+// purpose. It creates real accounts and removes its own employee rows with the service-role key, so it only runs
+// against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come from
+// `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -53,7 +56,9 @@ function storeCookies(jar, response) {
 }
 
 // The path goes to fetch as a plain string on purpose: new URL(path, base) would rewrite "//planner" and "/%70lanner".
-async function request(actor, path, { method = "GET", form, accept } = {}) {
+// `form` sends a urlencoded body, `json` a JSON one, `jsonText` the given text under a JSON content type (to send what
+// is not valid JSON); a request has at most one of them.
+async function request(actor, path, { method = "GET", form, json, jsonText, accept } = {}) {
   const response = await fetch(BASE_URL + path, {
     method,
     redirect: "manual",
@@ -62,14 +67,18 @@ async function request(actor, path, { method = "GET", form, accept } = {}) {
       Origin: BASE_URL,
       ...(accept ? { Accept: accept } : {}),
       ...(form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+      ...(json === undefined && jsonText === undefined ? {} : { "Content-Type": "application/json" }),
     },
-    body: form ? new URLSearchParams(form).toString() : undefined,
+    body:
+      jsonText ??
+      (json === undefined ? (form ? new URLSearchParams(form).toString() : undefined) : JSON.stringify(json)),
   });
   storeCookies(actor.jar, response);
   return {
     status: response.status,
     location: response.headers.get("location") ?? "",
     contentType: response.headers.get("content-type") ?? "",
+    cacheControl: response.headers.get("cache-control") ?? "",
     body: await response.text(),
   };
 }
@@ -147,6 +156,22 @@ async function rpc(name, token) {
   return supabaseResult(response);
 }
 
+// Calls the employees table through PostgREST. Without a token only the anon key is sent, like a client that never
+// signed in; `key` replaces the anon key in both headers (the service-role cleanup).
+async function employeesTable(method, { token, key = SUPABASE_KEY, query = "", body, prefer } = {}) {
+  const response = await fetch(`${supabaseOrigin}/rest/v1/employees${query}`, {
+    method,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${token ?? key}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(prefer ? { Prefer: prefer } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return supabaseResult(response);
+}
+
 // Every signed-in user may edit their own user_metadata, so Supabase is expected to accept this; the role must still
 // come only from app_metadata.
 async function forgeRole(actor, role) {
@@ -172,12 +197,25 @@ function parseJson(body) {
   }
 }
 
+// A predicate that throws on an unexpected body shape fails its step instead of crashing the whole run.
+function passes(check, value) {
+  try {
+    return check(value) === true;
+  } catch {
+    return false;
+  }
+}
+
 const anonymous = { label: "anonymous", jar: new Map() };
 const noRole = await createAccount("no-role", null);
 const employee = await createAccount("employee", "employee");
 const planner = await createAccount("planner", "planner");
 
-const visit = (actor, path, status) => [`${actor.label}: GET ${path}`, () => request(actor, path), { status }];
+const visit = (actor, path, status, bodyIncludes, cacheControl) => [
+  `${actor.label}: GET ${path}`,
+  () => request(actor, path),
+  { status, bodyIncludes, cacheControl },
+];
 
 const signIn = (actor, hint) => [
   `${actor.label}: signin accepts correct password`,
@@ -199,15 +237,148 @@ const rpcStep = (actor, name, json, note = "") => [
   { status: 200, json },
 ];
 
+// The employees steps share one row. Its e-mail starts with "smoke-" and is lower case, because the table refuses
+// anything else; the final cleanup step deletes by that prefix. The id is only known once the insert step has run.
+const smokeEmployee = {
+  first_name: "Smoke",
+  last_name: `Smoke-${runId}`,
+  email: `smoke-${runId}-roster@example.com`,
+  fte_numerator: 1,
+  fte_denominator: 2,
+};
+const patchedFte = { fte_numerator: 3, fte_denominator: 4 };
+let smokeEmployeeId;
+const smokeRow = () => `?id=eq.${smokeEmployeeId}`;
+
+// `check` predicates receive the parsed body. A row from the database carries a random id and a timestamp, so it cannot
+// be compared as a whole; every sent column is compared instead.
+const isEmptyList = (rows) => Array.isArray(rows) && rows.length === 0;
+const isSmokeEmployee = (changes) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  typeof rows[0].id === "string" &&
+  Object.entries({ ...smokeEmployee, ...changes }).every(([column, value]) => rows[0][column] === value);
+// The error body names the violated constraint, so a rejection for any other reason does not pass.
+const violates = (constraint) => (error) => typeof error?.message === "string" && error.message.includes(constraint);
+
+const plannerReadsEmployee = (name, changes, describe) => [
+  `${planner.label}: ${name}`,
+  async () => employeesTable("GET", { token: await accessToken(planner), query: smokeRow() }),
+  { status: 200, check: isSmokeEmployee(changes), describe },
+];
+
+// A signed-in account without planner rights: the table looks empty and writes are refused or hidden. The planner's read
+// afterwards is the proof that the row did not change, whatever status PostgREST used to answer.
+const notPlannerEmployeeSteps = (actor) => [
+  [
+    `${actor.label}: employees read returns an empty list`,
+    async () => employeesTable("GET", { token: await accessToken(actor), query: "?select=id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: employees insert is rejected`,
+    async () =>
+      employeesTable("POST", {
+        token: await accessToken(actor),
+        body: { ...smokeEmployee, email: `smoke-${runId}-${actor.label}@example.com` },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: employees update is refused or hidden`,
+    async () =>
+      employeesTable("PATCH", {
+        token: await accessToken(actor),
+        query: smokeRow(),
+        body: { fte_numerator: 1, fte_denominator: 1 },
+      }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: employees delete is rejected`,
+    async () => employeesTable("DELETE", { token: await accessToken(actor), query: smokeRow() }),
+    { statusNotClass: 2 },
+  ],
+  plannerReadsEmployee(
+    `employees row is unchanged after ${actor.label} write attempts`,
+    patchedFte,
+    "the smoke employee with FTE 3/4",
+  ),
+];
+
+// The API steps share one employee, created through the app by the planner. Names with Polish letters and a mixed-case
+// e-mail on purpose: the app must keep the letters and answer with the e-mail in lower case (smoke-<runId>@example.com,
+// which the final cleanup step deletes by prefix). The FTE 2/4 comes back reduced to 1/2. The id is only known once
+// the create step has run.
+const apiEmployee = {
+  firstName: "Małgorzata",
+  lastName: `Łukasz-Smoke-${runId}`,
+  email: `Smoke-${runId}@Example.com`,
+  fteNumerator: 2,
+  fteDenominator: 4,
+};
+// A second employee, so the PUT conflict step has another person's e-mail to collide with.
+const secondApiEmployee = { ...apiEmployee, firstName: "Zofia", email: `Smoke-${runId}-second@Example.com` };
+const apiEmployeeUrl = () => `/api/employees/${apiEmployeeId}`;
+// The gate answers before the route or the page runs, so the employee's requests may name an id that does not exist.
+const unknownEmployeeId = "00000000-0000-4000-8000-000000000000";
+const unknownEmployeeUrl = `/api/employees/${unknownEmployeeId}`;
+const emailTakenMessage = "Ten adres e-mail jest już przypisany do innego pracownika.";
+let apiEmployeeId;
+
+// The form page of the employee the planner creates. Its address needs the id, which only exists once the create step
+// has run, so it is built when the step runs.
+const visitApiEmployeePage = (actor, status, bodyIncludes, cacheControl) => [
+  `${actor.label}: GET /employees/<id>`,
+  () => request(actor, `/employees/${apiEmployeeId}`),
+  { status, bodyIncludes, cacheControl },
+];
+const notFoundMessage = "Nie znaleziono pracownika";
+
+// The route answers with the camelCase employee: names as sent, the e-mail in lower case, the FTE in lowest terms.
+const isApiEmployee = (fte) => (body) =>
+  typeof body.employee.id === "string" &&
+  body.employee.id === apiEmployeeId &&
+  typeof body.employee.createdAt === "string" &&
+  body.employee.firstName === apiEmployee.firstName &&
+  body.employee.lastName === apiEmployee.lastName &&
+  body.employee.email === apiEmployee.email.toLowerCase() &&
+  body.employee.fte.numerator === fte.numerator &&
+  body.employee.fte.denominator === fte.denominator;
+const isEmailTaken = (body) => body.errors.email === emailTakenMessage;
+const isSecondApiEmployee = (body) =>
+  typeof body.employee.id === "string" &&
+  body.employee.id !== apiEmployeeId &&
+  body.employee.email === secondApiEmployee.email.toLowerCase();
+const rejectsFteAndLastName = (body) =>
+  typeof body.errors.fte === "string" &&
+  typeof body.errors.lastName === "string" &&
+  body.errors.firstName === undefined &&
+  body.errors.email === undefined;
+const isNotFound = (body) => body.error === "not_found";
+const isInvalidJson = (body) => body.error === "invalid_json";
+
+const plannerPutsEmployee = (name, path, expected) => [
+  `${planner.label}: PUT ${name}`,
+  () => request(planner, path(), { method: "PUT", json: { ...apiEmployee, fteNumerator: 3, fteDenominator: 4 } }),
+  { contentType: "application/json", ...expected },
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
   visit(anonymous, "/dashboard", 401),
   visit(anonymous, "/planner", 401),
   visit(anonymous, "/employees", 401),
+  visit(anonymous, "/employees/new", 401),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
+    { status: 401, contentType: "application/json" },
+  ],
+  [
+    `${anonymous.label}: POST /api/employees`,
+    () => request(anonymous, "/api/employees", { method: "POST", json: apiEmployee }),
     { status: 401, contentType: "application/json" },
   ],
 
@@ -245,15 +416,124 @@ const steps = [
     { bodyExcludes: "Panel planisty" },
   ],
   visit(employee, "/employees", 403),
+  visit(employee, "/employees/new", 403),
+  visit(employee, `/employees/${unknownEmployeeId}`, 403),
+  [
+    `${employee.label}: POST /api/employees`,
+    () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${employee.label}: PUT /api/employees/<id>`,
+    () => request(employee, unknownEmployeeUrl, { method: "PUT", json: apiEmployee }),
+    { status: 403, contentType: "application/json" },
+  ],
   signOut(employee),
   visit(employee, "/dashboard", 401),
 
-  // Planner: everything the gate lets through; /employees has no page, so it is a 404 rather than a 401/403.
+  // Planner: everything the gate lets through. The API and page steps use the session cookie, so they run while the
+  // planner is signed in; the list comes after the create step, because it has to show the new employee.
   signIn(planner),
   visit(planner, "/dashboard", 200),
-  visit(planner, "/planner", 200),
+  visit(planner, "/planner", 200, "Pracownicy"),
   visit(planner, "/planner/", 200),
-  visit(planner, "/employees", 404),
+  [
+    `${planner.label}: POST /api/employees creates an employee`,
+    async () => {
+      const result = await request(planner, "/api/employees", { method: "POST", json: apiEmployee });
+      apiEmployeeId = parseJson(result.body)?.employee?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      check: isApiEmployee({ numerator: 1, denominator: 2 }),
+      describe: "the employee with a lower-case e-mail and FTE 1/2",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/employees with a taken e-mail in other letter case`,
+    () =>
+      request(planner, "/api/employees", {
+        method: "POST",
+        json: { ...apiEmployee, email: apiEmployee.email.toUpperCase() },
+      }),
+    {
+      status: 409,
+      contentType: "application/json",
+      check: isEmailTaken,
+      describe: "errors.email, the taken-address text",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/employees with an FTE of 3/2 and an empty last name`,
+    () =>
+      request(planner, "/api/employees", {
+        method: "POST",
+        json: { ...apiEmployee, lastName: "", fteNumerator: 3, fteDenominator: 2 },
+      }),
+    {
+      status: 422,
+      contentType: "application/json",
+      check: rejectsFteAndLastName,
+      describe: "errors for exactly the fte and lastName fields",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/employees with a form body`,
+    () => request(planner, "/api/employees", { method: "POST", form: apiEmployee }),
+    { status: 415, contentType: "application/json" },
+  ],
+  [
+    `${planner.label}: POST /api/employees with a body that is not JSON`,
+    () => request(planner, "/api/employees", { method: "POST", jsonText: "{" }),
+    { status: 400, contentType: "application/json", check: isInvalidJson, describe: "the error invalid_json" },
+  ],
+  plannerPutsEmployee("/api/employees/<id> changes the FTE", apiEmployeeUrl, {
+    status: 200,
+    check: isApiEmployee({ numerator: 3, denominator: 4 }),
+    describe: "the same employee with FTE 3/4",
+  }),
+  plannerPutsEmployee("/api/employees/<unknown UUID>", () => unknownEmployeeUrl, {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  plannerPutsEmployee("/api/employees/not-a-uuid", () => "/api/employees/not-a-uuid", {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  [
+    `${planner.label}: POST /api/employees creates a second employee`,
+    () => request(planner, "/api/employees", { method: "POST", json: secondApiEmployee }),
+    {
+      status: 201,
+      contentType: "application/json",
+      check: isSecondApiEmployee,
+      describe: "a second employee with its own id and e-mail",
+    },
+  ],
+  [
+    `${planner.label}: PUT /api/employees/<id> with the e-mail of another employee`,
+    () =>
+      request(planner, apiEmployeeUrl(), {
+        method: "PUT",
+        json: { ...apiEmployee, email: secondApiEmployee.email },
+      }),
+    {
+      status: 409,
+      contentType: "application/json",
+      check: isEmailTaken,
+      describe: "errors.email, the taken-address text",
+    },
+  ],
+  // The pages with names and e-mail addresses must not be cached.
+  visit(planner, "/employees", 200, apiEmployee.lastName, "no-store"),
+  visit(planner, "/employees/new", 200, undefined, "no-store"),
+  visitApiEmployeePage(planner, 200, apiEmployee.lastName, "no-store"),
+  visit(planner, `/employees/${unknownEmployeeId}`, 404, notFoundMessage),
+  visit(planner, "/employees/not-a-uuid", 404, notFoundMessage),
   signOut(planner),
   visit(planner, "/dashboard", 401),
 
@@ -268,6 +548,65 @@ const steps = [
   [`${anonymous.label}: rpc is_planner is rejected`, () => rpc("is_planner"), { statusNotClass: 2 }],
   [`${anonymous.label}: rpc current_app_role is rejected`, () => rpc("current_app_role"), { statusNotClass: 2 }],
 
+  // Employees table: only the planner reads, adds and edits rows, nobody deletes them, and the constraints hold even for
+  // the planner. These steps send bearer tokens straight to PostgREST, without the app.
+  [
+    `${planner.label}: employees insert returns the new row`,
+    async () => {
+      const result = await employeesTable("POST", {
+        token: await accessToken(planner),
+        body: smokeEmployee,
+        prefer: "return=representation",
+      });
+      smokeEmployeeId = parseJson(result.body)?.[0]?.id;
+      return result;
+    },
+    { status: 201, check: isSmokeEmployee(), describe: "the inserted smoke employee, echoed back" },
+  ],
+  plannerReadsEmployee("employees read shows the new row", undefined, "the smoke employee as inserted"),
+  [
+    `${planner.label}: employees insert with a taken e-mail is rejected`,
+    async () => employeesTable("POST", { token: await accessToken(planner), body: smokeEmployee }),
+    { status: 409 },
+  ],
+  [
+    `${planner.label}: employees insert with an upper-case e-mail is rejected`,
+    async () =>
+      employeesTable("POST", {
+        token: await accessToken(planner),
+        body: { ...smokeEmployee, email: `smoke-${runId}-Upper@Example.com` },
+      }),
+    { statusNotClass: 2, check: violates("employees_email_valid"), describe: "an error naming employees_email_valid" },
+  ],
+  [
+    `${planner.label}: employees insert with an FTE of 3/2 is rejected`,
+    async () =>
+      employeesTable("POST", {
+        token: await accessToken(planner),
+        body: { ...smokeEmployee, email: `smoke-${runId}-fte@example.com`, fte_numerator: 3, fte_denominator: 2 },
+      }),
+    { statusNotClass: 2, check: violates("employees_fte_valid"), describe: "an error naming employees_fte_valid" },
+  ],
+  [
+    `${planner.label}: employees update changes the FTE`,
+    async () => employeesTable("PATCH", { token: await accessToken(planner), query: smokeRow(), body: patchedFte }),
+    { statusClass: 2 },
+  ],
+  plannerReadsEmployee("employees read shows the new FTE", patchedFte, "the smoke employee with FTE 3/4"),
+  [
+    `${planner.label}: employees delete is rejected`,
+    async () => employeesTable("DELETE", { token: await accessToken(planner), query: smokeRow() }),
+    { statusNotClass: 2 },
+  ],
+  plannerReadsEmployee(
+    "employees row still exists after the delete attempt",
+    patchedFte,
+    "the smoke employee with FTE 3/4",
+  ),
+  ...notPlannerEmployeeSteps(employee),
+  ...notPlannerEmployeeSteps(noRole),
+  [`${anonymous.label}: employees read is rejected`, () => employeesTable("GET"), { statusNotClass: 2 }],
+
   // A forged role: editing user_metadata succeeds, and still grants nothing in the database or in the app.
   [
     `${employee.label}: Supabase accepts a user_metadata role edit`,
@@ -279,6 +618,14 @@ const steps = [
   signIn(employee),
   visit(employee, "/planner", 403),
   signOut(employee),
+
+  // Always last: removes every row this and earlier runs left behind (the table has no delete grant for the API, so only
+  // the service-role key can), which keeps the next run from ending in a 409 and the app's list as it was before.
+  [
+    "service role: delete the smoke employees",
+    () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
+    { statusClass: 2 },
+  ],
 ];
 
 let failed = 0;
@@ -291,8 +638,11 @@ for (const [name, run, expected, hint] of steps) {
     (expected.location === undefined || actual.location === expected.location) &&
     (expected.locationPrefix === undefined || actual.location.startsWith(expected.locationPrefix)) &&
     (expected.contentType === undefined || actual.contentType.startsWith(expected.contentType)) &&
+    (expected.cacheControl === undefined || actual.cacheControl.includes(expected.cacheControl)) &&
+    (expected.bodyIncludes === undefined || actual.body.includes(expected.bodyIncludes)) &&
     (expected.bodyExcludes === undefined || !actual.body.includes(expected.bodyExcludes)) &&
-    (expected.json === undefined || parseJson(actual.body) === expected.json);
+    (expected.json === undefined || parseJson(actual.body) === expected.json) &&
+    (expected.check === undefined || passes(expected.check, parseJson(actual.body)));
   const seen = [actual.status, actual.location, expected.contentType === undefined ? "" : actual.contentType];
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}  -> ${seen.join(" ").trim()}`);
   if (!ok) {
@@ -302,11 +652,14 @@ for (const [name, run, expected, hint] of steps) {
       expected.statusNotClass === undefined ? "" : `anything but ${expected.statusNotClass}xx`,
       expected.location ?? expected.locationPrefix ?? "",
       expected.contentType ?? "",
+      expected.cacheControl === undefined ? "" : `Cache-Control: ${expected.cacheControl}`,
+      expected.bodyIncludes === undefined ? "" : `a body with "${expected.bodyIncludes}"`,
       expected.bodyExcludes === undefined ? "" : `a body without "${expected.bodyExcludes}"`,
       expected.json === undefined ? "" : `a JSON body of ${JSON.stringify(expected.json)}`,
+      expected.check === undefined ? "" : `a JSON body: ${expected.describe ?? "accepted by its check"}`,
     ];
     console.log(`      expected ${wanted.filter(Boolean).join(" ")}`);
-    if (expected.json !== undefined) console.log(`      got ${actual.body}`);
+    if (expected.json !== undefined || expected.check !== undefined) console.log(`      got ${actual.body}`);
     if (hint) console.log(`      ${hint}`);
   }
 }

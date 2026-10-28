@@ -153,6 +153,10 @@ describe("decideAccess path hygiene", () => {
 describe("decideAccess default deny", () => {
   it.each([
     "/employees",
+    "/employees/new",
+    "/employees/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",
+    "/api/employees",
+    "/api/employees/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",
     "/favicon.ico",
     "/robots.txt",
     "/_image",

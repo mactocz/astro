@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-10-21
+updated: 2026-10-27
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -43,7 +43,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | ---- | --------------------------- | ----------------------------------------------------------------- | ------------- | ------------------------------------------------ | -------- |
 | F-01 | role-based-access           | (foundation) system rozróżnia planistę i pracownika               | —             | Access Control; NFR (własne dane pracownika)     | done |
 | F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | done |
-| S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | proposed |
+| S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | in-progress |
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | proposed |
 | S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | proposed |
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | proposed |
@@ -125,7 +125,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Unknowns:**
   - Jakie dane pracownika poza etatem i e-mailem są wymagane (np. imię i nazwisko)? — Owner: user. Block: no.
 - **Risk:** Pierwsza tabela z danymi osobowymi, więc ustawia wzorzec modelu danych i polityki dostępu dla całej reszty; zaproszenia są osobno w S-10, bo pracownik może istnieć bez konta.
-- **Status:** proposed
+- **Status:** in-progress
 
 ### S-02: Słownik zmian
 
@@ -149,7 +149,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Parallel with:** F-02, S-10
 - **Blockers:** —
 - **Unknowns:** —
-- **Risk:** Model okresu tygodniowego i obsady jest podstawą wszystkich reguł; generowanie celowo wydzielone (S-09), żeby ten wycinek nie rozrósł się o algorytm. Decyzja D6 (`work-time-rules.md`, 2026-10-16): grafik tygodniowy zostaje, a UI i dokumentacja informują, że nie zastępuje formalnego rozkładu czasu pracy (art. 129 § 3: co najmniej miesiąc, przekazany z tygodniowym wyprzedzeniem).
+- **Risk:** Model okresu tygodniowego i obsady jest podstawą wszystkich reguł; generowanie celowo wydzielone (S-09), żeby ten wycinek nie rozrósł się o algorytm. Decyzja D6 (`work-time-rules.md`, 2026-10-16): grafik tygodniowy zostaje, a UI i dokumentacja informują, że nie zastępuje formalnego rozkładu czasu pracy (art. 129 § 3: co najmniej miesiąc, przekazany z tygodniowym wyprzedzeniem). Brak blokowania i usuwania pracowników w S-01 (FR-015 zaparkowane) oznacza, że pracownik, który odszedł, zostaje na liście wyboru; wycinek musi to znieść albo FR-015 trzeba wtedy odparkować.
 - **Status:** proposed
 
 ### S-04: Ręczne obsadzanie zmian

@@ -1,0 +1,16 @@
+---
+import PlannerLayout from "@/layouts/PlannerLayout.astro";
+import EmployeeForm from "@/components/employees/EmployeeForm";
+
+// Same header as the other employee pages, so none of them is ever cached.
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<PlannerLayout title="Dodaj pracownika">
+  <div class="mx-auto w-full max-w-lg rounded-2xl border border-white/10 bg-white/10 p-6 backdrop-blur-xl sm:p-8">
+    <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-2xl font-bold text-transparent">
+      Dodaj pracownika
+    </h1>
+    <EmployeeForm client:load />
+  </div>
+</PlannerLayout>
