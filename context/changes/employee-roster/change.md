@@ -1,9 +1,9 @@
 ---
 change_id: employee-roster
 title: Employee roster
-status: plan_reviewed
+status: implementing
 created: 2026-10-21
-updated: 2026-10-27
+updated: 2026-10-28
 archived_at: null
 ---
 

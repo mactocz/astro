@@ -347,14 +347,14 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Automated
 
-- [ ] 1.1 Testy reguł pracownika i polityki dostępu przechodzą w workerd: `npm test`
-- [ ] 1.2 Linting przechodzi: `npm run lint`
-- [ ] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
-- [ ] 1.4 Zależność zod jest zadeklarowana: `Select-String -Path package.json -Pattern '"zod"'` zwraca dopasowanie
+- [x] 1.1 Testy reguł pracownika i polityki dostępu przechodzą w workerd: `npm test`
+- [x] 1.2 Linting przechodzi: `npm run lint`
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.4 Zależność zod jest zadeklarowana: `Select-String -Path package.json -Pattern '"zod"'` zwraca dopasowanie
 
 #### Manual
 
-- [ ] 1.5 Komunikaty błędów po polsku i granice etatu (1 ≤ licznik ≤ mianownik ≤ 100) zostały przejrzane i zatwierdzone przez autora
+- [x] 1.5 Komunikaty błędów po polsku i granice etatu (1 ≤ licznik ≤ mianownik ≤ 100) zostały przejrzane i zatwierdzone przez autora
 
 ### Phase 2: Tabela employees i RLS
 
