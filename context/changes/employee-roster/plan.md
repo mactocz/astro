@@ -376,7 +376,7 @@ Zmiany z implementacji i przeglądu implementacji, których plan nie przewidywa�
 
 - [x] 2.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list` — eb7129b
 - [x] 2.5 Polityki RLS i uprawnienia w migracji zostały przejrzane przez autora jako wzorzec dla kolejnych tabel — eb7129b
-- [ ] 2.6 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki bazy)
+- [x] 2.6 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki bazy) — 6c53719
 
 ### Phase 3: Dostęp do danych i API
 
@@ -387,7 +387,7 @@ Zmiany z implementacji i przeglądu implementacji, których plan nie przewidywa�
 
 #### Manual
 
-- [ ] 3.3 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki API)
+- [x] 3.3 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki API) — 6c53719
 
 ### Phase 4: Strony planisty
 
@@ -402,5 +402,5 @@ Zmiany z implementacji i przeglądu implementacji, których plan nie przewidywa�
 - [x] 4.4 Przeglądarka, planista: `/dashboard` → `/planner` → kafelek "Pracownicy" → pusta lista z komunikatem (na bazie bez wierszy smoke: po jego sprzątaniu albo po `npx supabase db reset`); dodanie pracownika z etatem 2/4 pokazuje na liście "1/2 etatu"; dodani Ćma, Cybulski, Żak i Zając są w polskiej kolejności; edycja zmienia etat; zajęty e-mail w innej wielkości liter pokazuje błąd przy polu E-mail i zachowuje pozostałe wpisane dane — 5dc59db
 - [x] 4.5 Telefon (szerokość około 375 px w narzędziach przeglądarki): lista i formularz są czytelne bez poziomego przewijania — 5dc59db
 - [x] 4.6 Przeglądarka, pracownik i anonim: `/employees` pokazuje "Brak dostępu" (403 dla pracownika, 401 dla anonima, bez przekierowania) — 5dc59db
-- [ ] 4.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`)
-- [ ] 4.8 Po ręcznym wdrożeniu (migracja przed kodem, zob. Migration Notes) planista na `https://shiftly.mto-astro.workers.dev` dodaje i edytuje pracownika (wykonuje autor)
+- [x] 4.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`) — 6c53719
+- [x] 4.8 Po ręcznym wdrożeniu (migracja przed kodem, zob. Migration Notes) planista na `https://shiftly.mto-astro.workers.dev` dodaje i edytuje pracownika (wykonuje autor) — 0dc487c
