@@ -360,22 +360,22 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Automated
 
-- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [x] 2.2 Linting przechodzi: `npm run lint`
-- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
+- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset` — eb7129b
+- [x] 2.2 Linting przechodzi: `npm run lint` — eb7129b
+- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke` — eb7129b
 
 #### Manual
 
-- [x] 2.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list`
-- [x] 2.5 Polityki RLS i uprawnienia w migracji zostały przejrzane przez autora jako wzorzec dla kolejnych tabel
+- [x] 2.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list` — eb7129b
+- [x] 2.5 Polityki RLS i uprawnienia w migracji zostały przejrzane przez autora jako wzorzec dla kolejnych tabel — eb7129b
 - [ ] 2.6 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki bazy)
 
 ### Phase 3: Dostęp do danych i API
 
 #### Automated
 
-- [ ] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 3.2 Smoke z krokami API przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke`
+- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 3.2 Smoke z krokami API przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke`
 
 #### Manual
 

@@ -1,6 +1,7 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
 // that the database role helpers read the role from the token, that only planners can read and write the employees
-// table through PostgREST, and that public registration stays closed. Zero dependencies on purpose. It creates real
+// table through PostgREST, that the employee API routes keep to the role gate, the validation and their status codes,
+// and that public registration stays closed. Zero dependencies on purpose. It creates real
 // accounts and removes its own employee rows with the service-role key, so it only runs against a LOCAL Supabase, and
 // the app under test must read the same stack (.env / .dev.vars). Values come from `supabase status -o env`.
 // Run against a live server:
@@ -54,7 +55,8 @@ function storeCookies(jar, response) {
 }
 
 // The path goes to fetch as a plain string on purpose: new URL(path, base) would rewrite "//planner" and "/%70lanner".
-async function request(actor, path, { method = "GET", form, accept } = {}) {
+// `form` sends a urlencoded body, `json` a JSON one; a request never has both.
+async function request(actor, path, { method = "GET", form, json, accept } = {}) {
   const response = await fetch(BASE_URL + path, {
     method,
     redirect: "manual",
@@ -63,8 +65,9 @@ async function request(actor, path, { method = "GET", form, accept } = {}) {
       Origin: BASE_URL,
       ...(accept ? { Accept: accept } : {}),
       ...(form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
+      ...(json === undefined ? {} : { "Content-Type": "application/json" }),
     },
-    body: form ? new URLSearchParams(form).toString() : undefined,
+    body: json === undefined ? (form ? new URLSearchParams(form).toString() : undefined) : JSON.stringify(json),
   });
   storeCookies(actor.jar, response);
   return {
@@ -294,6 +297,47 @@ const notPlannerEmployeeSteps = (actor) => [
   ),
 ];
 
+// The API steps share one employee, created through the app by the planner. Names with Polish letters and a mixed-case
+// e-mail on purpose: the app must keep the letters and answer with the e-mail in lower case (smoke-<runId>@example.com,
+// which the final cleanup step deletes by prefix). The FTE 2/4 comes back reduced to 1/2. The id is only known once
+// the create step has run.
+const apiEmployee = {
+  firstName: "Małgorzata",
+  lastName: `Łukasz-Smoke-${runId}`,
+  email: `Smoke-${runId}@Example.com`,
+  fteNumerator: 2,
+  fteDenominator: 4,
+};
+const apiEmployeeUrl = () => `/api/employees/${apiEmployeeId}`;
+// The gate answers before the route runs, so the employee's PUT may name an id that does not exist.
+const unknownEmployeeUrl = "/api/employees/00000000-0000-4000-8000-000000000000";
+const emailTakenMessage = "Ten adres e-mail jest już przypisany do innego pracownika.";
+let apiEmployeeId;
+
+// The route answers with the camelCase employee: names as sent, the e-mail in lower case, the FTE in lowest terms.
+const isApiEmployee = (fte) => (body) =>
+  typeof body.employee.id === "string" &&
+  body.employee.id === apiEmployeeId &&
+  typeof body.employee.createdAt === "string" &&
+  body.employee.firstName === apiEmployee.firstName &&
+  body.employee.lastName === apiEmployee.lastName &&
+  body.employee.email === apiEmployee.email.toLowerCase() &&
+  body.employee.fte.numerator === fte.numerator &&
+  body.employee.fte.denominator === fte.denominator;
+const isEmailTaken = (body) => body.errors.email === emailTakenMessage;
+const rejectsFteAndLastName = (body) =>
+  typeof body.errors.fte === "string" &&
+  typeof body.errors.lastName === "string" &&
+  body.errors.firstName === undefined &&
+  body.errors.email === undefined;
+const isNotFound = (body) => body.error === "not_found";
+
+const plannerPutsEmployee = (name, path, expected) => [
+  `${planner.label}: PUT ${name}`,
+  () => request(planner, path(), { method: "PUT", json: { ...apiEmployee, fteNumerator: 3, fteDenominator: 4 } }),
+  { contentType: "application/json", ...expected },
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -303,6 +347,11 @@ const steps = [
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
+    { status: 401, contentType: "application/json" },
+  ],
+  [
+    `${anonymous.label}: POST /api/employees`,
+    () => request(anonymous, "/api/employees", { method: "POST", json: apiEmployee }),
     { status: 401, contentType: "application/json" },
   ],
 
@@ -340,15 +389,88 @@ const steps = [
     { bodyExcludes: "Panel planisty" },
   ],
   visit(employee, "/employees", 403),
+  [
+    `${employee.label}: POST /api/employees`,
+    () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${employee.label}: PUT /api/employees/<id>`,
+    () => request(employee, unknownEmployeeUrl, { method: "PUT", json: apiEmployee }),
+    { status: 403, contentType: "application/json" },
+  ],
   signOut(employee),
   visit(employee, "/dashboard", 401),
 
-  // Planner: everything the gate lets through; /employees has no page, so it is a 404 rather than a 401/403.
+  // Planner: everything the gate lets through; /employees has no page, so it is a 404 rather than a 401/403. The API
+  // steps use the session cookie, so they run while the planner is signed in.
   signIn(planner),
   visit(planner, "/dashboard", 200),
   visit(planner, "/planner", 200),
   visit(planner, "/planner/", 200),
   visit(planner, "/employees", 404),
+  [
+    `${planner.label}: POST /api/employees creates an employee`,
+    async () => {
+      const result = await request(planner, "/api/employees", { method: "POST", json: apiEmployee });
+      apiEmployeeId = parseJson(result.body)?.employee?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      check: isApiEmployee({ numerator: 1, denominator: 2 }),
+      describe: "the employee with a lower-case e-mail and FTE 1/2",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/employees with a taken e-mail in other letter case`,
+    () =>
+      request(planner, "/api/employees", {
+        method: "POST",
+        json: { ...apiEmployee, email: apiEmployee.email.toUpperCase() },
+      }),
+    {
+      status: 409,
+      contentType: "application/json",
+      check: isEmailTaken,
+      describe: "errors.email, the taken-address text",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/employees with an FTE of 3/2 and an empty last name`,
+    () =>
+      request(planner, "/api/employees", {
+        method: "POST",
+        json: { ...apiEmployee, lastName: "", fteNumerator: 3, fteDenominator: 2 },
+      }),
+    {
+      status: 422,
+      contentType: "application/json",
+      check: rejectsFteAndLastName,
+      describe: "errors for exactly the fte and lastName fields",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/employees with a form body`,
+    () => request(planner, "/api/employees", { method: "POST", form: apiEmployee }),
+    { status: 415, contentType: "application/json" },
+  ],
+  plannerPutsEmployee("/api/employees/<id> changes the FTE", apiEmployeeUrl, {
+    status: 200,
+    check: isApiEmployee({ numerator: 3, denominator: 4 }),
+    describe: "the same employee with FTE 3/4",
+  }),
+  plannerPutsEmployee("/api/employees/<unknown UUID>", () => unknownEmployeeUrl, {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  plannerPutsEmployee("/api/employees/not-a-uuid", () => "/api/employees/not-a-uuid", {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
   signOut(planner),
   visit(planner, "/dashboard", 401),
 

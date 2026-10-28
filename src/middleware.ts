@@ -4,6 +4,8 @@ import { decideAccess, parseRole } from "@/lib/services/access";
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const supabase = createClient(context.request.headers, context.cookies);
+  // One client per request for pages and API routes: they query with the user's session, so RLS applies.
+  context.locals.supabase = supabase;
 
   if (supabase) {
     const {
