@@ -385,14 +385,14 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Automated
 
-- [x] 4.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 4.2 Smoke z krokami stron przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke`
-- [x] 4.3 Placeholder z F-01 został usunięty: `Get-ChildItem src -Recurse -File | Select-String -Pattern 'Placeholder behind'` nie zwraca dopasowań
+- [x] 4.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 5dc59db
+- [x] 4.2 Smoke z krokami stron przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke` — 5dc59db
+- [x] 4.3 Placeholder z F-01 został usunięty: `Get-ChildItem src -Recurse -File | Select-String -Pattern 'Placeholder behind'` nie zwraca dopasowań — 5dc59db
 
 #### Manual
 
-- [x] 4.4 Przeglądarka, planista: `/dashboard` → `/planner` → kafelek "Pracownicy" → pusta lista z komunikatem (na bazie bez wierszy smoke: po jego sprzątaniu albo po `npx supabase db reset`); dodanie pracownika z etatem 2/4 pokazuje na liście "1/2 etatu"; dodani Ćma, Cybulski, Żak i Zając są w polskiej kolejności; edycja zmienia etat; zajęty e-mail w innej wielkości liter pokazuje błąd przy polu E-mail i zachowuje pozostałe wpisane dane
-- [x] 4.5 Telefon (szerokość około 375 px w narzędziach przeglądarki): lista i formularz są czytelne bez poziomego przewijania
-- [x] 4.6 Przeglądarka, pracownik i anonim: `/employees` pokazuje "Brak dostępu" (403 dla pracownika, 401 dla anonima, bez przekierowania)
+- [x] 4.4 Przeglądarka, planista: `/dashboard` → `/planner` → kafelek "Pracownicy" → pusta lista z komunikatem (na bazie bez wierszy smoke: po jego sprzątaniu albo po `npx supabase db reset`); dodanie pracownika z etatem 2/4 pokazuje na liście "1/2 etatu"; dodani Ćma, Cybulski, Żak i Zając są w polskiej kolejności; edycja zmienia etat; zajęty e-mail w innej wielkości liter pokazuje błąd przy polu E-mail i zachowuje pozostałe wpisane dane — 5dc59db
+- [x] 4.5 Telefon (szerokość około 375 px w narzędziach przeglądarki): lista i formularz są czytelne bez poziomego przewijania — 5dc59db
+- [x] 4.6 Przeglądarka, pracownik i anonim: `/employees` pokazuje "Brak dostępu" (403 dla pracownika, 401 dla anonima, bez przekierowania) — 5dc59db
 - [ ] 4.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`)
 - [ ] 4.8 Po ręcznym wdrożeniu (migracja przed kodem, zob. Migration Notes) planista na `https://shiftly.mto-astro.workers.dev` dodaje i edytuje pracownika (wykonuje autor)
