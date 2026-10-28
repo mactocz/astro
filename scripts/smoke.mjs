@@ -56,8 +56,9 @@ function storeCookies(jar, response) {
 }
 
 // The path goes to fetch as a plain string on purpose: new URL(path, base) would rewrite "//planner" and "/%70lanner".
-// `form` sends a urlencoded body, `json` a JSON one; a request never has both.
-async function request(actor, path, { method = "GET", form, json, accept } = {}) {
+// `form` sends a urlencoded body, `json` a JSON one, `jsonText` the given text under a JSON content type (to send what
+// is not valid JSON); a request has at most one of them.
+async function request(actor, path, { method = "GET", form, json, jsonText, accept } = {}) {
   const response = await fetch(BASE_URL + path, {
     method,
     redirect: "manual",
@@ -66,9 +67,11 @@ async function request(actor, path, { method = "GET", form, json, accept } = {})
       Origin: BASE_URL,
       ...(accept ? { Accept: accept } : {}),
       ...(form ? { "Content-Type": "application/x-www-form-urlencoded" } : {}),
-      ...(json === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(json === undefined && jsonText === undefined ? {} : { "Content-Type": "application/json" }),
     },
-    body: json === undefined ? (form ? new URLSearchParams(form).toString() : undefined) : JSON.stringify(json),
+    body:
+      jsonText ??
+      (json === undefined ? (form ? new URLSearchParams(form).toString() : undefined) : JSON.stringify(json)),
   });
   storeCookies(actor.jar, response);
   return {
@@ -314,6 +317,8 @@ const apiEmployee = {
   fteNumerator: 2,
   fteDenominator: 4,
 };
+// A second employee, so the PUT conflict step has another person's e-mail to collide with.
+const secondApiEmployee = { ...apiEmployee, firstName: "Zofia", email: `Smoke-${runId}-second@Example.com` };
 const apiEmployeeUrl = () => `/api/employees/${apiEmployeeId}`;
 // The gate answers before the route or the page runs, so the employee's requests may name an id that does not exist.
 const unknownEmployeeId = "00000000-0000-4000-8000-000000000000";
@@ -341,12 +346,17 @@ const isApiEmployee = (fte) => (body) =>
   body.employee.fte.numerator === fte.numerator &&
   body.employee.fte.denominator === fte.denominator;
 const isEmailTaken = (body) => body.errors.email === emailTakenMessage;
+const isSecondApiEmployee = (body) =>
+  typeof body.employee.id === "string" &&
+  body.employee.id !== apiEmployeeId &&
+  body.employee.email === secondApiEmployee.email.toLowerCase();
 const rejectsFteAndLastName = (body) =>
   typeof body.errors.fte === "string" &&
   typeof body.errors.lastName === "string" &&
   body.errors.firstName === undefined &&
   body.errors.email === undefined;
 const isNotFound = (body) => body.error === "not_found";
+const isInvalidJson = (body) => body.error === "invalid_json";
 
 const plannerPutsEmployee = (name, path, expected) => [
   `${planner.label}: PUT ${name}`,
@@ -474,6 +484,11 @@ const steps = [
     () => request(planner, "/api/employees", { method: "POST", form: apiEmployee }),
     { status: 415, contentType: "application/json" },
   ],
+  [
+    `${planner.label}: POST /api/employees with a body that is not JSON`,
+    () => request(planner, "/api/employees", { method: "POST", jsonText: "{" }),
+    { status: 400, contentType: "application/json", check: isInvalidJson, describe: "the error invalid_json" },
+  ],
   plannerPutsEmployee("/api/employees/<id> changes the FTE", apiEmployeeUrl, {
     status: 200,
     check: isApiEmployee({ numerator: 3, denominator: 4 }),
@@ -489,6 +504,30 @@ const steps = [
     check: isNotFound,
     describe: "the error not_found",
   }),
+  [
+    `${planner.label}: POST /api/employees creates a second employee`,
+    () => request(planner, "/api/employees", { method: "POST", json: secondApiEmployee }),
+    {
+      status: 201,
+      contentType: "application/json",
+      check: isSecondApiEmployee,
+      describe: "a second employee with its own id and e-mail",
+    },
+  ],
+  [
+    `${planner.label}: PUT /api/employees/<id> with the e-mail of another employee`,
+    () =>
+      request(planner, apiEmployeeUrl(), {
+        method: "PUT",
+        json: { ...apiEmployee, email: secondApiEmployee.email },
+      }),
+    {
+      status: 409,
+      contentType: "application/json",
+      check: isEmailTaken,
+      describe: "errors.email, the taken-address text",
+    },
+  ],
   // The pages with names and e-mail addresses must not be cached.
   visit(planner, "/employees", 200, apiEmployee.lastName, "no-store"),
   visit(planner, "/employees/new", 200, undefined, "no-store"),

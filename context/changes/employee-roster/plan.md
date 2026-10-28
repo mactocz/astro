@@ -331,6 +331,14 @@ Strona listy to jedno zapytanie do PostgREST na żądanie (obok `getUser()` w mi
 
 Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push` (nowa tabela, bez wpływu na obecny kod), (2) `npm run build` i `npx wrangler deploy`. Tabela startuje pusta; pierwsi pracownicy powstają z poziomu aplikacji. Wycofanie: `npx wrangler rollback` cofa kod, tabela zostaje nieszkodliwie; usunięcie samej tabeli wymaga nowej migracji, nie edycji istniejącej. Omyłkowo dodanego pracownika autor usuwa w panelu Supabase (Table Editor) albo SQL-em z rolą administracyjną, bo przez aplikację i API nie da się go usunąć.
 
+## Addendum: zmiany ponad plan
+
+Zmiany z implementacji i przeglądu implementacji, których plan nie przewidywał. Żadna nie zmienia zakresu ani decyzji.
+
+- `src/lib/json-response.ts` (nowy): `jsonResponse` i `readJsonBody` współdzielone przez obie trasy API, żeby kroki 415 i 400 oraz nagłówki odpowiedzi nie były zduplikowane (Faza 3 §3).
+- `scripts/smoke.mjs`: oczekiwanie `cacheControl` dla listy oraz formularzy dodawania i edycji, które zabezpiecza decyzję `no-store` z przeglądu planu (Faza 4 §4); opcja `jsonText` w `request()` i trzy kroki uzupełniające pokrycie kodów odpowiedzi: `POST` z ciałem `{` (400 `invalid_json`), utworzenie drugiego pracownika smoke oraz `PUT` z jego adresem e-mail (409) (Faza 3 §4).
+- `AGENTS.md`: punkt `npm run smoke` wymienia też dane pracowników. `README.md`: nagłówek "Auth routes" zmieniony na "Routes", akapit o trasach tylko dla planisty oraz przepisany opis migracji (są dwie migracje i jedna własna tabela) (Faza 4 §5).
+
 ## References
 
 - Roadmapa: `context/foundation/roadmap.md` (S-01, `employee-roster`; niewiadoma "jakie dane pracownika są wymagane" rozstrzygnięta w tym planie)
