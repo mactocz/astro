@@ -347,27 +347,27 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Automated
 
-- [x] 1.1 Testy reguł pracownika i polityki dostępu przechodzą w workerd: `npm test`
-- [x] 1.2 Linting przechodzi: `npm run lint`
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
-- [x] 1.4 Zależność zod jest zadeklarowana: `Select-String -Path package.json -Pattern '"zod"'` zwraca dopasowanie
+- [x] 1.1 Testy reguł pracownika i polityki dostępu przechodzą w workerd: `npm test` — 4d9016c
+- [x] 1.2 Linting przechodzi: `npm run lint` — 4d9016c
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 4d9016c
+- [x] 1.4 Zależność zod jest zadeklarowana: `Select-String -Path package.json -Pattern '"zod"'` zwraca dopasowanie — 4d9016c
 
 #### Manual
 
-- [x] 1.5 Komunikaty błędów po polsku i granice etatu (1 ≤ licznik ≤ mianownik ≤ 100) zostały przejrzane i zatwierdzone przez autora
+- [x] 1.5 Komunikaty błędów po polsku i granice etatu (1 ≤ licznik ≤ mianownik ≤ 100) zostały przejrzane i zatwierdzone przez autora — 4d9016c
 
 ### Phase 2: Tabela employees i RLS
 
 #### Automated
 
-- [ ] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Smoke z krokami bazy przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
+- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
+- [x] 2.2 Linting przechodzi: `npm run lint`
+- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
 
 #### Manual
 
-- [ ] 2.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list`
-- [ ] 2.5 Polityki RLS i uprawnienia w migracji zostały przejrzane przez autora jako wzorzec dla kolejnych tabel
+- [x] 2.4 Migracja zastosowana na hostowanym projekcie przez autora (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list`
+- [x] 2.5 Polityki RLS i uprawnienia w migracji zostały przejrzane przez autora jako wzorzec dla kolejnych tabel
 - [ ] 2.6 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki bazy)
 
 ### Phase 3: Dostęp do danych i API

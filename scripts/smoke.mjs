@@ -1,7 +1,8 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
-// that the database role helpers read the role from the token, and that public registration stays closed. Zero
-// dependencies on purpose. It creates real accounts with the service-role key, so it only runs against a LOCAL
-// Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come from `supabase status -o env`.
+// that the database role helpers read the role from the token, that only planners can read and write the employees
+// table through PostgREST, and that public registration stays closed. Zero dependencies on purpose. It creates real
+// accounts and removes its own employee rows with the service-role key, so it only runs against a LOCAL Supabase, and
+// the app under test must read the same stack (.env / .dev.vars). Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -147,6 +148,22 @@ async function rpc(name, token) {
   return supabaseResult(response);
 }
 
+// Calls the employees table through PostgREST. Without a token only the anon key is sent, like a client that never
+// signed in; `key` replaces the anon key in both headers (the service-role cleanup).
+async function employeesTable(method, { token, key = SUPABASE_KEY, query = "", body, prefer } = {}) {
+  const response = await fetch(`${supabaseOrigin}/rest/v1/employees${query}`, {
+    method,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${token ?? key}`,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(prefer ? { Prefer: prefer } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return supabaseResult(response);
+}
+
 // Every signed-in user may edit their own user_metadata, so Supabase is expected to accept this; the role must still
 // come only from app_metadata.
 async function forgeRole(actor, role) {
@@ -169,6 +186,15 @@ function parseJson(body) {
     return JSON.parse(body);
   } catch {
     return undefined;
+  }
+}
+
+// A predicate that throws on an unexpected body shape fails its step instead of crashing the whole run.
+function passes(check, value) {
+  try {
+    return check(value) === true;
+  } catch {
+    return false;
   }
 }
 
@@ -197,6 +223,75 @@ const rpcStep = (actor, name, json, note = "") => [
   `${actor.label}: rpc ${name} returns ${JSON.stringify(json)}${note}`,
   async () => rpc(name, await accessToken(actor)),
   { status: 200, json },
+];
+
+// The employees steps share one row. Its e-mail starts with "smoke-" and is lower case, because the table refuses
+// anything else; the final cleanup step deletes by that prefix. The id is only known once the insert step has run.
+const smokeEmployee = {
+  first_name: "Smoke",
+  last_name: `Smoke-${runId}`,
+  email: `smoke-${runId}-roster@example.com`,
+  fte_numerator: 1,
+  fte_denominator: 2,
+};
+const patchedFte = { fte_numerator: 3, fte_denominator: 4 };
+let smokeEmployeeId;
+const smokeRow = () => `?id=eq.${smokeEmployeeId}`;
+
+// `check` predicates receive the parsed body. A row from the database carries a random id and a timestamp, so it cannot
+// be compared as a whole; every sent column is compared instead.
+const isEmptyList = (rows) => Array.isArray(rows) && rows.length === 0;
+const isSmokeEmployee = (changes) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  typeof rows[0].id === "string" &&
+  Object.entries({ ...smokeEmployee, ...changes }).every(([column, value]) => rows[0][column] === value);
+// The error body names the violated constraint, so a rejection for any other reason does not pass.
+const violates = (constraint) => (error) => typeof error?.message === "string" && error.message.includes(constraint);
+
+const plannerReadsEmployee = (name, changes, describe) => [
+  `${planner.label}: ${name}`,
+  async () => employeesTable("GET", { token: await accessToken(planner), query: smokeRow() }),
+  { status: 200, check: isSmokeEmployee(changes), describe },
+];
+
+// A signed-in account without planner rights: the table looks empty and writes are refused or hidden. The planner's read
+// afterwards is the proof that the row did not change, whatever status PostgREST used to answer.
+const notPlannerEmployeeSteps = (actor) => [
+  [
+    `${actor.label}: employees read returns an empty list`,
+    async () => employeesTable("GET", { token: await accessToken(actor), query: "?select=id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: employees insert is rejected`,
+    async () =>
+      employeesTable("POST", {
+        token: await accessToken(actor),
+        body: { ...smokeEmployee, email: `smoke-${runId}-${actor.label}@example.com` },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: employees update is refused or hidden`,
+    async () =>
+      employeesTable("PATCH", {
+        token: await accessToken(actor),
+        query: smokeRow(),
+        body: { fte_numerator: 1, fte_denominator: 1 },
+      }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: employees delete is rejected`,
+    async () => employeesTable("DELETE", { token: await accessToken(actor), query: smokeRow() }),
+    { statusNotClass: 2 },
+  ],
+  plannerReadsEmployee(
+    `employees row is unchanged after ${actor.label} write attempts`,
+    patchedFte,
+    "the smoke employee with FTE 3/4",
+  ),
 ];
 
 const steps = [
@@ -268,6 +363,65 @@ const steps = [
   [`${anonymous.label}: rpc is_planner is rejected`, () => rpc("is_planner"), { statusNotClass: 2 }],
   [`${anonymous.label}: rpc current_app_role is rejected`, () => rpc("current_app_role"), { statusNotClass: 2 }],
 
+  // Employees table: only the planner reads, adds and edits rows, nobody deletes them, and the constraints hold even for
+  // the planner. These steps send bearer tokens straight to PostgREST, without the app.
+  [
+    `${planner.label}: employees insert returns the new row`,
+    async () => {
+      const result = await employeesTable("POST", {
+        token: await accessToken(planner),
+        body: smokeEmployee,
+        prefer: "return=representation",
+      });
+      smokeEmployeeId = parseJson(result.body)?.[0]?.id;
+      return result;
+    },
+    { status: 201, check: isSmokeEmployee(), describe: "the inserted smoke employee, echoed back" },
+  ],
+  plannerReadsEmployee("employees read shows the new row", undefined, "the smoke employee as inserted"),
+  [
+    `${planner.label}: employees insert with a taken e-mail is rejected`,
+    async () => employeesTable("POST", { token: await accessToken(planner), body: smokeEmployee }),
+    { status: 409 },
+  ],
+  [
+    `${planner.label}: employees insert with an upper-case e-mail is rejected`,
+    async () =>
+      employeesTable("POST", {
+        token: await accessToken(planner),
+        body: { ...smokeEmployee, email: `smoke-${runId}-Upper@Example.com` },
+      }),
+    { statusNotClass: 2, check: violates("employees_email_valid"), describe: "an error naming employees_email_valid" },
+  ],
+  [
+    `${planner.label}: employees insert with an FTE of 3/2 is rejected`,
+    async () =>
+      employeesTable("POST", {
+        token: await accessToken(planner),
+        body: { ...smokeEmployee, email: `smoke-${runId}-fte@example.com`, fte_numerator: 3, fte_denominator: 2 },
+      }),
+    { statusNotClass: 2, check: violates("employees_fte_valid"), describe: "an error naming employees_fte_valid" },
+  ],
+  [
+    `${planner.label}: employees update changes the FTE`,
+    async () => employeesTable("PATCH", { token: await accessToken(planner), query: smokeRow(), body: patchedFte }),
+    { statusClass: 2 },
+  ],
+  plannerReadsEmployee("employees read shows the new FTE", patchedFte, "the smoke employee with FTE 3/4"),
+  [
+    `${planner.label}: employees delete is rejected`,
+    async () => employeesTable("DELETE", { token: await accessToken(planner), query: smokeRow() }),
+    { statusNotClass: 2 },
+  ],
+  plannerReadsEmployee(
+    "employees row still exists after the delete attempt",
+    patchedFte,
+    "the smoke employee with FTE 3/4",
+  ),
+  ...notPlannerEmployeeSteps(employee),
+  ...notPlannerEmployeeSteps(noRole),
+  [`${anonymous.label}: employees read is rejected`, () => employeesTable("GET"), { statusNotClass: 2 }],
+
   // A forged role: editing user_metadata succeeds, and still grants nothing in the database or in the app.
   [
     `${employee.label}: Supabase accepts a user_metadata role edit`,
@@ -279,6 +433,14 @@ const steps = [
   signIn(employee),
   visit(employee, "/planner", 403),
   signOut(employee),
+
+  // Always last: removes every row this and earlier runs left behind (the table has no delete grant for the API, so only
+  // the service-role key can), which keeps the next run from ending in a 409 and the app's list as it was before.
+  [
+    "service role: delete the smoke employees",
+    () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
+    { statusClass: 2 },
+  ],
 ];
 
 let failed = 0;
@@ -292,7 +454,8 @@ for (const [name, run, expected, hint] of steps) {
     (expected.locationPrefix === undefined || actual.location.startsWith(expected.locationPrefix)) &&
     (expected.contentType === undefined || actual.contentType.startsWith(expected.contentType)) &&
     (expected.bodyExcludes === undefined || !actual.body.includes(expected.bodyExcludes)) &&
-    (expected.json === undefined || parseJson(actual.body) === expected.json);
+    (expected.json === undefined || parseJson(actual.body) === expected.json) &&
+    (expected.check === undefined || passes(expected.check, parseJson(actual.body)));
   const seen = [actual.status, actual.location, expected.contentType === undefined ? "" : actual.contentType];
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}  -> ${seen.join(" ").trim()}`);
   if (!ok) {
@@ -304,9 +467,10 @@ for (const [name, run, expected, hint] of steps) {
       expected.contentType ?? "",
       expected.bodyExcludes === undefined ? "" : `a body without "${expected.bodyExcludes}"`,
       expected.json === undefined ? "" : `a JSON body of ${JSON.stringify(expected.json)}`,
+      expected.check === undefined ? "" : `a JSON body: ${expected.describe ?? "accepted by its check"}`,
     ];
     console.log(`      expected ${wanted.filter(Boolean).join(" ")}`);
-    if (expected.json !== undefined) console.log(`      got ${actual.body}`);
+    if (expected.json !== undefined || expected.check !== undefined) console.log(`      got ${actual.body}`);
     if (hint) console.log(`      ${hint}`);
   }
 }
