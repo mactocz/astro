@@ -1,9 +1,10 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
 // that the database role helpers read the role from the token, that only planners can read and write the employees
 // table through PostgREST, that the employee API routes keep to the role gate, the validation and their status codes,
-// and that public registration stays closed. Zero dependencies on purpose. It creates real
-// accounts and removes its own employee rows with the service-role key, so it only runs against a LOCAL Supabase, and
-// the app under test must read the same stack (.env / .dev.vars). Values come from `supabase status -o env`.
+// that the employee pages open for the planner only, and that public registration stays closed. Zero dependencies on
+// purpose. It creates real accounts and removes its own employee rows with the service-role key, so it only runs
+// against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come from
+// `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -74,6 +75,7 @@ async function request(actor, path, { method = "GET", form, json, accept } = {})
     status: response.status,
     location: response.headers.get("location") ?? "",
     contentType: response.headers.get("content-type") ?? "",
+    cacheControl: response.headers.get("cache-control") ?? "",
     body: await response.text(),
   };
 }
@@ -206,7 +208,11 @@ const noRole = await createAccount("no-role", null);
 const employee = await createAccount("employee", "employee");
 const planner = await createAccount("planner", "planner");
 
-const visit = (actor, path, status) => [`${actor.label}: GET ${path}`, () => request(actor, path), { status }];
+const visit = (actor, path, status, bodyIncludes, cacheControl) => [
+  `${actor.label}: GET ${path}`,
+  () => request(actor, path),
+  { status, bodyIncludes, cacheControl },
+];
 
 const signIn = (actor, hint) => [
   `${actor.label}: signin accepts correct password`,
@@ -309,10 +315,20 @@ const apiEmployee = {
   fteDenominator: 4,
 };
 const apiEmployeeUrl = () => `/api/employees/${apiEmployeeId}`;
-// The gate answers before the route runs, so the employee's PUT may name an id that does not exist.
-const unknownEmployeeUrl = "/api/employees/00000000-0000-4000-8000-000000000000";
+// The gate answers before the route or the page runs, so the employee's requests may name an id that does not exist.
+const unknownEmployeeId = "00000000-0000-4000-8000-000000000000";
+const unknownEmployeeUrl = `/api/employees/${unknownEmployeeId}`;
 const emailTakenMessage = "Ten adres e-mail jest już przypisany do innego pracownika.";
 let apiEmployeeId;
+
+// The form page of the employee the planner creates. Its address needs the id, which only exists once the create step
+// has run, so it is built when the step runs.
+const visitApiEmployeePage = (actor, status, bodyIncludes, cacheControl) => [
+  `${actor.label}: GET /employees/<id>`,
+  () => request(actor, `/employees/${apiEmployeeId}`),
+  { status, bodyIncludes, cacheControl },
+];
+const notFoundMessage = "Nie znaleziono pracownika";
 
 // The route answers with the camelCase employee: names as sent, the e-mail in lower case, the FTE in lowest terms.
 const isApiEmployee = (fte) => (body) =>
@@ -344,6 +360,7 @@ const steps = [
   visit(anonymous, "/dashboard", 401),
   visit(anonymous, "/planner", 401),
   visit(anonymous, "/employees", 401),
+  visit(anonymous, "/employees/new", 401),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
@@ -389,6 +406,8 @@ const steps = [
     { bodyExcludes: "Panel planisty" },
   ],
   visit(employee, "/employees", 403),
+  visit(employee, "/employees/new", 403),
+  visit(employee, `/employees/${unknownEmployeeId}`, 403),
   [
     `${employee.label}: POST /api/employees`,
     () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
@@ -402,13 +421,12 @@ const steps = [
   signOut(employee),
   visit(employee, "/dashboard", 401),
 
-  // Planner: everything the gate lets through; /employees has no page, so it is a 404 rather than a 401/403. The API
-  // steps use the session cookie, so they run while the planner is signed in.
+  // Planner: everything the gate lets through. The API and page steps use the session cookie, so they run while the
+  // planner is signed in; the list comes after the create step, because it has to show the new employee.
   signIn(planner),
   visit(planner, "/dashboard", 200),
-  visit(planner, "/planner", 200),
+  visit(planner, "/planner", 200, "Pracownicy"),
   visit(planner, "/planner/", 200),
-  visit(planner, "/employees", 404),
   [
     `${planner.label}: POST /api/employees creates an employee`,
     async () => {
@@ -471,6 +489,12 @@ const steps = [
     check: isNotFound,
     describe: "the error not_found",
   }),
+  // The pages with names and e-mail addresses must not be cached.
+  visit(planner, "/employees", 200, apiEmployee.lastName, "no-store"),
+  visit(planner, "/employees/new", 200, undefined, "no-store"),
+  visitApiEmployeePage(planner, 200, apiEmployee.lastName, "no-store"),
+  visit(planner, `/employees/${unknownEmployeeId}`, 404, notFoundMessage),
+  visit(planner, "/employees/not-a-uuid", 404, notFoundMessage),
   signOut(planner),
   visit(planner, "/dashboard", 401),
 
@@ -575,6 +599,8 @@ for (const [name, run, expected, hint] of steps) {
     (expected.location === undefined || actual.location === expected.location) &&
     (expected.locationPrefix === undefined || actual.location.startsWith(expected.locationPrefix)) &&
     (expected.contentType === undefined || actual.contentType.startsWith(expected.contentType)) &&
+    (expected.cacheControl === undefined || actual.cacheControl.includes(expected.cacheControl)) &&
+    (expected.bodyIncludes === undefined || actual.body.includes(expected.bodyIncludes)) &&
     (expected.bodyExcludes === undefined || !actual.body.includes(expected.bodyExcludes)) &&
     (expected.json === undefined || parseJson(actual.body) === expected.json) &&
     (expected.check === undefined || passes(expected.check, parseJson(actual.body)));
@@ -587,6 +613,8 @@ for (const [name, run, expected, hint] of steps) {
       expected.statusNotClass === undefined ? "" : `anything but ${expected.statusNotClass}xx`,
       expected.location ?? expected.locationPrefix ?? "",
       expected.contentType ?? "",
+      expected.cacheControl === undefined ? "" : `Cache-Control: ${expected.cacheControl}`,
+      expected.bodyIncludes === undefined ? "" : `a body with "${expected.bodyIncludes}"`,
       expected.bodyExcludes === undefined ? "" : `a body without "${expected.bodyExcludes}"`,
       expected.json === undefined ? "" : `a JSON body of ${JSON.stringify(expected.json)}`,
       expected.check === undefined ? "" : `a JSON body: ${expected.describe ?? "accepted by its check"}`,
