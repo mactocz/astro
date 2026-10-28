@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-10-27
+updated: 2026-10-28
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -43,7 +43,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | ---- | --------------------------- | ----------------------------------------------------------------- | ------------- | ------------------------------------------------ | -------- |
 | F-01 | role-based-access           | (foundation) system rozróżnia planistę i pracownika               | —             | Access Control; NFR (własne dane pracownika)     | done |
 | F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | done |
-| S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | in-progress |
+| S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | done |
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | proposed |
 | S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | proposed |
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | proposed |
@@ -125,7 +125,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Unknowns:**
   - Jakie dane pracownika poza etatem i e-mailem są wymagane (np. imię i nazwisko)? — Owner: user. Block: no.
 - **Risk:** Pierwsza tabela z danymi osobowymi, więc ustawia wzorzec modelu danych i polityki dostępu dla całej reszty; zaproszenia są osobno w S-10, bo pracownik może istnieć bez konta.
-- **Status:** in-progress
+- **Status:** done
 
 ### S-02: Słownik zmian
 
@@ -364,3 +364,4 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **<Slice ID>: <Outcome>** — Archived <YYYY-MM-DD> → `context/archive/<YYYY-MM-DD-change-id>/`. Lesson: <pointer to lessons.md if any, or `—`>.
 - **F-02: (foundation) testy automatyczne uruchamiają się lokalnie i w CI, z jednym przykładowym przypadkiem sprawdzającym, że ten sam wejściowy zestaw daje ten sam wynik; same reguły dochodzą dopiero w S-05.** — Archived 2026-10-20 → `context/archive/2026-10-16-rules-verification-harness/`. Lesson: —.
 - **F-01: (foundation) system rozróżnia planistę i pracownika: strony planisty są niedostępne dla pracownika i osoby niezalogowanej, a pracownik ma dostęp wyłącznie do własnych danych.** — Archived 2026-10-21 → `context/archive/2026-10-20-role-based-access/`. Lesson: —.
+- **S-01: Planista może dodać pracownika (z wymiarem czasu pracy, bez zakładania konta) i edytować jego dane, w tym etat.** — Archived 2026-10-28 → `context/archive/2026-10-21-employee-roster/`. Lesson: —.
