@@ -2,7 +2,7 @@
 
 ## Overview
 
-Drugi wycinek domenowy Shiftly (S-02 z roadmapy, FR-013): planista definiuje zmiany we wspólnym słowniku (nazwa, godzina rozpoczęcia, godzina zakończenia) i edytuje je na liście `/shifts`, dostępnej z panelu `/planner`. Zmiany będą potem wybierane w grafikach (S-03), a ich godziny zasilą reguły odpoczynku i limitów (S-05). Dane trafiają do nowej tabeli `public.shifts` z RLS tylko dla planisty. Plan powiela architekturę S-01 (reguły jako czyste funkcje, tabela z RLS dowiedziona w smoke, warstwa danych, trasy JSON, strony z wyspą React) i rozstrzyga niewiadomą z roadmapy o zmianach przechodzących przez północ: koniec równy lub wcześniejszy niż początek oznacza następny dzień, a równe godziny są odrzucane.
+Drugi wycinek domenowy Shiftly (S-02 z roadmapy, FR-013): planista definiuje zmiany we wspólnym słowniku (nazwa, godzina rozpoczęcia, godzina zakończenia) i edytuje je na liście `/shifts`, dostępnej z panelu `/planner`. Zmiany będą potem wybierane w grafikach (S-03), a ich godziny zasilą reguły odpoczynku i limitów (S-05). Dane trafiają do nowej tabeli `public.shifts` z RLS tylko dla planisty. Plan powiela architekturę S-01 (reguły jako czyste funkcje, tabela z RLS dowiedziona w smoke, warstwa danych, trasy JSON, strony z wyspą React) i rozstrzyga niewiadomą z roadmapy o zmianach przechodzących przez północ: koniec wcześniejszy niż początek oznacza następny dzień, a koniec równy początkowi jest odrzucany.
 
 ## Current State Analysis
 
@@ -19,7 +19,7 @@ Drugi wycinek domenowy Shiftly (S-02 z roadmapy, FR-013): planista definiuje zmi
 
 - Planista wchodzi z `/planner` kafelkiem "Zmiany" na `/shifts`: widzi listę posortowaną chronologicznie po godzinie rozpoczęcia (potem nazwa w polskiej kolejności), z kolumnami: nazwa, godziny (np. `22:00–06:00` ze znacznikiem "następnego dnia" przy zmianach przechodzących przez północ), czas trwania (np. `8 h`), odnośnik "Edytuj". Przycisk "Dodaj zmianę" prowadzi do `/shifts/new`; `/shifts/<id>` edytuje istniejącą.
 - Formularz waliduje dane tą samą funkcją po stronie klienta i serwera, pokazuje błędy przy polach po polsku i na żywo pokazuje czas trwania wpisanej zmiany ("Czas trwania: 8 h, kończy się następnego dnia"), żeby literówka typu 14:00–08:00 była widoczna.
-- Dane: nazwa wymagana (1 do 50 znaków, bez znaków sterujących), godziny w formacie `HH:MM` (00:00 do 23:59). Koniec równy lub wcześniejszy niż początek oznacza następny dzień (22:00–06:00 trwa 8 h, 14:00–00:00 trwa 10 h); równe godziny są odrzucane. Zmiany dłuższe niż 8 godzin są dozwolone (ocenia je S-05). Nazwy mogą się powtarzać.
+- Dane: nazwa wymagana (1 do 50 znaków, bez znaków sterujących), godziny w formacie `HH:MM` (00:00 do 23:59). Koniec wcześniejszy niż początek oznacza następny dzień (22:00–06:00 trwa 8 h, 14:00–00:00 trwa 10 h), a koniec równy początkowi (np. 08:00–08:00) jest odrzucany. Zmiany dłuższe niż 8 godzin są dozwolone (ocenia je S-05). Nazwy mogą się powtarzać.
 - Tabela `public.shifts` ma RLS: planista czyta, dodaje i edytuje; pracownik, konto bez roli i anonim nie widzą ani nie zmieniają niczego; nikt przez API nie usuwa wierszy.
 - Zmiana jest edytowalna, a jej `id` jest stabilne: S-03 będzie się do niej odwoływać po `id`, a S-08 skopiuje nazwę i godziny do zatwierdzonego grafiku w chwili zatwierdzenia, więc edycja słownika nie zmieni zatwierdzonych grafików (zob. "What We're NOT Doing").
 - Weryfikacja: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` przechodzi, a smoke z nowymi krokami (baza przez PostgREST, API JSON, strony) przechodzi lokalnie i w CI.
@@ -44,6 +44,7 @@ Drugi wycinek domenowy Shiftly (S-02 z roadmapy, FR-013): planista definiuje zmi
 - Zmian w `OPEN_PATHS`, w `src/layouts/Layout.astro`, w bramce dostępu i w trasach pracowników poza wydzieleniem `isUuid` i logowania błędów do wspólnego modułu (zachowanie bez zmian).
 - Generowanych typów bazy, klucza service-role w Workerze, nowych zmiennych środowiskowych i zasobów Cloudflare.
 - Uogólniania kroków RLS w smoke na wiele tabel: dla drugiej tabeli powielamy kroki obok kroków pracowników, dokładając tylko wspólnego pomocnika zapytań `restTable`; trzecia tabela będzie sygnałem do uogólnienia.
+- Wydzielania wspólnego hooka formularza, tras API i stron listy: powielamy wzorzec S-01 (`useShiftForm` obok `useEmployeeForm`, trasy i strony obok tras i stron pracowników). Trzeci taki formularz (S-03) będzie sygnałem do wydzielenia wspólnego hooka i pomocników.
 - Testów e2e w przeglądarce i testów jednostkowych hooka React (jak w S-01).
 
 ## Implementation Approach
@@ -52,7 +53,7 @@ Od środka na zewnątrz, tak jak w S-01: najpierw czyste reguły (Faza 1), potem
 
 Jedna funkcja `validateShiftInput` obsługuje formularz w przeglądarce i trasy API; baza powtarza granice w ograniczeniach `check`, żeby wiersz zapisany z pominięciem aplikacji też je spełniał. Aplikacja normalizuje nazwę (przycięcie, zwinięcie białych znaków) i zamienia `HH:MM` na minuty; baza pilnuje granic, w tym warunku `start ≠ koniec`.
 
-W odróżnieniu od S-01 weryfikacja CI i wdrożenia ma jeden wiersz na końcu (Faza 4), a nie po jednym w każdej fazie: wszystkie fazy trafiają do tego samego pull requesta, a wiersze zależne od PR blokowały w S-01 archiwizację do dodatkowego commita.
+W odróżnieniu od S-01 CI i wdrożenie mają po jednym wierszu na końcu (Faza 4), zamiast powtarzać wiersz CI w każdej fazie: wszystkie fazy trafiają do tego samego pull requesta. Wiersze zależne od PR i wdrożenia (4.6 do 4.8) da się wykonać dopiero po scaleniu, więc odhaczamy je osobnym commitem potwierdzającym przed archiwizacją (twarda bramka `/10x-archive` blokuje niezatwierdzone zmiany w folderze zmiany) albo archiwizujemy zmianę z nimi jako oczekującymi (miękkie ostrzeżenie o punktach ręcznych).
 
 ## Phase 1: Reguły zmiany
 
@@ -105,7 +106,7 @@ Dodać typy współdzielone oraz czyste funkcje: parsowanie i formatowanie godzi
 
 #### Manual Verification:
 
-- Komunikaty błędów po polsku, reguła północy (koniec równy lub wcześniejszy niż początek to następny dzień, równe godziny odrzucone) i przykłady z testów zostały przejrzane i zatwierdzone przez autora
+- Komunikaty błędów po polsku, reguła północy (koniec wcześniejszy niż początek to następny dzień, koniec równy początkowi jest odrzucany) i przykłady z testów zostały przejrzane i zatwierdzone przez autora
 
 **Implementation Note**: After completing this phase and all automated verification passes, pause here for manual confirmation from the human that the manual testing was successful before proceeding to the next phase. Phase blocks use plain bullets — the corresponding `- [ ]` checkboxes for these items live in the `## Progress` section at the bottom of the plan.
 
@@ -253,7 +254,7 @@ Zbudować listę `/shifts`, formularze dodawania i edycji (wyspa React z hookiem
 
 **Intent**: Sprawdzić strony planisty i bramkę dla stron zmian na prawdziwych kontach.
 
-**Contract**: Planista (kroki po krokach API, przed `signOut(planner)`): `/shifts` 200 z nazwą utworzonej wcześniej zmiany w treści, `/shifts/new` 200, `/shifts/<id>` 200 (formularz z danymi, nazwa w treści), `/shifts/<nieistniejący UUID>` i `/shifts/not-a-uuid` 404 z treścią "Nie znaleziono zmiany"; `/planner` planisty zawiera "Zmiany". Pracownik: `/shifts`, `/shifts/new` i `/shifts/<id>` (id stałe, bramka odpowiada pierwsza) 403. Anonim: `/shifts` i `/shifts/new` 401.
+**Contract**: Planista (kroki po krokach API, przed `signOut(planner)`): `/shifts` 200 z nazwą utworzonej wcześniej zmiany w treści, `/shifts/new` 200, `/shifts/<id>` 200 (formularz z danymi, nazwa w treści), `/shifts/<nieistniejący UUID>` i `/shifts/not-a-uuid` 404 z treścią "Nie znaleziono zmiany"; `/planner` planisty zawiera "Zmiany" (jako drugi krok `/planner` z `bodyIncludes: "Zmiany"`; istniejący krok z "Pracownicy" zostaje, bo `bodyIncludes` przyjmuje jeden ciąg). Pracownik: `/shifts`, `/shifts/new` i `/shifts/<id>` (id stałe, bramka odpowiada pierwsza) 403. Anonim: `/shifts` i `/shifts/new` 401.
 
 #### 5. Dokumentacja
 
@@ -330,7 +331,7 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Manual
 
-- [ ] 1.4 Komunikaty błędów po polsku, reguła północy (koniec równy lub wcześniejszy niż początek to następny dzień, równe godziny odrzucone) i przykłady z testów zostały przejrzane i zatwierdzone przez autora
+- [ ] 1.4 Komunikaty błędów po polsku, reguła północy (koniec wcześniejszy niż początek to następny dzień, koniec równy początkowi jest odrzucany) i przykłady z testów zostały przejrzane i zatwierdzone przez autora
 
 ### Phase 2: Tabela shifts i RLS
 

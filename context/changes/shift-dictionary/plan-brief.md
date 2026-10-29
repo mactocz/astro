@@ -18,7 +18,7 @@ Planista z `/planner` wchodzi kafelkiem "Zmiany" na listę posortowaną chronolo
 
 | Decision | Choice | Why (1 sentence) | Source |
 | --- | --- | --- | --- |
-| Zmiana przez północ | Koniec równy lub wcześniejszy niż początek to następny dzień; równe godziny odrzucone | Jeden wzór `(koniec − początek + 1440) mod 1440` obsługuje 22:00–06:00 i 14:00–00:00 bez dodatkowego pola. | Wywiad |
+| Zmiana przez północ | Koniec wcześniejszy niż początek to następny dzień; koniec równy początkowi jest odrzucany | Jeden wzór `(koniec − początek + 1440) mod 1440` obsługuje 22:00–06:00 i 14:00–00:00 bez dodatkowego pola. | Wywiad |
 | Edycja a zatwierdzone grafiki | Słownik edytowalny, S-08 kopiuje nazwę i godziny przy zatwierdzeniu | Szkice podążają za edycją (FR-013), a zatwierdzone grafiki i widok pracownika czytają własną kopię. | Wywiad |
 | Unikalność nazw | Nazwy mogą się powtarzać | Wybór autora; S-03 musi pokazywać godziny obok nazwy. | Wywiad |
 | Kolejność listy | Godzina rozpoczęcia, potem nazwa (polska kolejność), koniec, `createdAt`, `id` | Lista czyta się jak doba i jest powtarzalna niezależnie od kolejności wejścia. | Wywiad |
@@ -26,7 +26,7 @@ Planista z `/planner` wchodzi kafelkiem "Zmiany" na listę posortowaną chronolo
 | Długość zmiany | Dozwolone zmiany dłuższe niż 8 godzin | Ocenę limitu robi S-05 (decyzja D3), słownik nie blokuje. | Plan |
 | Podgląd w formularzu | Czas trwania i "kończy się następnego dnia" na żywo | Łapie literówkę typu 14:00–08:00, którą przyjmuje reguła następnego dnia. | Plan |
 | Współdzielenie z S-01 | `isUuid` i logowanie błędów w `src/lib/postgrest.ts` | Moduł zmian nie importuje z modułu pracowników; zachowanie pracowników bez zmian. | Plan |
-| Weryfikacja CI i wdrożenia | Jeden wiersz na końcu (Faza 4), nie po jednym na fazę | W S-01 wiersze zależne od PR wymagały dodatkowego commita przed archiwizacją. | Plan |
+| Weryfikacja CI i wdrożenia | Po jednym wierszu na końcu (Faza 4), nie jeden CI na fazę | Mniej powtórzeń; wiersze zależne od PR i wdrożenia i tak odhaczamy po scaleniu (osobny commit albo archiwizacja z nimi jako oczekującymi). | Plan |
 
 ## Scope
 
