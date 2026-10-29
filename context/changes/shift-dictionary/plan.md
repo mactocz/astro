@@ -325,13 +325,13 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Automated
 
-- [ ] 1.1 Testy reguł zmiany i polityki dostępu przechodzą w workerd: `npm test`
-- [ ] 1.2 Linting przechodzi: `npm run lint`
-- [ ] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy reguł zmiany i polityki dostępu przechodzą w workerd: `npm test`
+- [x] 1.2 Linting przechodzi: `npm run lint`
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
-- [ ] 1.4 Komunikaty błędów po polsku, reguła północy (koniec wcześniejszy niż początek to następny dzień, koniec równy początkowi jest odrzucany) i przykłady z testów zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Komunikaty błędów po polsku, reguła północy (koniec wcześniejszy niż początek to następny dzień, koniec równy początkowi jest odrzucany) i przykłady z testów zostały przejrzane i zatwierdzone przez autora
 
 ### Phase 2: Tabela shifts i RLS
 
