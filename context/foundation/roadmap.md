@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-10-28
+updated: 2026-10-29
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -310,18 +310,18 @@ Foundations below assume these are present and do NOT re-scaffold them.
 
 | Roadmap ID | Change ID                  | Suggested issue title                                         | Ready for `/10x-plan` | Notes                                                         |
 | ---------- | -------------------------- | ------------------------------------------------------------- | --------------------- | ------------------------------------------------------------- |
-| F-01       | role-based-access          | Role planista/pracownik i kontrola dostępu                    | yes                   | Run `/10x-plan role-based-access`                             |
-| F-02       | rules-verification-harness | Testy automatyczne lokalnie i w CI (ścieżka weryfikacji reguł) | yes                  | Run `/10x-plan rules-verification-harness`; bezpośredni warunek gwiazdy przewodniej |
-| S-01       | employee-roster            | Lista pracowników: dodawanie i edycja z etatem                | no                    | Czeka na F-01                                                 |
-| S-02       | shift-dictionary           | Słownik zmian                                                 | no                    | Czeka na F-01                                                 |
-| S-03       | weekly-schedule-draft      | Grafik tygodniowy: formularz, obsada na zmianę, lista         | no                    | Czeka na S-01, S-02                                           |
+| F-01       | role-based-access          | Role planista/pracownik i kontrola dostępu                    | done                  | Zarchiwizowane 2026-10-21: `context/archive/2026-10-20-role-based-access/` |
+| F-02       | rules-verification-harness | Testy automatyczne lokalnie i w CI (ścieżka weryfikacji reguł) | done                  | Zarchiwizowane 2026-10-20: `context/archive/2026-10-16-rules-verification-harness/` |
+| S-01       | employee-roster            | Lista pracowników: dodawanie i edycja z etatem                | done                  | Zarchiwizowane 2026-10-28: `context/archive/2026-10-21-employee-roster/` |
+| S-02       | shift-dictionary           | Słownik zmian                                                 | yes                   | Run `/10x-plan shift-dictionary`; F-01 gotowe; do rozstrzygnięcia w planie: zmiany przechodzące przez północ |
+| S-03       | weekly-schedule-draft      | Grafik tygodniowy: formularz, obsada na zmianę, lista         | no                    | Czeka na S-02 (S-01 gotowe) |
 | S-04       | manual-shift-assignment    | Ręczne obsadzanie zmian w grafiku roboczym                    | no                    | Czeka na S-03                                                 |
-| S-05       | live-rule-violations       | Naruszenia reguł i braki obsady na żywo                       | no                    | Progi rozstrzygnięte (`work-time-rules.md`); czeka na S-04, F-02 |
+| S-05       | live-rule-violations       | Naruszenia reguł i braki obsady na żywo                       | no                    | Progi rozstrzygnięte (`work-time-rules.md`); czeka na S-04 (F-02 gotowe) |
 | S-06       | workload-vs-norm           | Suma godzin pracownika względem normy z etatu                 | no                    | Norma rozstrzygnięta (`work-time-rules.md`); czeka na S-04    |
-| S-07       | absence-entry              | Wpisywanie nieobecności i kolizja w grafiku                   | no                    | Czeka na S-01, S-05                                           |
+| S-07       | absence-entry              | Wpisywanie nieobecności i kolizja w grafiku                   | no                    | Czeka na S-05 (S-01 gotowe) |
 | S-08       | schedule-approval          | Zatwierdzanie grafiku z blokadą krytycznych naruszeń          | no                    | Czeka na S-05                                                 |
-| S-09       | schedule-generation        | Generowanie propozycji grafiku                                | no                    | Czeka na S-05, S-07, F-02                                     |
-| S-10       | employee-invitation        | Zaproszenie pracownika e-mailem i ustawienie hasła            | no                    | Czeka na F-01, S-01; wymaga nadawcy poczty                    |
+| S-09       | schedule-generation        | Generowanie propozycji grafiku                                | no                    | Czeka na S-05, S-07 (F-02 gotowe) |
+| S-10       | employee-invitation        | Zaproszenie pracownika e-mailem i ustawienie hasła            | no                    | Zależności gotowe (F-01, S-01); blokada: wymaga nadawcy poczty |
 | S-11       | employee-own-schedule      | Własny grafik pracownika (telefon)                            | no                    | Czeka na S-10, S-08                                           |
 | S-12       | schedule-new-version       | Nowa wersja zatwierdzonego grafiku                            | no                    | Czeka na S-08, S-11                                           |
 | S-13       | employee-absence-report    | Zgłaszanie nieobecności przez pracownika                      | no                    | Czeka na S-07, S-11                                           |
