@@ -1,7 +1,7 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
 // that the database role helpers read the role from the token, that only planners can read and write the employees
-// and shifts tables through PostgREST, that the employee API routes keep to the role gate, the validation and their
-// status codes, that the employee pages open for the planner only, and that public registration stays closed. Zero
+// and shifts tables through PostgREST, that the employee and shift API routes keep to the role gate, the validation and
+// their status codes, that the employee pages open for the planner only, and that public registration stays closed. Zero
 // dependencies on purpose. It creates real accounts and removes its own employee and shift rows with the service-role
 // key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars).
 // Values come from `supabase status -o env`.
@@ -451,6 +451,50 @@ const plannerPutsEmployee = (name, path, expected) => [
   { contentType: "application/json", ...expected },
 ];
 
+// The shift API steps share one shift, created through the app by the planner. Its name has Polish letters, a double
+// space in the middle and a trailing space on purpose: the app must answer with the name trimmed and collapsed to single
+// spaces (Smoke-<runId>-Nocna Łąka, which the final cleanup step deletes by prefix). It runs 22:00-06:00, so the end
+// comes back as minute 360, earlier than the start at minute 1320. A second shift has the same name and other times,
+// because a name is not unique. The id is only known once the create step has run.
+const apiShift = { name: `Smoke-${runId}-Nocna  Łąka `, startTime: "22:00", endTime: "06:00" };
+const apiShiftName = `Smoke-${runId}-Nocna Łąka`;
+const secondApiShift = { ...apiShift, startTime: "06:00", endTime: "14:00" };
+const changedApiShift = { ...apiShift, endTime: "07:00" };
+const apiShiftUrl = () => `/api/shifts/${apiShiftId}`;
+// A well-formed UUID that no row has; the gate answers before the route runs, so the employee's request may name it too.
+const unknownShiftUrl = "/api/shifts/00000000-0000-4000-8000-000000000000";
+let apiShiftId;
+
+// The route answers with the camelCase shift: the normalised name and the times as minutes after midnight.
+const isApiShift = (endMinute) => (body) =>
+  typeof body.shift.id === "string" &&
+  body.shift.id === apiShiftId &&
+  typeof body.shift.createdAt === "string" &&
+  body.shift.name === apiShiftName &&
+  body.shift.startMinute === 1320 &&
+  body.shift.endMinute === endMinute;
+const isSecondApiShift = (body) =>
+  typeof body.shift.id === "string" &&
+  body.shift.id !== apiShiftId &&
+  body.shift.name === apiShiftName &&
+  body.shift.startMinute === 360 &&
+  body.shift.endMinute === 840;
+const rejectsNameAndStartTime = (body) =>
+  typeof body.errors.name === "string" &&
+  typeof body.errors.startTime === "string" &&
+  body.errors.endTime === undefined;
+const rejectsEndTimeOnly = (body) =>
+  typeof body.errors.endTime === "string" && body.errors.name === undefined && body.errors.startTime === undefined;
+
+// A body that fails on the name and the start time at once, to be sent to POST and to PUT.
+const invalidApiShift = { ...apiShift, name: "", startTime: "25:00" };
+
+const plannerPutsShift = (name, path, expected, json = changedApiShift) => [
+  `${planner.label}: PUT ${name}`,
+  () => request(planner, path(), { method: "PUT", json }),
+  { contentType: "application/json", ...expected },
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -466,6 +510,11 @@ const steps = [
   [
     `${anonymous.label}: POST /api/employees`,
     () => request(anonymous, "/api/employees", { method: "POST", json: apiEmployee }),
+    { status: 401, contentType: "application/json" },
+  ],
+  [
+    `${anonymous.label}: POST /api/shifts`,
+    () => request(anonymous, "/api/shifts", { method: "POST", json: apiShift }),
     { status: 401, contentType: "application/json" },
   ],
 
@@ -513,6 +562,16 @@ const steps = [
   [
     `${employee.label}: PUT /api/employees/<id>`,
     () => request(employee, unknownEmployeeUrl, { method: "PUT", json: apiEmployee }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${employee.label}: POST /api/shifts`,
+    () => request(employee, "/api/shifts", { method: "POST", json: apiShift }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${employee.label}: PUT /api/shifts/<id>`,
+    () => request(employee, unknownShiftUrl, { method: "PUT", json: apiShift }),
     { status: 403, contentType: "application/json" },
   ],
   signOut(employee),
@@ -615,6 +674,88 @@ const steps = [
       describe: "errors.email, the taken-address text",
     },
   ],
+  [
+    `${planner.label}: POST /api/shifts creates a shift`,
+    async () => {
+      const result = await request(planner, "/api/shifts", { method: "POST", json: apiShift });
+      apiShiftId = parseJson(result.body)?.shift?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: isApiShift(360),
+      describe: "the shift with its name trimmed and collapsed, from minute 1320 to 360",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with the same name creates a second shift`,
+    () => request(planner, "/api/shifts", { method: "POST", json: secondApiShift }),
+    {
+      status: 201,
+      contentType: "application/json",
+      check: isSecondApiShift,
+      describe: "a second shift with its own id, the same name and the times 06:00-14:00",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with an empty name and a start of 25:00`,
+    () => request(planner, "/api/shifts", { method: "POST", json: invalidApiShift }),
+    {
+      status: 422,
+      contentType: "application/json",
+      check: rejectsNameAndStartTime,
+      describe: "errors for exactly the name and startTime fields",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with equal start and end times`,
+    () =>
+      request(planner, "/api/shifts", { method: "POST", json: { ...apiShift, startTime: "08:00", endTime: "08:00" } }),
+    {
+      status: 422,
+      contentType: "application/json",
+      check: rejectsEndTimeOnly,
+      describe: "an error for exactly the endTime field",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with a form body`,
+    () => request(planner, "/api/shifts", { method: "POST", form: apiShift }),
+    { status: 415, contentType: "application/json" },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with a body that is not JSON`,
+    () => request(planner, "/api/shifts", { method: "POST", jsonText: "{" }),
+    { status: 400, contentType: "application/json", check: isInvalidJson, describe: "the error invalid_json" },
+  ],
+  plannerPutsShift("/api/shifts/<id> changes the end time", apiShiftUrl, {
+    status: 200,
+    cacheControl: "no-store",
+    check: isApiShift(420),
+    describe: "the same shift ending at minute 420",
+  }),
+  plannerPutsShift(
+    "/api/shifts/<id> with an empty name and a start of 25:00",
+    apiShiftUrl,
+    {
+      status: 422,
+      check: rejectsNameAndStartTime,
+      describe: "errors for exactly the name and startTime fields",
+    },
+    invalidApiShift,
+  ),
+  plannerPutsShift("/api/shifts/<unknown UUID>", () => unknownShiftUrl, {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  plannerPutsShift("/api/shifts/not-a-uuid", () => "/api/shifts/not-a-uuid", {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
   // The pages with names and e-mail addresses must not be cached.
   visit(planner, "/employees", 200, apiEmployee.lastName, "no-store"),
   visit(planner, "/employees/new", 200, undefined, "no-store"),

@@ -337,20 +337,20 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Automated
 
-- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [x] 2.2 Linting przechodzi: `npm run lint`
-- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
+- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset` — 83942cf
+- [x] 2.2 Linting przechodzi: `npm run lint` — 83942cf
+- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke` — 83942cf
 
 #### Manual
 
-- [x] 2.4 Polityki RLS, uprawnienia i komentarz o modelu edycji w migracji zostały przejrzane przez autora
+- [x] 2.4 Polityki RLS, uprawnienia i komentarz o modelu edycji w migracji zostały przejrzane przez autora — 83942cf
 
 ### Phase 3: Dostęp do danych i API
 
 #### Automated
 
-- [ ] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 3.2 Smoke z krokami API przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke`
+- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 3.2 Smoke z krokami API przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke`
 
 ### Phase 4: Strony planisty
 
