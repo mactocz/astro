@@ -325,25 +325,25 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Automated
 
-- [x] 1.1 Testy reguł zmiany i polityki dostępu przechodzą w workerd: `npm test`
-- [x] 1.2 Linting przechodzi: `npm run lint`
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy reguł zmiany i polityki dostępu przechodzą w workerd: `npm test` — 74a5582
+- [x] 1.2 Linting przechodzi: `npm run lint` — 74a5582
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 74a5582
 
 #### Manual
 
-- [x] 1.4 Komunikaty błędów po polsku, reguła północy (koniec wcześniejszy niż początek to następny dzień, koniec równy początkowi jest odrzucany) i przykłady z testów zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Komunikaty błędów po polsku, reguła północy (koniec wcześniejszy niż początek to następny dzień, koniec równy początkowi jest odrzucany) i przykłady z testów zostały przejrzane i zatwierdzone przez autora — 74a5582
 
 ### Phase 2: Tabela shifts i RLS
 
 #### Automated
 
-- [ ] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Smoke z krokami bazy przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
+- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
+- [x] 2.2 Linting przechodzi: `npm run lint`
+- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos (wartości z `supabase status -o env`), ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z tego stosu): `npm run smoke`
 
 #### Manual
 
-- [ ] 2.4 Polityki RLS, uprawnienia i komentarz o modelu edycji w migracji zostały przejrzane przez autora
+- [x] 2.4 Polityki RLS, uprawnienia i komentarz o modelu edycji w migracji zostały przejrzane przez autora
 
 ### Phase 3: Dostęp do danych i API
 
