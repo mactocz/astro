@@ -1,7 +1,7 @@
 ---
 change_id: shift-dictionary
 title: Shift dictionary
-status: implementing
+status: implemented
 created: 2026-10-29
 updated: 2026-11-03
 archived_at: null
