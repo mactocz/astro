@@ -349,21 +349,21 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 
 #### Automated
 
-- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 3.2 Smoke z krokami API przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke`
+- [x] 3.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — ccd5138
+- [x] 3.2 Smoke z krokami API przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke` — ccd5138
 
 ### Phase 4: Strony planisty
 
 #### Automated
 
-- [ ] 4.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 4.2 Smoke z krokami stron przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke`
+- [x] 4.1 Cała bramka przechodzi lokalnie w kolejności CI: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 4.2 Smoke z krokami stron przechodzi lokalnie (te same warunki co w Fazie 2): `npm run smoke`
 
 #### Manual
 
-- [ ] 4.3 Przeglądarka, planista: `/planner` → kafelek "Zmiany" → pusta lista z komunikatem (na bazie bez wierszy smoke: po jego sprzątaniu albo po `npx supabase db reset`); dodanie zmiany 22:00–06:00 pokazuje na liście "22:00–06:00", znacznik "następnego dnia" i "8 h", a podgląd w formularzu pokazuje "Czas trwania: 8 h, kończy się następnego dnia"; dodane 22:00–06:00, 06:00–14:00 i 14:00–22:00 są na liście w kolejności 06:00, 14:00, 22:00; równe godziny pokazują błąd przy polu "Godzina zakończenia" i zachowują pozostałe wpisane dane; edycja zmienia godzinę zakończenia; dwie zmiany o tej samej nazwie można dodać
-- [ ] 4.4 Telefon (szerokość około 375 px w narzędziach przeglądarki): lista i formularz są czytelne bez poziomego przewijania, a pola czasu da się wypełnić
-- [ ] 4.5 Przeglądarka, pracownik i anonim: `/shifts` pokazuje "Brak dostępu" (403 dla pracownika, 401 dla anonima, bez przekierowania)
+- [x] 4.3 Przeglądarka, planista: `/planner` → kafelek "Zmiany" → pusta lista z komunikatem (na bazie bez wierszy smoke: po jego sprzątaniu albo po `npx supabase db reset`); dodanie zmiany 22:00–06:00 pokazuje na liście "22:00–06:00", znacznik "następnego dnia" i "8 h", a podgląd w formularzu pokazuje "Czas trwania: 8 h, kończy się następnego dnia"; dodane 22:00–06:00, 06:00–14:00 i 14:00–22:00 są na liście w kolejności 06:00, 14:00, 22:00; równe godziny pokazują błąd przy polu "Godzina zakończenia" i zachowują pozostałe wpisane dane; edycja zmienia godzinę zakończenia; dwie zmiany o tej samej nazwie można dodać
+- [x] 4.4 Telefon (szerokość około 375 px w narzędziach przeglądarki): lista i formularz są czytelne bez poziomego przewijania, a pola czasu da się wypełnić
+- [x] 4.5 Przeglądarka, pracownik i anonim: `/shifts` pokazuje "Brak dostępu" (403 dla pracownika, 401 dla anonima, bez przekierowania)
 - [ ] 4.6 Migracja zastosowana na hostowanym projekcie przez autora przed wdrożeniem kodu (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list`
 - [ ] 4.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki bazy, API i stron)
 - [ ] 4.8 Po ręcznym wdrożeniu (migracja przed kodem, zob. Migration Notes) planista na `https://shiftly.mto-astro.workers.dev` dodaje i edytuje zmianę (wykonuje autor)

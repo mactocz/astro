@@ -1,10 +1,10 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
 // that the database role helpers read the role from the token, that only planners can read and write the employees
 // and shifts tables through PostgREST, that the employee and shift API routes keep to the role gate, the validation and
-// their status codes, that the employee pages open for the planner only, and that public registration stays closed. Zero
-// dependencies on purpose. It creates real accounts and removes its own employee and shift rows with the service-role
-// key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars).
-// Values come from `supabase status -o env`.
+// their status codes, that the employee and shift pages open for the planner only, and that public registration stays
+// closed. Zero dependencies on purpose. It creates real accounts and removes its own employee and shift rows with the
+// service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
+// (.env / .dev.vars). Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -461,9 +461,20 @@ const apiShiftName = `Smoke-${runId}-Nocna Łąka`;
 const secondApiShift = { ...apiShift, startTime: "06:00", endTime: "14:00" };
 const changedApiShift = { ...apiShift, endTime: "07:00" };
 const apiShiftUrl = () => `/api/shifts/${apiShiftId}`;
-// A well-formed UUID that no row has; the gate answers before the route runs, so the employee's request may name it too.
-const unknownShiftUrl = "/api/shifts/00000000-0000-4000-8000-000000000000";
+// A well-formed UUID that no row has; the gate answers before the route or the page runs, so the employee's requests may
+// name it too.
+const unknownShiftId = "00000000-0000-4000-8000-000000000000";
+const unknownShiftUrl = `/api/shifts/${unknownShiftId}`;
 let apiShiftId;
+
+// The form page of the shift the planner creates. Its address needs the id, which only exists once the create step has
+// run, so it is built when the step runs.
+const visitApiShiftPage = (actor, status, bodyIncludes) => [
+  `${actor.label}: GET /shifts/<id>`,
+  () => request(actor, `/shifts/${apiShiftId}`),
+  { status, bodyIncludes },
+];
+const notFoundShiftMessage = "Nie znaleziono zmiany";
 
 // The route answers with the camelCase shift: the normalised name and the times as minutes after midnight.
 const isApiShift = (endMinute) => (body) =>
@@ -502,6 +513,8 @@ const steps = [
   visit(anonymous, "/planner", 401),
   visit(anonymous, "/employees", 401),
   visit(anonymous, "/employees/new", 401),
+  visit(anonymous, "/shifts", 401),
+  visit(anonymous, "/shifts/new", 401),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
@@ -554,6 +567,9 @@ const steps = [
   visit(employee, "/employees", 403),
   visit(employee, "/employees/new", 403),
   visit(employee, `/employees/${unknownEmployeeId}`, 403),
+  visit(employee, "/shifts", 403),
+  visit(employee, "/shifts/new", 403),
+  visit(employee, `/shifts/${unknownShiftId}`, 403),
   [
     `${employee.label}: POST /api/employees`,
     () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
@@ -582,6 +598,7 @@ const steps = [
   signIn(planner),
   visit(planner, "/dashboard", 200),
   visit(planner, "/planner", 200, "Pracownicy"),
+  visit(planner, "/planner", 200, "Zmiany"),
   visit(planner, "/planner/", 200),
   [
     `${planner.label}: POST /api/employees creates an employee`,
@@ -762,6 +779,12 @@ const steps = [
   visitApiEmployeePage(planner, 200, apiEmployee.lastName, "no-store"),
   visit(planner, `/employees/${unknownEmployeeId}`, 404, notFoundMessage),
   visit(planner, "/employees/not-a-uuid", 404, notFoundMessage),
+  // The shift pages: the list shows the shift created above, the form page carries its name.
+  visit(planner, "/shifts", 200, apiShiftName),
+  visit(planner, "/shifts/new", 200),
+  visitApiShiftPage(planner, 200, apiShiftName),
+  visit(planner, `/shifts/${unknownShiftId}`, 404, notFoundShiftMessage),
+  visit(planner, "/shifts/not-a-uuid", 404, notFoundShiftMessage),
   signOut(planner),
   visit(planner, "/dashboard", 401),
 

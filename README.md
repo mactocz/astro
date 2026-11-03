@@ -112,7 +112,7 @@ npx supabase stop
 
 The local Studio UI is available at `http://localhost:54323`.
 
-Besides Supabase Auth's built-in `auth.users` table, the app has one table of its own, `public.employees`. Two migrations in `supabase/migrations/` define the schema: `*_role_helpers.sql` adds the role helper functions `public.current_app_role()` and `public.is_planner()`, and `*_employees.sql` creates the `employees` table with row-level security that opens it to planners only. A fresh local stack applies them on `npx supabase start`, `npx supabase db reset` applies them to an existing one, and `npx supabase db push` applies them to a hosted project.
+Besides Supabase Auth's built-in `auth.users` table, the app has two tables of its own, `public.employees` and `public.shifts`. Three migrations in `supabase/migrations/` define the schema: `*_role_helpers.sql` adds the role helper functions `public.current_app_role()` and `public.is_planner()`, `*_employees.sql` creates the `employees` table and `*_shifts.sql` creates the `shifts` table (the shift dictionary: name, start and end time), both with row-level security that opens them to planners only. A fresh local stack applies them on `npx supabase start`, `npx supabase db reset` applies them to an existing one, and `npx supabase db push` applies them to a hosted project.
 
 ### Using a cloud Supabase project instead
 
@@ -154,14 +154,19 @@ SUPABASE_URL=https://<project-ref>.supabase.co SUPABASE_SERVICE_ROLE_KEY=<servic
 | --------------------- | -------------------------------------------------------------------------------------------------------- |
 | `/auth/signin`        | Email/password sign-in form                                                                              |
 | `/dashboard`          | Example protected page for any role; others see "Brak dostępu" (401 anonymous, 403 no role), no redirect |
-| `/planner`            | Planner panel with a tile linking to the employee list (planner only)                                    |
+| `/planner`            | Planner panel with tiles linking to the employee list and the shift list (planner only)                  |
 | `/employees`          | Employee list with each person's FTE (planner only)                                                      |
 | `/employees/new`      | Form for adding an employee (planner only)                                                               |
 | `/employees/[id]`     | Form for editing an employee; an unknown id or one that is not a UUID gets 404 (planner only)            |
 | `/api/employees`      | `POST` creates an employee from JSON: 201, 409 for a taken e-mail, 422 for invalid fields (planner only) |
 | `/api/employees/[id]` | `PUT` replaces an employee from JSON: 200, 404, 409, 422 (planner only)                                  |
+| `/shifts`             | Shift list with each shift's hours and duration (planner only)                                           |
+| `/shifts/new`         | Form for adding a shift (planner only)                                                                   |
+| `/shifts/[id]`        | Form for editing a shift; an unknown id or one that is not a UUID gets 404 (planner only)                |
+| `/api/shifts`         | `POST` creates a shift from JSON: 201, 422 for invalid fields (planner only)                             |
+| `/api/shifts/[id]`    | `PUT` replaces a shift from JSON: 200, 404, 422 (planner only)                                           |
 
-Planner-only routes answer anyone else with "Brak dostępu" (401 anonymous, 403 other roles) or, under `/api/`, with JSON of the same status. Employees are stored in the `employees` table, which row-level security opens to planners only.
+Planner-only routes answer anyone else with "Brak dostępu" (401 anonymous, 403 other roles) or, under `/api/`, with JSON of the same status. Employees and shifts are stored in the `employees` and `shifts` tables, which row-level security opens to planners only.
 
 Route protection is handled in `src/middleware.ts` through `decideAccess` in `src/lib/services/access.ts`. Access is denied by default: a path missing from the table in `access.ts` is planner-only, so a new route stays closed until you add it on purpose. Roles (`planner`, `employee`) are read from the user's `app_metadata.role`.
 
@@ -185,7 +190,7 @@ Set `SUPABASE_URL` and `SUPABASE_KEY` as secrets in your Cloudflare dashboard or
 
 ## Smoke test
 
-`scripts/smoke.mjs` is a dependency-free Node script that creates real accounts (planner, employee and an account without a role) through the admin API of a local Supabase and walks the auth flow and the access matrix over HTTP (401 for anonymous, 403 for the wrong role, sign-in, sign-out). It also checks that registration stays closed: an anonymous `POST` to the removed sign-up endpoint gets 401, and a direct sign-up call to Supabase with the anon key is rejected. It also calls the database role helpers (`rpc/is_planner`, `rpc/current_app_role`) with each account's own token and checks that a role forged through `user_metadata` grants nothing. The employee data is covered end to end: the `employees` table through PostgREST, the `/api/employees` routes and the `/employees` pages, each as planner, employee and anonymous (the planner's steps create a test employee, and the last step deletes every row whose e-mail starts with `smoke-`). So the local stack needs the migrations applied (`npx supabase db reset` after pulling a new one). Run it against the dev server or the production preview after dependency upgrades:
+`scripts/smoke.mjs` is a dependency-free Node script that creates real accounts (planner, employee and an account without a role) through the admin API of a local Supabase and walks the auth flow and the access matrix over HTTP (401 for anonymous, 403 for the wrong role, sign-in, sign-out). It also checks that registration stays closed: an anonymous `POST` to the removed sign-up endpoint gets 401, and a direct sign-up call to Supabase with the anon key is rejected. It also calls the database role helpers (`rpc/is_planner`, `rpc/current_app_role`) with each account's own token and checks that a role forged through `user_metadata` grants nothing. The employee data is covered end to end: the `employees` table through PostgREST, the `/api/employees` routes and the `/employees` pages, each as planner, employee and anonymous (the planner's steps create a test employee, and the last step deletes every row whose e-mail starts with `smoke-`). The shift data is covered the same way: the `shifts` table through PostgREST, the `/api/shifts` routes and the `/shifts` pages (the planner's steps create test shifts, and the last step deletes every shift whose name starts with `Smoke-`). So the local stack needs the migrations applied (`npx supabase db reset` after pulling a new one). Run it against the dev server or the production preview after dependency upgrades:
 
 ```bash
 npm run dev            # or: npm run build && npm run preview

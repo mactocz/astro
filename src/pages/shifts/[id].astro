@@ -1,0 +1,40 @@
+---
+import PlannerLayout from "@/layouts/PlannerLayout.astro";
+import ShiftForm from "@/components/shifts/ShiftForm";
+import { getShift } from "@/lib/shifts";
+
+const { supabase } = Astro.locals;
+if (!supabase) {
+  // The access gate lets nobody through without a configured client, so this is a misconfiguration.
+  throw new Error("The Supabase client is missing; check SUPABASE_URL and SUPABASE_KEY.");
+}
+
+// getShift answers null for an id that is not a UUID, without querying the database.
+const { id } = Astro.params;
+const shift = id === undefined ? null : await getShift(supabase, id);
+
+// The project has no 404 page, so a missing shift gets its own message with this status.
+if (!shift) {
+  Astro.response.status = 404;
+}
+---
+
+<PlannerLayout title={shift ? "Edytuj zmianę" : "Nie znaleziono zmiany"}>
+  {shift ? (
+    <div class="mx-auto w-full max-w-lg rounded-2xl border border-white/10 bg-white/10 p-6 backdrop-blur-xl sm:p-8">
+      <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-2xl font-bold text-transparent">
+        Edytuj zmianę
+      </h1>
+      <ShiftForm shift={shift} client:load />
+    </div>
+  ) : (
+    <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
+      <h1 class="mb-4 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+        Nie znaleziono zmiany
+      </h1>
+      <a href="/shifts" class="text-purple-300 hover:underline">
+        Wróć do listy zmian
+      </a>
+    </div>
+  )}
+</PlannerLayout>
