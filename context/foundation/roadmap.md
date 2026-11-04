@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-10-29
+updated: 2026-11-04
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -44,7 +44,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | F-01 | role-based-access           | (foundation) system rozróżnia planistę i pracownika               | —             | Access Control; NFR (własne dane pracownika)     | done |
 | F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | done |
 | S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | done |
-| S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | in-progress |
+| S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | done |
 | S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | proposed |
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | proposed |
 | S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | proposed |
@@ -138,7 +138,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Unknowns:**
   - Jak traktować zmiany przechodzące przez północ (np. 22:00 do 06:00), skoro wpływają na liczenie doby i odpoczynku? — Owner: user. Block: no.
 - **Risk:** Zmiany są wspólną jednostką dla obsady, reguł i generatora; zapis PRD, że edycja zmiany nie może po cichu zmienić zatwierdzonych grafików, trzeba uwzględnić w modelu od razu (egzekwowanie dojdzie z S-08).
-- **Status:** in-progress
+- **Status:** done
 
 ### S-03: Szkic grafiku tygodniowego
 
@@ -365,3 +365,4 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **F-02: (foundation) testy automatyczne uruchamiają się lokalnie i w CI, z jednym przykładowym przypadkiem sprawdzającym, że ten sam wejściowy zestaw daje ten sam wynik; same reguły dochodzą dopiero w S-05.** — Archived 2026-10-20 → `context/archive/2026-10-16-rules-verification-harness/`. Lesson: —.
 - **F-01: (foundation) system rozróżnia planistę i pracownika: strony planisty są niedostępne dla pracownika i osoby niezalogowanej, a pracownik ma dostęp wyłącznie do własnych danych.** — Archived 2026-10-21 → `context/archive/2026-10-20-role-based-access/`. Lesson: —.
 - **S-01: Planista może dodać pracownika (z wymiarem czasu pracy, bez zakładania konta) i edytować jego dane, w tym etat.** — Archived 2026-10-28 → `context/archive/2026-10-21-employee-roster/`. Lesson: —.
+- **S-02: Planista może zdefiniować zmiany (nazwa, godziny rozpoczęcia i zakończenia) raz we wspólnym słowniku i je edytować.** — Archived 2026-11-04 → `context/archive/2026-10-29-shift-dictionary/`. Lesson: —.
