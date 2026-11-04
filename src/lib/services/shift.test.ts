@@ -183,6 +183,12 @@ describe("validateShiftInput name", () => {
     ["a no-break space", "Nocna  zmiana", "Nocna zmiana"],
     ["the maximum length", "a".repeat(SHIFT_NAME_MAX_LENGTH), "a".repeat(SHIFT_NAME_MAX_LENGTH)],
     ["the maximum length in emoji", "😀".repeat(SHIFT_NAME_MAX_LENGTH), "😀".repeat(SHIFT_NAME_MAX_LENGTH)],
+    ["an invisible character next to a letter", "Noc​na", "Noc​na"],
+    [
+      "an emoji sequence joined with zero-width joiners",
+      "\u{1F468}‍\u{1F469}‍\u{1F467}",
+      "\u{1F468}‍\u{1F469}‍\u{1F467}",
+    ],
   ])("accepts %s", (_label, input, expected) => {
     expect(validValue({ name: input }).name).toBe(expected);
   });
@@ -202,6 +208,12 @@ describe("validateShiftInput name", () => {
     ["a leading tab", "\tNocna"],
     ["a delete character", "Nocna\u007f"],
     ["a C1 control character", "Nocna\u0085"],
+    ["only a zero-width space", "​"],
+    ["only a Hangul filler", "ㅤ"],
+    ["only a braille blank", "⠀"],
+    ["only spaces and zero-width spaces", " ​ ​ "],
+    ["a lone high surrogate", "Noc\uD800"],
+    ["a lone low surrogate", "\uDC00Noc"],
   ])("rejects %s", (_label, input) => {
     expectOnlyError({ name: input }, "name");
   });

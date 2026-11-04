@@ -3,7 +3,7 @@ import { CircleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const inputBase =
-  "w-full rounded-lg bg-white/10 border px-3 py-2 pl-10 text-white placeholder-white/40 focus:outline-none focus:ring-2 transition-colors";
+  "w-full rounded-lg bg-white/10 border px-3 py-2 pl-10 text-white placeholder-white/40 focus:outline-none focus:ring-2 transition-colors [color-scheme:dark]";
 
 interface FormFieldProps {
   id: string;
@@ -19,6 +19,7 @@ interface FormFieldProps {
   endContent?: ReactNode;
   maxLength?: number;
   inputMode?: InputHTMLAttributes<HTMLInputElement>["inputMode"];
+  autoComplete?: InputHTMLAttributes<HTMLInputElement>["autoComplete"];
 }
 
 export function FormField({
@@ -35,7 +36,9 @@ export function FormField({
   endContent,
   maxLength,
   inputMode,
+  autoComplete,
 }: FormFieldProps) {
+  const errorId = `${id}-error`;
   return (
     <div>
       <label htmlFor={id} className="mb-1 block text-sm text-blue-100/80">
@@ -54,6 +57,9 @@ export function FormField({
           placeholder={placeholder}
           maxLength={maxLength}
           inputMode={inputMode}
+          autoComplete={autoComplete}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
           className={cn(
             inputBase,
             !icon && "pl-3",
@@ -63,7 +69,7 @@ export function FormField({
         {endContent}
       </div>
       {error ? (
-        <p className="mt-1 flex items-center gap-1 text-xs text-red-300">
+        <p id={errorId} role="alert" className="mt-1 flex items-center gap-1 text-xs text-red-300">
           <CircleAlert className="size-3" />
           {error}
         </p>

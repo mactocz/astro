@@ -16,6 +16,17 @@ function initialValues(shift?: Shift): ShiftFormValues {
   };
 }
 
+const FIELD_ORDER: readonly ShiftField[] = ["name", "startTime", "endTime"];
+
+// Puts the keyboard focus on the first field with an error (the inputs carry the field names as ids), so a screen reader
+// starts there instead of staying silent on the button.
+function focusFirstInvalid(errors: ShiftFieldErrors) {
+  const field = FIELD_ORDER.find((name) => errors[name]);
+  if (field) {
+    document.getElementById(field)?.focus();
+  }
+}
+
 // The `errors` of a 422 answer, or null when the body is not JSON or carries none.
 async function readFieldErrors(response: Response): Promise<ShiftFieldErrors | null> {
   try {
@@ -38,7 +49,8 @@ export function useShiftForm({ shift }: { shift?: Shift } = {}) {
 
   function setField(name: ShiftField, value: string) {
     setValues((prev) => ({ ...prev, [name]: value }));
-    setFieldErrors((prev) => ({ ...prev, [name]: undefined }));
+    // "End equals start" is reported on `endTime` but depends on both times, so editing the start clears it too.
+    setFieldErrors((prev) => ({ ...prev, [name]: undefined, ...(name === "startTime" ? { endTime: undefined } : {}) }));
   }
 
   async function save() {
@@ -52,14 +64,16 @@ export function useShiftForm({ shift }: { shift?: Shift } = {}) {
         body: JSON.stringify(values),
       });
       if (response.status === 200 || response.status === 201) {
-        // Stays pending until the page is gone, so a second click cannot save twice.
-        window.location.assign("/shifts");
+        // Stays pending until the page is gone, so a second click cannot save twice. `replace` keeps the saved form out
+        // of the history: these pages are cacheable, so Back could restore it with the button still disabled.
+        window.location.replace("/shifts");
         return;
       }
       if (response.status === 422) {
         const errors = await readFieldErrors(response);
         if (errors) {
           setFieldErrors(errors);
+          focusFirstInvalid(errors);
         } else {
           setServerError(SAVE_ERROR);
         }
@@ -80,6 +94,7 @@ export function useShiftForm({ shift }: { shift?: Shift } = {}) {
     const validation = validateShiftInput(values);
     if (!validation.ok) {
       setFieldErrors(validation.errors);
+      focusFirstInvalid(validation.errors);
       return;
     }
     await save();

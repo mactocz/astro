@@ -12,6 +12,10 @@ const FIELD_ERRORS = {
 } as const;
 
 const CONTROL_CHARS = /\p{Cc}/u;
+// No glyph of their own: format characters (zero-width space, joiners, direction marks) and the blank fillers that look
+// like letters. A name made only of them and spaces would show up as an empty row. A joiner inside a visible name (an
+// emoji sequence, say) stays allowed.
+const INVISIBLE_CHARS = /[\p{Cf}ᅟᅠ⠀ㅤﾠ]/gu;
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 /** Minutes after midnight for exactly `GG:MM` (two digits each, 00:00 to 23:59, no spaces), otherwise undefined. */
@@ -56,15 +60,22 @@ export function formatShiftTimes(shift: { startMinute: number; endMinute: number
   return `${formatTime(shift.startMinute)}–${formatTime(shift.endMinute)}`;
 }
 
-/** The collapsed name, or undefined when it is empty, too long or holds a control character (tab and newline too). */
+/**
+ * The collapsed name, or undefined when it is empty, too long, holds a control character (tab and newline too) or a
+ * lone surrogate, or has nothing visible in it.
+ */
 function parseName(value: unknown): string | undefined {
-  // Checked on the raw string: trimming first would let a trailing newline or tab slip through.
-  if (typeof value !== "string" || CONTROL_CHARS.test(value)) {
+  // Checked on the raw string: trimming first would let a trailing newline or tab slip through. A lone surrogate is not
+  // text (JSON can carry one) and the database would refuse it.
+  if (typeof value !== "string" || !value.isWellFormed() || CONTROL_CHARS.test(value)) {
     return undefined;
   }
   const name = value.trim().replace(/\s+/gu, " ");
   const length = Array.from(name).length;
-  return length >= 1 && length <= SHIFT_NAME_MAX_LENGTH ? name : undefined;
+  if (length < 1 || length > SHIFT_NAME_MAX_LENGTH) {
+    return undefined;
+  }
+  return name.replace(INVISIBLE_CHARS, "").trim() === "" ? undefined : name;
 }
 
 /** The minutes after midnight for a `GG:MM` string (see `parseTime`), or undefined for anything else. */

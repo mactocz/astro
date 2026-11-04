@@ -44,10 +44,12 @@ export default function ShiftForm({ shift }: Props) {
         label="Nazwa"
         value={values.name}
         onChange={(value) => {
-          setField("name", value);
+          // The limit counts characters (code points), like the server and the database; the `maxLength` attribute
+          // would count UTF-16 units and stop a name with emoji too early.
+          setField("name", Array.from(value).slice(0, SHIFT_NAME_MAX_LENGTH).join(""));
         }}
         error={fieldErrors.name}
-        maxLength={SHIFT_NAME_MAX_LENGTH}
+        autoComplete="off"
         icon={<Tag className="size-4" />}
       />
 
@@ -75,9 +77,13 @@ export default function ShiftForm({ shift }: Props) {
         icon={<Clock className="size-4" />}
       />
 
-      <p aria-live="polite" className={preview ? previewClass : hintClass}>
-        {preview ?? OVERNIGHT_HINT}
-      </p>
+      <div>
+        {/* Only the preview is announced as it changes; the hint is plain text that shows while there is no preview. */}
+        <p aria-live="polite" className={previewClass}>
+          {preview}
+        </p>
+        {preview ? null : <p className={hintClass}>{OVERNIGHT_HINT}</p>}
+      </div>
 
       <ServerError message={serverError} />
 

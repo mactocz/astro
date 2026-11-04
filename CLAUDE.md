@@ -34,8 +34,8 @@ Full server-side rendering (`output: "server"` in astro.config.mjs). All pages a
 
 ### Data access
 
-- Read and write data through `Astro.locals.supabase` (the user's session, set per request by the middleware), so RLS decides what a user sees and may change. Query functions live in `src/lib/` (`src/lib/employees.ts`), never in pages or routes.
-- Validate input with one function shared by the form and the API route, so both give the same answer (`validateEmployeeInput` in `src/lib/services/employee.ts`, built on zod); the server validates again whatever the form sent.
+- Read and write data through `Astro.locals.supabase` (the user's session, set per request by the middleware), so RLS decides what a user sees and may change. Query functions live in `src/lib/` (`src/lib/employees.ts`, `src/lib/shifts.ts`), never in pages or routes.
+- Validate input with one function shared by the form and the API route, so both give the same answer (`validateEmployeeInput` in `src/lib/services/employee.ts`, built on zod; `validateShiftInput` in `src/lib/services/shift.ts`, plain checks); the server validates again whatever the form sent.
 - Employee pages are planner-only: `src/pages/employees/` inside `src/layouts/PlannerLayout.astro`, with the `src/components/employees/EmployeeForm.tsx` island and its `useEmployeeForm` hook (`src/components/hooks/`), saving through `/api/employees` and `/api/employees/[id]`.
 - Shift pages (the shift dictionary: name, start and end time) follow the same pattern and are planner-only too: `src/pages/shifts/` inside `PlannerLayout`, with the `src/components/shifts/ShiftForm.tsx` island and its `useShiftForm` hook (`src/components/hooks/`), saving through `/api/shifts` and `/api/shifts/[id]`. The shared PostgREST helpers (`isUuid`, `logDatabaseError`) live in `src/lib/postgrest.ts`.
 
