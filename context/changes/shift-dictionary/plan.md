@@ -365,5 +365,5 @@ Kolejność wdrożenia na produkcję (wykonuje autor): (1) `npx supabase db push
 - [x] 4.4 Telefon (szerokość około 375 px w narzędziach przeglądarki): lista i formularz są czytelne bez poziomego przewijania, a pola czasu da się wypełnić — 1449e7e
 - [x] 4.5 Przeglądarka, pracownik i anonim: `/shifts` pokazuje "Brak dostępu" (403 dla pracownika, 401 dla anonima, bez przekierowania) — 1449e7e
 - [ ] 4.6 Migracja zastosowana na hostowanym projekcie przez autora przed wdrożeniem kodu (`npx supabase db push`) i widoczna jako zastosowana w `npx supabase migration list`
-- [ ] 4.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki bazy, API i stron)
+- [x] 4.7 Przebieg CI na pull requeście jest zielony (job `ci` i job `smoke`, w tym kroki bazy, API i stron) — b050bf5
 - [ ] 4.8 Po ręcznym wdrożeniu (migracja przed kodem, zob. Migration Notes) planista na `https://shiftly.mto-astro.workers.dev` dodaje i edytuje zmianę (wykonuje autor)
