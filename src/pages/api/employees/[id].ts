@@ -1,6 +1,7 @@
 import type { APIRoute } from "astro";
-import { EMAIL_TAKEN_MESSAGE, isUuid, updateEmployee } from "@/lib/employees";
+import { EMAIL_TAKEN_MESSAGE, updateEmployee } from "@/lib/employees";
 import { jsonResponse, readJsonBody } from "@/lib/json-response";
+import { isUuid } from "@/lib/postgrest";
 import { validateEmployeeInput } from "@/lib/services/employee";
 
 export const prerender = false;

@@ -1,10 +1,10 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
 // that the database role helpers read the role from the token, that only planners can read and write the employees
-// table through PostgREST, that the employee API routes keep to the role gate, the validation and their status codes,
-// that the employee pages open for the planner only, and that public registration stays closed. Zero dependencies on
-// purpose. It creates real accounts and removes its own employee rows with the service-role key, so it only runs
-// against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come from
-// `supabase status -o env`.
+// and shifts tables through PostgREST, that the employee and shift API routes keep to the role gate, the validation and
+// their status codes, that the employee and shift pages open for the planner only, and that public registration stays
+// closed. Zero dependencies on purpose. It creates real accounts and removes its own employee and shift rows with the
+// service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
+// (.env / .dev.vars). Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -156,10 +156,10 @@ async function rpc(name, token) {
   return supabaseResult(response);
 }
 
-// Calls the employees table through PostgREST. Without a token only the anon key is sent, like a client that never
-// signed in; `key` replaces the anon key in both headers (the service-role cleanup).
-async function employeesTable(method, { token, key = SUPABASE_KEY, query = "", body, prefer } = {}) {
-  const response = await fetch(`${supabaseOrigin}/rest/v1/employees${query}`, {
+// Calls a table through PostgREST. Without a token only the anon key is sent, like a client that never signed in; `key`
+// replaces the anon key in both headers (the service-role cleanup).
+async function restTable(table, method, { token, key = SUPABASE_KEY, query = "", body, prefer } = {}) {
+  const response = await fetch(`${supabaseOrigin}/rest/v1/${table}${query}`, {
     method,
     headers: {
       apikey: key,
@@ -170,6 +170,14 @@ async function employeesTable(method, { token, key = SUPABASE_KEY, query = "", b
     body: body ? JSON.stringify(body) : undefined,
   });
   return supabaseResult(response);
+}
+
+function employeesTable(method, options) {
+  return restTable("employees", method, options);
+}
+
+function shiftsTable(method, options) {
+  return restTable("shifts", method, options);
 }
 
 // Every signed-in user may edit their own user_metadata, so Supabase is expected to accept this; the role must still
@@ -306,6 +314,85 @@ const notPlannerEmployeeSteps = (actor) => [
   ),
 ];
 
+// The shifts steps share two rows with one name. The name starts with "Smoke-" because the final cleanup step
+// deletes by that prefix. The first shift runs 22:00-06:00, which only a schema that lets the end be earlier than the
+// start accepts; the second has other times, which only a schema without a unique name accepts. The ids are only known
+// once the insert steps have run.
+const smokeShift = { name: `Smoke-${runId}-db`, start_minute: 1320, end_minute: 360 };
+const sameNameShift = { name: smokeShift.name, start_minute: 360, end_minute: 840 };
+const patchedShift = { end_minute: 420 };
+let smokeShiftId;
+let sameNameShiftId;
+const smokeShiftRow = () => `?id=eq.${smokeShiftId}`;
+
+// A row from the database carries a random id and a timestamp, so every sent column is compared instead.
+const hasColumns = (row, columns) => Object.entries(columns).every(([column, value]) => row?.[column] === value);
+const isInsertedShift = (columns) => (rows) =>
+  Array.isArray(rows) && rows.length === 1 && typeof rows[0].id === "string" && hasColumns(rows[0], columns);
+// Both rows of the smoke name, each found by the id its insert step returned; `changes` replace the first row's
+// columns.
+const isSmokeShifts = (changes) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 2 &&
+  typeof smokeShiftId === "string" &&
+  typeof sameNameShiftId === "string" &&
+  hasColumns(
+    rows.find((row) => row.id === smokeShiftId),
+    { ...smokeShift, ...changes },
+  ) &&
+  hasColumns(
+    rows.find((row) => row.id === sameNameShiftId),
+    sameNameShift,
+  );
+
+const plannerReadsShifts = (name, changes, describe) => [
+  `${planner.label}: ${name}`,
+  async () => shiftsTable("GET", { token: await accessToken(planner), query: `?name=eq.${smokeShift.name}` }),
+  { status: 200, check: isSmokeShifts(changes), describe },
+];
+
+// Each rejected insert breaks exactly one boundary, so the constraint named in the error is the proof of why.
+const plannerRejectsShift = (description, body, constraint) => [
+  `${planner.label}: shifts insert ${description} is rejected`,
+  async () => shiftsTable("POST", { token: await accessToken(planner), body }),
+  { statusNotClass: 2, check: violates(constraint), describe: `an error naming ${constraint}` },
+];
+
+// A signed-in account without planner rights: the table looks empty and writes are refused or hidden. The planner's
+// read afterwards is the proof that the rows did not change, whatever status PostgREST used to answer.
+const notPlannerShiftSteps = (actor) => [
+  [
+    `${actor.label}: shifts read returns an empty list`,
+    async () => shiftsTable("GET", { token: await accessToken(actor), query: "?select=id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: shifts insert is rejected`,
+    async () =>
+      shiftsTable("POST", {
+        token: await accessToken(actor),
+        body: { ...smokeShift, name: `Smoke-${runId}-${actor.label}` },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: shifts update is refused or hidden`,
+    async () =>
+      shiftsTable("PATCH", { token: await accessToken(actor), query: smokeShiftRow(), body: { end_minute: 600 } }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: shifts delete is rejected`,
+    async () => shiftsTable("DELETE", { token: await accessToken(actor), query: smokeShiftRow() }),
+    { statusNotClass: 2 },
+  ],
+  plannerReadsShifts(
+    `shifts rows are unchanged after ${actor.label} write attempts`,
+    patchedShift,
+    "both smoke shifts, the first one ending at minute 420",
+  ),
+];
+
 // The API steps share one employee, created through the app by the planner. Names with Polish letters and a mixed-case
 // e-mail on purpose: the app must keep the letters and answer with the e-mail in lower case (smoke-<runId>@example.com,
 // which the final cleanup step deletes by prefix). The FTE 2/4 comes back reduced to 1/2. The id is only known once
@@ -364,6 +451,61 @@ const plannerPutsEmployee = (name, path, expected) => [
   { contentType: "application/json", ...expected },
 ];
 
+// The shift API steps share one shift, created through the app by the planner. Its name has Polish letters, a double
+// space in the middle and a trailing space on purpose: the app must answer with the name trimmed and collapsed to single
+// spaces (Smoke-<runId>-Nocna Łąka, which the final cleanup step deletes by prefix). It runs 22:00-06:00, so the end
+// comes back as minute 360, earlier than the start at minute 1320. A second shift has the same name and other times,
+// because a name is not unique. The id is only known once the create step has run.
+const apiShift = { name: `Smoke-${runId}-Nocna  Łąka `, startTime: "22:00", endTime: "06:00" };
+const apiShiftName = `Smoke-${runId}-Nocna Łąka`;
+const secondApiShift = { ...apiShift, startTime: "06:00", endTime: "14:00" };
+const changedApiShift = { ...apiShift, endTime: "07:00" };
+const apiShiftUrl = () => `/api/shifts/${apiShiftId}`;
+// A well-formed UUID that no row has; the gate answers before the route or the page runs, so the employee's requests may
+// name it too.
+const unknownShiftId = "00000000-0000-4000-8000-000000000000";
+const unknownShiftUrl = `/api/shifts/${unknownShiftId}`;
+let apiShiftId;
+
+// The form page of the shift the planner creates. Its address needs the id, which only exists once the create step has
+// run, so it is built when the step runs.
+const visitApiShiftPage = (actor, status, bodyIncludes) => [
+  `${actor.label}: GET /shifts/<id>`,
+  () => request(actor, `/shifts/${apiShiftId}`),
+  { status, bodyIncludes },
+];
+const notFoundShiftMessage = "Nie znaleziono zmiany";
+
+// The route answers with the camelCase shift: the normalised name and the times as minutes after midnight.
+const isApiShift = (endMinute) => (body) =>
+  typeof body.shift.id === "string" &&
+  body.shift.id === apiShiftId &&
+  typeof body.shift.createdAt === "string" &&
+  body.shift.name === apiShiftName &&
+  body.shift.startMinute === 1320 &&
+  body.shift.endMinute === endMinute;
+const isSecondApiShift = (body) =>
+  typeof body.shift.id === "string" &&
+  body.shift.id !== apiShiftId &&
+  body.shift.name === apiShiftName &&
+  body.shift.startMinute === 360 &&
+  body.shift.endMinute === 840;
+const rejectsNameAndStartTime = (body) =>
+  typeof body.errors.name === "string" &&
+  typeof body.errors.startTime === "string" &&
+  body.errors.endTime === undefined;
+const rejectsEndTimeOnly = (body) =>
+  typeof body.errors.endTime === "string" && body.errors.name === undefined && body.errors.startTime === undefined;
+
+// A body that fails on the name and the start time at once, to be sent to POST and to PUT.
+const invalidApiShift = { ...apiShift, name: "", startTime: "25:00" };
+
+const plannerPutsShift = (name, path, expected, json = changedApiShift) => [
+  `${planner.label}: PUT ${name}`,
+  () => request(planner, path(), { method: "PUT", json }),
+  { contentType: "application/json", ...expected },
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -371,6 +513,8 @@ const steps = [
   visit(anonymous, "/planner", 401),
   visit(anonymous, "/employees", 401),
   visit(anonymous, "/employees/new", 401),
+  visit(anonymous, "/shifts", 401),
+  visit(anonymous, "/shifts/new", 401),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
@@ -379,6 +523,11 @@ const steps = [
   [
     `${anonymous.label}: POST /api/employees`,
     () => request(anonymous, "/api/employees", { method: "POST", json: apiEmployee }),
+    { status: 401, contentType: "application/json" },
+  ],
+  [
+    `${anonymous.label}: POST /api/shifts`,
+    () => request(anonymous, "/api/shifts", { method: "POST", json: apiShift }),
     { status: 401, contentType: "application/json" },
   ],
 
@@ -418,6 +567,9 @@ const steps = [
   visit(employee, "/employees", 403),
   visit(employee, "/employees/new", 403),
   visit(employee, `/employees/${unknownEmployeeId}`, 403),
+  visit(employee, "/shifts", 403),
+  visit(employee, "/shifts/new", 403),
+  visit(employee, `/shifts/${unknownShiftId}`, 403),
   [
     `${employee.label}: POST /api/employees`,
     () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
@@ -428,6 +580,16 @@ const steps = [
     () => request(employee, unknownEmployeeUrl, { method: "PUT", json: apiEmployee }),
     { status: 403, contentType: "application/json" },
   ],
+  [
+    `${employee.label}: POST /api/shifts`,
+    () => request(employee, "/api/shifts", { method: "POST", json: apiShift }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${employee.label}: PUT /api/shifts/<id>`,
+    () => request(employee, unknownShiftUrl, { method: "PUT", json: apiShift }),
+    { status: 403, contentType: "application/json" },
+  ],
   signOut(employee),
   visit(employee, "/dashboard", 401),
 
@@ -436,6 +598,7 @@ const steps = [
   signIn(planner),
   visit(planner, "/dashboard", 200),
   visit(planner, "/planner", 200, "Pracownicy"),
+  visit(planner, "/planner", 200, "Zmiany"),
   visit(planner, "/planner/", 200),
   [
     `${planner.label}: POST /api/employees creates an employee`,
@@ -528,12 +691,100 @@ const steps = [
       describe: "errors.email, the taken-address text",
     },
   ],
+  [
+    `${planner.label}: POST /api/shifts creates a shift`,
+    async () => {
+      const result = await request(planner, "/api/shifts", { method: "POST", json: apiShift });
+      apiShiftId = parseJson(result.body)?.shift?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: isApiShift(360),
+      describe: "the shift with its name trimmed and collapsed, from minute 1320 to 360",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with the same name creates a second shift`,
+    () => request(planner, "/api/shifts", { method: "POST", json: secondApiShift }),
+    {
+      status: 201,
+      contentType: "application/json",
+      check: isSecondApiShift,
+      describe: "a second shift with its own id, the same name and the times 06:00-14:00",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with an empty name and a start of 25:00`,
+    () => request(planner, "/api/shifts", { method: "POST", json: invalidApiShift }),
+    {
+      status: 422,
+      contentType: "application/json",
+      check: rejectsNameAndStartTime,
+      describe: "errors for exactly the name and startTime fields",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with equal start and end times`,
+    () =>
+      request(planner, "/api/shifts", { method: "POST", json: { ...apiShift, startTime: "08:00", endTime: "08:00" } }),
+    {
+      status: 422,
+      contentType: "application/json",
+      check: rejectsEndTimeOnly,
+      describe: "an error for exactly the endTime field",
+    },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with a form body`,
+    () => request(planner, "/api/shifts", { method: "POST", form: apiShift }),
+    { status: 415, contentType: "application/json" },
+  ],
+  [
+    `${planner.label}: POST /api/shifts with a body that is not JSON`,
+    () => request(planner, "/api/shifts", { method: "POST", jsonText: "{" }),
+    { status: 400, contentType: "application/json", check: isInvalidJson, describe: "the error invalid_json" },
+  ],
+  plannerPutsShift("/api/shifts/<id> changes the end time", apiShiftUrl, {
+    status: 200,
+    cacheControl: "no-store",
+    check: isApiShift(420),
+    describe: "the same shift ending at minute 420",
+  }),
+  plannerPutsShift(
+    "/api/shifts/<id> with an empty name and a start of 25:00",
+    apiShiftUrl,
+    {
+      status: 422,
+      check: rejectsNameAndStartTime,
+      describe: "errors for exactly the name and startTime fields",
+    },
+    invalidApiShift,
+  ),
+  plannerPutsShift("/api/shifts/<unknown UUID>", () => unknownShiftUrl, {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  plannerPutsShift("/api/shifts/not-a-uuid", () => "/api/shifts/not-a-uuid", {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
   // The pages with names and e-mail addresses must not be cached.
   visit(planner, "/employees", 200, apiEmployee.lastName, "no-store"),
   visit(planner, "/employees/new", 200, undefined, "no-store"),
   visitApiEmployeePage(planner, 200, apiEmployee.lastName, "no-store"),
   visit(planner, `/employees/${unknownEmployeeId}`, 404, notFoundMessage),
   visit(planner, "/employees/not-a-uuid", 404, notFoundMessage),
+  // The shift pages: the list shows the shift created above, the form page carries its name.
+  visit(planner, "/shifts", 200, apiShiftName),
+  visit(planner, "/shifts/new", 200),
+  visitApiShiftPage(planner, 200, apiShiftName),
+  visit(planner, `/shifts/${unknownShiftId}`, 404, notFoundShiftMessage),
+  visit(planner, "/shifts/not-a-uuid", 404, notFoundShiftMessage),
   signOut(planner),
   visit(planner, "/dashboard", 401),
 
@@ -607,6 +858,80 @@ const steps = [
   ...notPlannerEmployeeSteps(noRole),
   [`${anonymous.label}: employees read is rejected`, () => employeesTable("GET"), { statusNotClass: 2 }],
 
+  // Shifts table: only the planner reads, adds and edits rows, nobody deletes them, and the constraints hold even for
+  // the planner. A name is not unique, and a shift may end after midnight.
+  [
+    `${planner.label}: shifts insert returns the new row`,
+    async () => {
+      const result = await shiftsTable("POST", {
+        token: await accessToken(planner),
+        body: smokeShift,
+        prefer: "return=representation",
+      });
+      smokeShiftId = parseJson(result.body)?.[0]?.id;
+      return result;
+    },
+    { status: 201, check: isInsertedShift(smokeShift), describe: "the inserted 22:00-06:00 shift, echoed back" },
+  ],
+  [
+    `${planner.label}: shifts insert with the same name is accepted`,
+    async () => {
+      const result = await shiftsTable("POST", {
+        token: await accessToken(planner),
+        body: sameNameShift,
+        prefer: "return=representation",
+      });
+      sameNameShiftId = parseJson(result.body)?.[0]?.id;
+      return result;
+    },
+    { status: 201, check: isInsertedShift(sameNameShift), describe: "the inserted second shift, echoed back" },
+  ],
+  plannerReadsShifts("shifts read shows both rows", undefined, "both smoke shifts as inserted"),
+  plannerRejectsShift(
+    "with equal start and end times",
+    { name: `Smoke-${runId}-equal`, start_minute: 480, end_minute: 480 },
+    "shifts_times_differ",
+  ),
+  plannerRejectsShift(
+    "with a start of minute 1440",
+    { name: `Smoke-${runId}-start`, start_minute: 1440, end_minute: 360 },
+    "shifts_start_minute_valid",
+  ),
+  plannerRejectsShift(
+    "with an end of minute 1440",
+    { name: `Smoke-${runId}-end`, start_minute: 360, end_minute: 1440 },
+    "shifts_end_minute_valid",
+  ),
+  plannerRejectsShift("with an empty name", { name: "", start_minute: 360, end_minute: 840 }, "shifts_name_valid"),
+  plannerRejectsShift(
+    "with a leading space in the name",
+    { name: ` Smoke-${runId}-space`, start_minute: 360, end_minute: 840 },
+    "shifts_name_valid",
+  ),
+  [
+    `${planner.label}: shifts update changes the end time`,
+    async () => shiftsTable("PATCH", { token: await accessToken(planner), query: smokeShiftRow(), body: patchedShift }),
+    { statusClass: 2 },
+  ],
+  plannerReadsShifts(
+    "shifts read shows the new end time",
+    patchedShift,
+    "both smoke shifts, the first one ending at minute 420",
+  ),
+  [
+    `${planner.label}: shifts delete is rejected`,
+    async () => shiftsTable("DELETE", { token: await accessToken(planner), query: smokeShiftRow() }),
+    { statusNotClass: 2 },
+  ],
+  plannerReadsShifts(
+    "shifts rows still exist after the delete attempt",
+    patchedShift,
+    "both smoke shifts, the first one ending at minute 420",
+  ),
+  ...notPlannerShiftSteps(employee),
+  ...notPlannerShiftSteps(noRole),
+  [`${anonymous.label}: shifts read is rejected`, () => shiftsTable("GET"), { statusNotClass: 2 }],
+
   // A forged role: editing user_metadata succeeds, and still grants nothing in the database or in the app.
   [
     `${employee.label}: Supabase accepts a user_metadata role edit`,
@@ -619,11 +944,17 @@ const steps = [
   visit(employee, "/planner", 403),
   signOut(employee),
 
-  // Always last: removes every row this and earlier runs left behind (the table has no delete grant for the API, so only
-  // the service-role key can), which keeps the next run from ending in a 409 and the app's list as it was before.
+  // Always last: removes every row this and earlier runs left behind (the tables have no delete grant for the API, so
+  // only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they were
+  // before.
   [
     "service role: delete the smoke employees",
     () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
+    { statusClass: 2 },
+  ],
+  [
+    "service role: delete the smoke shifts",
+    () => shiftsTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?name=like.Smoke-*" }),
     { statusClass: 2 },
   ],
 ];

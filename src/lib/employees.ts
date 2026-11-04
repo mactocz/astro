@@ -1,4 +1,5 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
+import { isUuid, logDatabaseError } from "@/lib/postgrest";
 import { sortEmployees } from "@/lib/services/employee";
 import type { Employee, EmployeeInput } from "@/types";
 
@@ -7,7 +8,6 @@ import type { Employee, EmployeeInput } from "@/types";
 const COLUMNS = "id, first_name, last_name, email, fte_numerator, fte_denominator, created_at";
 // The e-mail is the only unique column besides the primary key, so this code always means a taken address.
 const UNIQUE_VIOLATION = "23505";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const EMAIL_TAKEN_MESSAGE = "Ten adres e-mail jest już przypisany do innego pracownika.";
 
@@ -24,11 +24,6 @@ interface EmployeeRow {
 type WriteResult<Failure extends string> = { ok: true; employee: Employee } | { ok: false; error: Failure };
 export type CreateEmployeeResult = WriteResult<"email_taken" | "failed">;
 export type UpdateEmployeeResult = WriteResult<"email_taken" | "not_found" | "failed">;
-
-/** True for the canonical 8-4-4-4-12 hexadecimal form of a UUID, in either letter case. */
-export function isUuid(value: string): boolean {
-  return UUID.test(value);
-}
 
 function toEmployees(data: unknown): Employee[] {
   return (data as EmployeeRow[]).map((row) => ({
@@ -51,14 +46,8 @@ function toRow(input: EmployeeInput) {
   };
 }
 
-// Code and message only: the details of a PostgREST error can quote the rejected values, which are personal data.
-function logDatabaseError(action: string, error: PostgrestError): void {
-  // eslint-disable-next-line no-console -- the only trace of a database failure, visible in `wrangler tail`
-  console.error(`employees ${action} failed: ${error.code} ${error.message}`);
-}
-
 function readFailure(action: string, error: PostgrestError): Error {
-  logDatabaseError(action, error);
+  logDatabaseError("employees", action, error);
   return new Error(`Reading employees failed (${action}).`);
 }
 
@@ -66,7 +55,7 @@ function writeFailure(action: string, error: PostgrestError): { ok: false; error
   if (error.code === UNIQUE_VIOLATION) {
     return { ok: false, error: "email_taken" };
   }
-  logDatabaseError(action, error);
+  logDatabaseError("employees", action, error);
   return { ok: false, error: "failed" };
 }
 
