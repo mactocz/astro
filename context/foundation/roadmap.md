@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-11-04
+updated: 2026-11-05
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -313,8 +313,8 @@ Foundations below assume these are present and do NOT re-scaffold them.
 | F-01       | role-based-access          | Role planista/pracownik i kontrola dostępu                    | done                  | Zarchiwizowane 2026-10-21: `context/archive/2026-10-20-role-based-access/` |
 | F-02       | rules-verification-harness | Testy automatyczne lokalnie i w CI (ścieżka weryfikacji reguł) | done                  | Zarchiwizowane 2026-10-20: `context/archive/2026-10-16-rules-verification-harness/` |
 | S-01       | employee-roster            | Lista pracowników: dodawanie i edycja z etatem                | done                  | Zarchiwizowane 2026-10-28: `context/archive/2026-10-21-employee-roster/` |
-| S-02       | shift-dictionary           | Słownik zmian                                                 | yes                   | Run `/10x-plan shift-dictionary`; F-01 gotowe; do rozstrzygnięcia w planie: zmiany przechodzące przez północ |
-| S-03       | weekly-schedule-draft      | Grafik tygodniowy: formularz, obsada na zmianę, lista         | no                    | Czeka na S-02 (S-01 gotowe) |
+| S-02       | shift-dictionary           | Słownik zmian                                                 | done                  | Zarchiwizowane 2026-11-04: `context/archive/2026-10-29-shift-dictionary/` |
+| S-03       | weekly-schedule-draft      | Grafik tygodniowy: formularz, obsada na zmianę, lista         | yes                   | Run `/10x-new weekly-schedule-draft`, then `/10x-plan`; S-01 i S-02 gotowe; do uwzględnienia w planie: godziny obok nazwy zmiany w selektorze (nazwy mogą się powtarzać), odwołanie do zmiany po `id`, brak blokowania pracowników (FR-015), decyzja D6 |
 | S-04       | manual-shift-assignment    | Ręczne obsadzanie zmian w grafiku roboczym                    | no                    | Czeka na S-03                                                 |
 | S-05       | live-rule-violations       | Naruszenia reguł i braki obsady na żywo                       | no                    | Progi rozstrzygnięte (`work-time-rules.md`); czeka na S-04 (F-02 gotowe) |
 | S-06       | workload-vs-norm           | Suma godzin pracownika względem normy z etatu                 | no                    | Norma rozstrzygnięta (`work-time-rules.md`); czeka na S-04    |
