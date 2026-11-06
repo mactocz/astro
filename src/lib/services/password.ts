@@ -10,7 +10,7 @@ const RULE_ERRORS = {
   upper: "Hasło musi zawierać co najmniej jedną wielką literę.",
   digit: "Hasło musi zawierać co najmniej jedną cyfrę.",
   special: "Hasło musi zawierać co najmniej jeden znak specjalny, np. ! ? # (spacja się nie liczy).",
-  maxLength: `Hasło jest za długie: najwyżej ${PASSWORD_MAX_LENGTH} bajtów (polskie litery liczą się podwójnie).`,
+  maxLength: "Hasło jest za długie. Wybierz krótsze.",
 } as const satisfies Record<keyof PasswordCheck, string>;
 
 // The order in which the first unmet part of the rule is reported.
