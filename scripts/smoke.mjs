@@ -1,10 +1,11 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
-// that the database role helpers read the role from the token, that only planners can read and write the employees
-// and shifts tables through PostgREST, that the employee and shift API routes keep to the role gate, the validation and
-// their status codes, that the employee and shift pages open for the planner only, and that public registration stays
-// closed. Zero dependencies on purpose. It creates real accounts and removes its own employee and shift rows with the
-// service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
-// (.env / .dev.vars). Values come from `supabase status -o env`.
+// that the database role helpers read the role from the token, that only planners can read and write the employees,
+// shifts and schedules tables through PostgREST and save a schedule atomically through the save_schedule function, that
+// the employee and shift API routes keep to the role gate, the validation and their status codes, that the employee and
+// shift pages open for the planner only, and that public registration stays closed. Zero dependencies on purpose. It
+// creates real accounts and removes its own employee, shift and schedule rows with the service-role key, so it only
+// runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come from
+// `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -141,9 +142,9 @@ async function accessToken(actor) {
   return actor.token;
 }
 
-// Calls a database function through PostgREST. Without a token only the anon key is sent, like a client that never
-// signed in.
-async function rpc(name, token) {
+// Calls a database function through PostgREST; `args` is the object of named arguments (none for the role helpers).
+// Without a token only the anon key is sent, like a client that never signed in.
+async function rpc(name, token, args = {}) {
   const response = await fetch(`${supabaseOrigin}/rest/v1/rpc/${name}`, {
     method: "POST",
     headers: {
@@ -151,7 +152,7 @@ async function rpc(name, token) {
       Authorization: `Bearer ${token ?? SUPABASE_KEY}`,
       "Content-Type": "application/json",
     },
-    body: "{}",
+    body: JSON.stringify(args),
   });
   return supabaseResult(response);
 }
@@ -178,6 +179,18 @@ function employeesTable(method, options) {
 
 function shiftsTable(method, options) {
   return restTable("shifts", method, options);
+}
+
+function schedulesTable(method, options) {
+  return restTable("schedules", method, options);
+}
+
+function scheduleStaffingTable(method, options) {
+  return restTable("schedule_staffing", method, options);
+}
+
+function scheduleEmployeesTable(method, options) {
+  return restTable("schedule_employees", method, options);
 }
 
 // Every signed-in user may edit their own user_metadata, so Supabase is expected to accept this; the role must still
@@ -504,6 +517,240 @@ const plannerPutsShift = (name, path, expected, json = changedApiShift) => [
   `${planner.label}: PUT ${name}`,
   () => request(planner, path(), { method: "PUT", json }),
   { contentType: "application/json", ...expected },
+];
+
+// The schedules steps share one schedule, saved through the save_schedule function. Its label starts with "Smoke-"
+// because the final cleanup step deletes by that prefix. The shifts and people it refers to are rows created earlier in
+// this run (the two shifts and the employee of the database steps, the employee of the API steps), so their ids are
+// only known once those steps have run, and every state below is a function. The schedule is created as
+// `createdSchedule` (3 cells of 2 shifts, 2 people) and then replaced with `replacedSchedule`: another start date and
+// label, one cell gone (first shift, day 1), one cell with another count (second shift, day 0), one cell new (second
+// shift, day 6) and one person gone. `trimmedSchedule` is that state after the planner deletes the new cell directly.
+const smokeScheduleLabel = `Smoke-${runId}-schedule`;
+const unknownScheduleId = "00000000-0000-4000-8000-000000000000";
+let smokeScheduleId;
+const smokeScheduleRow = () => `?id=eq.${smokeScheduleId}`;
+const smokeScheduleChildren = () => `?schedule_id=eq.${smokeScheduleId}`;
+
+const createdSchedule = () => ({
+  startDate: "2026-11-11",
+  label: smokeScheduleLabel,
+  staffing: [
+    { shiftId: smokeShiftId, dayOffset: 0, requiredCount: 2 },
+    { shiftId: smokeShiftId, dayOffset: 1, requiredCount: 3 },
+    { shiftId: sameNameShiftId, dayOffset: 0, requiredCount: 1 },
+  ],
+  employeeIds: [smokeEmployeeId, apiEmployeeId],
+});
+const replacedSchedule = () => ({
+  startDate: "2026-11-15",
+  label: `Smoke-${runId}-replaced`,
+  staffing: [
+    { shiftId: smokeShiftId, dayOffset: 0, requiredCount: 2 },
+    { shiftId: sameNameShiftId, dayOffset: 0, requiredCount: 4 },
+    { shiftId: sameNameShiftId, dayOffset: 6, requiredCount: 5 },
+  ],
+  employeeIds: [smokeEmployeeId],
+});
+const trimmedSchedule = () => ({
+  ...replacedSchedule(),
+  staffing: replacedSchedule().staffing.filter((cell) => !(cell.shiftId === sameNameShiftId && cell.dayOffset === 6)),
+});
+
+// Saves that must fail as a whole, each with a different broken cell: a required count of 0, a shift that does not
+// exist, and a required count of 0 in a replacement of the existing schedule (whose new date and label must not stick).
+const zeroCountSchedule = () => ({
+  ...createdSchedule(),
+  label: `Smoke-${runId}-atomic-count`,
+  staffing: [{ shiftId: smokeShiftId, dayOffset: 0, requiredCount: 0 }],
+});
+const unknownShiftSchedule = () => ({
+  ...createdSchedule(),
+  label: `Smoke-${runId}-atomic-shift`,
+  staffing: [{ shiftId: unknownShiftId, dayOffset: 0, requiredCount: 1 }],
+});
+const failedReplacement = () => ({
+  ...replacedSchedule(),
+  startDate: "2026-12-02",
+  label: `Smoke-${runId}-replace-fail`,
+  staffing: [{ shiftId: smokeShiftId, dayOffset: 3, requiredCount: 0 }],
+  employeeIds: [smokeEmployeeId, apiEmployeeId],
+});
+
+// The named arguments of save_schedule for a state; an `id` of null creates a schedule, any other replaces that one.
+const saveScheduleArgs = (state, id = null) => ({
+  p_schedule_id: id,
+  p_start_date: state.startDate,
+  p_label: state.label,
+  p_staffing: state.staffing,
+  p_employee_ids: state.employeeIds,
+});
+
+// `check` predicates for the three tables, each given the state the schedule should be in. The cells and the people
+// come back in no promised order, so they are compared as sorted lists; a row from the database carries a timestamp, so
+// the header is compared column by column.
+const isUuidText = (value) =>
+  typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+const sameItems = (actual, expected) => JSON.stringify([...actual].sort()) === JSON.stringify([...expected].sort());
+const cellKey = (shiftId, dayOffset, requiredCount) => `${shiftId}/${dayOffset}/${requiredCount}`;
+const isScheduleHeader = (state) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  rows[0].id === smokeScheduleId &&
+  typeof rows[0].created_at === "string" &&
+  rows[0].start_date === state().startDate &&
+  rows[0].label === state().label;
+const isScheduleCells = (state) => (rows) =>
+  Array.isArray(rows) &&
+  rows.every((row) => row.schedule_id === smokeScheduleId) &&
+  sameItems(
+    rows.map((row) => cellKey(row.shift_id, row.day_offset, row.required_count)),
+    state().staffing.map((cell) => cellKey(cell.shiftId, cell.dayOffset, cell.requiredCount)),
+  );
+const isSchedulePeople = (state) => (rows) =>
+  Array.isArray(rows) &&
+  rows.every((row) => row.schedule_id === smokeScheduleId) &&
+  sameItems(
+    rows.map((row) => row.employee_id),
+    state().employeeIds,
+  );
+
+// Reads the header, the cells and the people of the smoke schedule back in three steps and compares each with `state`.
+const plannerReadsSchedule = (name, state, what) => [
+  [
+    `${planner.label}: schedules read ${name}`,
+    async () => schedulesTable("GET", { token: await accessToken(planner), query: smokeScheduleRow() }),
+    { status: 200, check: isScheduleHeader(state), describe: `the header of ${what}` },
+  ],
+  [
+    `${planner.label}: schedule_staffing read ${name}`,
+    async () => scheduleStaffingTable("GET", { token: await accessToken(planner), query: smokeScheduleChildren() }),
+    { status: 200, check: isScheduleCells(state), describe: `exactly the cells of ${what}` },
+  ],
+  [
+    `${planner.label}: schedule_employees read ${name}`,
+    async () => scheduleEmployeesTable("GET", { token: await accessToken(planner), query: smokeScheduleChildren() }),
+    { status: 200, check: isSchedulePeople(state), describe: `exactly the people of ${what}` },
+  ],
+];
+
+// A save that must be rejected; the error names the broken constraint, so a rejection for any other reason does not
+// pass. `id` is a function because the id of the smoke schedule is only known once the create step has run.
+const plannerRejectsSave = (description, state, constraint, id = () => null) => [
+  `${planner.label}: rpc save_schedule ${description} is rejected`,
+  async () => rpc("save_schedule", await accessToken(planner), saveScheduleArgs(state(), id())),
+  { statusNotClass: 2, check: violates(constraint), describe: `an error naming ${constraint}` },
+];
+
+// Each rejected insert breaks exactly one boundary, so the constraint named in the error is the proof of why. `body` is
+// a function for the same reason as `id` above.
+const scheduleTables = {
+  schedules: schedulesTable,
+  schedule_staffing: scheduleStaffingTable,
+  schedule_employees: scheduleEmployeesTable,
+};
+const plannerRejectsScheduleRow = (table, description, body, constraint) => [
+  `${planner.label}: ${table} insert ${description} is rejected`,
+  async () => scheduleTables[table]("POST", { token: await accessToken(planner), body: body() }),
+  { statusNotClass: 2, check: violates(constraint), describe: `an error naming ${constraint}` },
+];
+
+// A signed-in account without planner rights: the tables look empty, a save and the inserts are refused, and updates and
+// deletes of the child rows are refused or hidden. The planner's reads afterwards are the proof that nothing changed,
+// whatever status PostgREST used to answer. The children have no id column, hence select=schedule_id.
+const notPlannerScheduleSteps = (actor) => [
+  [
+    `${actor.label}: schedules read returns an empty list`,
+    async () => schedulesTable("GET", { token: await accessToken(actor), query: "?select=id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: schedule_staffing read returns an empty list`,
+    async () => scheduleStaffingTable("GET", { token: await accessToken(actor), query: "?select=schedule_id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: schedule_employees read returns an empty list`,
+    async () => scheduleEmployeesTable("GET", { token: await accessToken(actor), query: "?select=schedule_id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: rpc save_schedule creating a schedule is rejected`,
+    async () =>
+      rpc(
+        "save_schedule",
+        await accessToken(actor),
+        saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-${actor.label}-rpc-create` }),
+      ),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: rpc save_schedule replacing the schedule is rejected`,
+    async () =>
+      rpc(
+        "save_schedule",
+        await accessToken(actor),
+        saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-${actor.label}-rpc-replace` }, smokeScheduleId),
+      ),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedules insert is rejected`,
+    async () =>
+      schedulesTable("POST", {
+        token: await accessToken(actor),
+        body: { start_date: "2026-11-11", label: `Smoke-${runId}-${actor.label}-insert` },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedule_staffing insert is rejected`,
+    async () =>
+      scheduleStaffingTable("POST", {
+        token: await accessToken(actor),
+        body: { schedule_id: smokeScheduleId, shift_id: sameNameShiftId, day_offset: 3, required_count: 1 },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedule_employees insert is rejected`,
+    async () =>
+      scheduleEmployeesTable("POST", {
+        token: await accessToken(actor),
+        body: { schedule_id: smokeScheduleId, employee_id: apiEmployeeId },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedules update is refused or hidden`,
+    async () =>
+      schedulesTable("PATCH", {
+        token: await accessToken(actor),
+        query: smokeScheduleRow(),
+        body: { start_date: "2026-12-01" },
+      }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: schedules delete is rejected`,
+    async () => schedulesTable("DELETE", { token: await accessToken(actor), query: smokeScheduleRow() }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedule_staffing delete is refused or hidden`,
+    async () => scheduleStaffingTable("DELETE", { token: await accessToken(actor), query: smokeScheduleChildren() }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: schedule_employees delete is refused or hidden`,
+    async () => scheduleEmployeesTable("DELETE", { token: await accessToken(actor), query: smokeScheduleChildren() }),
+    { statusNotClass: 5 },
+  ],
+  ...plannerReadsSchedule(
+    `is unchanged after ${actor.label} write attempts`,
+    replacedSchedule,
+    "the replaced schedule, unchanged",
+  ),
 ];
 
 const steps = [
@@ -932,6 +1179,190 @@ const steps = [
   ...notPlannerShiftSteps(noRole),
   [`${anonymous.label}: shifts read is rejected`, () => shiftsTable("GET"), { statusNotClass: 2 }],
 
+  // Schedules tables and the save_schedule function: only the planner reads and saves, a save is atomic, the constraints
+  // and foreign keys hold even for the planner, and nobody deletes a schedule. These steps send bearer tokens straight
+  // to PostgREST, without the app. They use the shifts and employees of the steps above, so they come after them.
+  [
+    `${planner.label}: rpc save_schedule creates a schedule`,
+    async () => {
+      const result = await rpc("save_schedule", await accessToken(planner), saveScheduleArgs(createdSchedule()));
+      smokeScheduleId = parseJson(result.body);
+      return result;
+    },
+    { status: 200, check: isUuidText, describe: "the id of the new schedule" },
+  ],
+  ...plannerReadsSchedule("shows the created schedule", createdSchedule, "the created schedule (3 cells, 2 people)"),
+  [
+    `${planner.label}: rpc save_schedule replaces the schedule`,
+    async () => rpc("save_schedule", await accessToken(planner), saveScheduleArgs(replacedSchedule(), smokeScheduleId)),
+    { status: 200, check: (id) => id === smokeScheduleId, describe: "the id of the same schedule" },
+  ],
+  ...plannerReadsSchedule(
+    "shows exactly the replaced schedule",
+    replacedSchedule,
+    "the replaced schedule (another date, a cell removed, changed and added, 1 person)",
+  ),
+  plannerRejectsSave("with a required count of 0", zeroCountSchedule, "schedule_staffing_required_count_valid"),
+  plannerRejectsSave("with a shift that does not exist", unknownShiftSchedule, "schedule_staffing_shift_id_fkey"),
+  [
+    `${planner.label}: schedules read finds no schedule left by the rejected saves`,
+    async () =>
+      schedulesTable("GET", { token: await accessToken(planner), query: `?label=like.Smoke-${runId}-atomic*` }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  plannerRejectsSave(
+    "replacing the schedule with a required count of 0",
+    failedReplacement,
+    "schedule_staffing_required_count_valid",
+    () => smokeScheduleId,
+  ),
+  ...plannerReadsSchedule(
+    "is unchanged after the rejected replacement",
+    replacedSchedule,
+    "the replaced schedule, unchanged",
+  ),
+  [
+    `${planner.label}: rpc save_schedule with an unknown schedule id returns 404`,
+    async () =>
+      rpc("save_schedule", await accessToken(planner), saveScheduleArgs(createdSchedule(), unknownScheduleId)),
+    { status: 404, check: (error) => error.code === "PT404", describe: "an error with the code PT404" },
+  ],
+  plannerRejectsScheduleRow(
+    "schedules",
+    "with a start date of 2019-12-31",
+    () => ({ start_date: "2019-12-31", label: `Smoke-${runId}-date` }),
+    "schedules_start_date_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedules",
+    "with an empty label",
+    () => ({ start_date: "2026-11-11", label: "" }),
+    "schedules_label_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedules",
+    "with a leading space in the label",
+    () => ({ start_date: "2026-11-11", label: ` Smoke-${runId}-space` }),
+    "schedules_label_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_staffing",
+    "with a day offset of 7",
+    () => ({ schedule_id: smokeScheduleId, shift_id: smokeShiftId, day_offset: 7, required_count: 1 }),
+    "schedule_staffing_day_offset_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_staffing",
+    "with a required count of 100",
+    () => ({ schedule_id: smokeScheduleId, shift_id: smokeShiftId, day_offset: 2, required_count: 100 }),
+    "schedule_staffing_required_count_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_staffing",
+    "with a repeated primary key",
+    () => ({ schedule_id: smokeScheduleId, shift_id: smokeShiftId, day_offset: 0, required_count: 1 }),
+    "schedule_staffing_pkey",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_employees",
+    "with a repeated primary key",
+    () => ({ schedule_id: smokeScheduleId, employee_id: smokeEmployeeId }),
+    "schedule_employees_pkey",
+  ),
+  [
+    `${planner.label}: schedules delete is rejected`,
+    async () => schedulesTable("DELETE", { token: await accessToken(planner), query: smokeScheduleRow() }),
+    { statusNotClass: 2 },
+  ],
+  ...plannerReadsSchedule(
+    "still exists after the delete attempt",
+    replacedSchedule,
+    "the replaced schedule, unchanged",
+  ),
+  // Anonymous: no table, no function. The planner's reads after the signed-in accounts below cover these attempts too.
+  [`${anonymous.label}: schedules read is rejected`, () => schedulesTable("GET"), { statusNotClass: 2 }],
+  [`${anonymous.label}: schedule_staffing read is rejected`, () => scheduleStaffingTable("GET"), { statusNotClass: 2 }],
+  [
+    `${anonymous.label}: schedule_employees read is rejected`,
+    () => scheduleEmployeesTable("GET"),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedules insert is rejected`,
+    () => schedulesTable("POST", { body: { start_date: "2026-11-11", label: `Smoke-${runId}-anonymous-insert` } }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedule_staffing insert is rejected`,
+    () =>
+      scheduleStaffingTable("POST", {
+        body: { schedule_id: smokeScheduleId, shift_id: sameNameShiftId, day_offset: 3, required_count: 1 },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedule_employees insert is rejected`,
+    () => scheduleEmployeesTable("POST", { body: { schedule_id: smokeScheduleId, employee_id: apiEmployeeId } }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: rpc save_schedule is rejected`,
+    () =>
+      rpc(
+        "save_schedule",
+        undefined,
+        saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-anonymous-rpc` }),
+      ),
+    { statusNotClass: 2 },
+  ],
+  ...notPlannerScheduleSteps(employee),
+  ...notPlannerScheduleSteps(noRole),
+  // The child rows are the one thing a planner may delete directly; a single cell goes, the rest stays.
+  [
+    `${planner.label}: schedule_staffing delete removes one cell`,
+    async () =>
+      scheduleStaffingTable("DELETE", {
+        token: await accessToken(planner),
+        query: `${smokeScheduleChildren()}&shift_id=eq.${sameNameShiftId}&day_offset=eq.6`,
+      }),
+    { statusClass: 2 },
+  ],
+  ...plannerReadsSchedule(
+    "shows the schedule without the deleted cell",
+    trimmedSchedule,
+    "the replaced schedule without the cell of the second shift on day 6",
+  ),
+  // The foreign keys are on delete restrict: no shift or employee that a schedule uses can be removed, not even with the
+  // service-role key. The planner's reads show that the rows are still there.
+  [
+    "service role: delete of a shift used by a schedule is rejected",
+    () => shiftsTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: smokeShiftRow() }),
+    {
+      statusNotClass: 2,
+      check: violates("schedule_staffing_shift_id_fkey"),
+      describe: "an error naming schedule_staffing_shift_id_fkey",
+    },
+  ],
+  plannerReadsShifts(
+    "shifts rows still exist after the service role delete attempt",
+    patchedShift,
+    "both smoke shifts, the first one ending at minute 420",
+  ),
+  [
+    "service role: delete of an employee used by a schedule is rejected",
+    () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: smokeRow() }),
+    {
+      statusNotClass: 2,
+      check: violates("schedule_employees_employee_id_fkey"),
+      describe: "an error naming schedule_employees_employee_id_fkey",
+    },
+  ],
+  plannerReadsEmployee(
+    "employees row still exists after the service role delete attempt",
+    patchedFte,
+    "the smoke employee with FTE 3/4",
+  ),
+
   // A forged role: editing user_metadata succeeds, and still grants nothing in the database or in the app.
   [
     `${employee.label}: Supabase accepts a user_metadata role edit`,
@@ -946,7 +1377,13 @@ const steps = [
 
   // Always last: removes every row this and earlier runs left behind (the tables have no delete grant for the API, so
   // only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they were
-  // before.
+  // before. The schedules go first: their foreign keys to shifts and employees are on delete restrict, and deleting a
+  // schedule cascades to its cells and people.
+  [
+    "service role: delete the smoke schedules",
+    () => schedulesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?label=like.Smoke-*" }),
+    { statusClass: 2 },
+  ],
   [
     "service role: delete the smoke employees",
     () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
