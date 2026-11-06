@@ -19,7 +19,7 @@ const DAY_MS = 86_400_000;
 // One message per field, shown next to the form field and returned by the API. The staffing and employee fields have
 // one message per cause: the grid and the employee list are the only fields with more than one way to be wrong.
 const FIELD_ERRORS = {
-  startDate: `Podaj poprawną datę początkową w formacie RRRR-MM-DD (od ${SCHEDULE_MIN_DATE} do ${SCHEDULE_MAX_DATE}).`,
+  startDate: "Podaj poprawną datę początkową.",
   label: `Etykieta może mieć najwyżej ${SCHEDULE_LABEL_MAX_LENGTH} znaków i nie może zawierać znaków sterujących.`,
   staffingEmpty: `Wpisz obsadę (od 1 do ${STAFFING_MAX} osób) na co najmniej jednej zmianie w co najmniej jednym dniu.`,
   staffingTooMany: `Za dużo wpisów obsady (najwyżej ${STAFFING_MAX_CELLS}).`,
