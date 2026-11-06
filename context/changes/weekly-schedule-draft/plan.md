@@ -328,13 +328,13 @@ S-10 (`employee-invitation`) jest planowane i może być implementowane równole
 
 #### Automated
 
-- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [x] 2.2 Linting przechodzi: `npm run lint`
-- [x] 2.3 Smoke z krokami bazy i RPC przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z `supabase status -o env`): `npm run smoke`
+- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset` — c633a0a
+- [x] 2.2 Linting przechodzi: `npm run lint` — c633a0a
+- [x] 2.3 Smoke z krokami bazy i RPC przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z `supabase status -o env`): `npm run smoke` — c633a0a
 
 #### Manual
 
-- [x] 2.4 Polityki RLS, uprawnienia (w tym `execute` funkcji), ograniczenia i komentarze w migracji zostały przejrzane przez autora
+- [x] 2.4 Polityki RLS, uprawnienia (w tym `execute` funkcji), ograniczenia i komentarze w migracji zostały przejrzane przez autora — c633a0a
 
 ### Phase 3: Dostęp do danych i API
 
