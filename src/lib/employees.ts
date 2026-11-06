@@ -33,6 +33,9 @@ function toEmployees(data: unknown): Employee[] {
     email: row.email,
     fte: { numerator: row.fte_numerator, denominator: row.fte_denominator },
     createdAt: row.created_at,
+    // The account columns arrive with the employee_accounts migration; until then no employee has an account.
+    userId: null,
+    invitedAt: null,
   }));
 }
 

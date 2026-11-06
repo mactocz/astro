@@ -352,9 +352,9 @@ S-03 (`weekly-schedule-draft`) jest planowane i może być implementowane równo
 
 #### Automated
 
-- [ ] 1.1 Testy reguł hasła i zaproszenia przechodzą w workerd: `npm test`
-- [ ] 1.2 Linting przechodzi: `npm run lint`
-- [ ] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy reguł hasła i zaproszenia przechodzą w workerd: `npm test`
+- [x] 1.2 Linting przechodzi: `npm run lint`
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
