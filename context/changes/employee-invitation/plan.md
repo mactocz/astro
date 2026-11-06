@@ -358,7 +358,7 @@ S-03 (`weekly-schedule-draft`) jest planowane i może być implementowane równo
 
 #### Manual
 
-- [ ] 1.4 Komunikaty hasła po polsku, format etykiet stanu zaproszenia (w tym neutralne "link wygasł") i tabela decyzji zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Komunikaty hasła po polsku, format etykiet stanu zaproszenia (w tym neutralne "link wygasł") i tabela decyzji zostały przejrzane i zatwierdzone przez autora — f86162c
 
 ### Phase 2: Konfiguracja Auth i schemat
 
