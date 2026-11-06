@@ -322,7 +322,7 @@ S-10 (`employee-invitation`) jest planowane i może być implementowane równole
 
 #### Manual
 
-- [ ] 1.4 Komunikaty błędów po polsku, nazwy dni, format okresu (w tym przez granicę miesiąca i roku) oraz reguły obsady z testów zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Komunikaty błędów po polsku, nazwy dni, format okresu (w tym przez granicę miesiąca i roku) oraz reguły obsady z testów zostały przejrzane i zatwierdzone przez autora — 73ff014
 
 ### Phase 2: Tabele, RLS i funkcja zapisu
 
