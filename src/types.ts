@@ -37,3 +37,43 @@ export interface Shift extends ShiftInput {
 
 export type ShiftField = "name" | "startTime" | "endTime";
 export type ShiftFieldErrors = Partial<Record<ShiftField, string>>;
+
+/** The number of people a shift needs on one day of the schedule; a day without a shift has no cell at all. */
+export interface StaffingCell {
+  /** The id of a shift from the shift dictionary. */
+  shiftId: string;
+  /** Days after the start date, 0 to 6. */
+  dayOffset: number;
+  /** Whole people, 1 to 99. */
+  requiredCount: number;
+}
+
+/** A weekly schedule draft: seven days from `startDate`, the staffing grid and the employees it covers (by id). */
+export interface ScheduleInput {
+  /** The first day as `YYYY-MM-DD`. */
+  startDate: string;
+  label: string | null;
+  staffing: StaffingCell[];
+  employeeIds: string[];
+}
+
+export interface Schedule extends ScheduleInput {
+  id: string;
+  /** ISO timestamp set by the database. */
+  createdAt: string;
+}
+
+/** One row of the schedule list. */
+export interface ScheduleSummary {
+  id: string;
+  startDate: string;
+  label: string | null;
+  /** ISO timestamp set by the database. */
+  createdAt: string;
+  employeeCount: number;
+  /** The sum of the required counts over the whole grid. */
+  totalRequired: number;
+}
+
+export type ScheduleField = "startDate" | "label" | "staffing" | "employeeIds";
+export type ScheduleFieldErrors = Partial<Record<ScheduleField, string>>;

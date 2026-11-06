@@ -316,9 +316,9 @@ S-10 (`employee-invitation`) jest planowane i może być implementowane równole
 
 #### Automated
 
-- [ ] 1.1 Testy reguł grafiku i polityki dostępu przechodzą w workerd: `npm test`
-- [ ] 1.2 Linting przechodzi: `npm run lint`
-- [ ] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy reguł grafiku i polityki dostępu przechodzą w workerd: `npm test`
+- [x] 1.2 Linting przechodzi: `npm run lint`
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
