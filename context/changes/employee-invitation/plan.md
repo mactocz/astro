@@ -390,14 +390,14 @@ S-03 (`weekly-schedule-draft`) jest planowane i może być implementowane równo
 
 #### Automated
 
-- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 4.2 Smoke przechodzi lokalnie: `npm run smoke`
+- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — ab234c1
+- [x] 4.2 Smoke przechodzi lokalnie: `npm run smoke` — ab234c1
 - [ ] 4.3 CI na pull requeście jest zielone (job `ci` i job `smoke`, z kontenerem `mailpit`)
 
 #### Manual
 
-- [x] 4.4 Na lokalnym stosie z Mailpit: zaproszenie z listy, odebranie maila, link z `/auth/set-password`, ustawienie hasła z listą warunków, logowanie i `/dashboard`; ponowne zaproszenie przed ustawieniem hasła unieważnia pierwszy link; zaproszenie aktywnego konta wysyła link resetu; wygasły lub zużyty link pokazuje komunikat; szablony maili wyglądają poprawnie
-- [x] 4.5 W przeglądarce: stan konta na liście i w edycji, przycisk (w tym nieaktywny bez e-maila), e-mail zablokowany po zaproszeniu, a11y formularza hasła i obsługa klawiaturą; na telefonie formularz hasła i lista (etykieta stanu) są czytelne
-- [x] 4.6 Dokumentacja (CLAUDE.md, README.md, AGENTS.md, deploy-plan.md) opisuje nową zasadę klucza service-role, checklistę i bramkę SMTP spójnie z kodem
+- [x] 4.4 Na lokalnym stosie z Mailpit: zaproszenie z listy, odebranie maila, link z `/auth/set-password`, ustawienie hasła z listą warunków, logowanie i `/dashboard`; ponowne zaproszenie przed ustawieniem hasła unieważnia pierwszy link; zaproszenie aktywnego konta wysyła link resetu; wygasły lub zużyty link pokazuje komunikat; szablony maili wyglądają poprawnie — ab234c1
+- [x] 4.5 W przeglądarce: stan konta na liście i w edycji, przycisk (w tym nieaktywny bez e-maila), e-mail zablokowany po zaproszeniu, a11y formularza hasła i obsługa klawiaturą; na telefonie formularz hasła i lista (etykieta stanu) są czytelne — ab234c1
+- [x] 4.6 Dokumentacja (CLAUDE.md, README.md, AGENTS.md, deploy-plan.md) opisuje nową zasadę klucza service-role, checklistę i bramkę SMTP spójnie z kodem — ab234c1
 - [ ] 4.7 Własny nadawca SMTP jest skonfigurowany w hostowanym Supabase, a ustawienia Auth (7 dni, minimum 8, szablony, adresy) są zastosowane (bramka przed wdrożeniem na produkcję)
 - [ ] 4.8 Migracja jest zastosowana na hostowanym projekcie (`npx supabase db push`), sekret Workera ustawiony i po wdrożeniu (`npm run build` i `npx wrangler deploy`) zaproszenie prawdziwego adresu kończy się zalogowanym pracownikiem; nie uruchamiać `npm run smoke` na produkcji
