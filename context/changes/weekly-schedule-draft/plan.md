@@ -340,11 +340,11 @@ S-10 (`employee-invitation`) jest planowane i może być implementowane równole
 
 #### Automated
 
-- [ ] 3.1 Testy przechodzą: `npm test`
-- [ ] 3.2 Linting przechodzi: `npm run lint`
-- [ ] 3.3 Sprawdzanie typów przechodzi: `npx astro check`
-- [ ] 3.4 Build przechodzi: `npm run build`
-- [ ] 3.5 Smoke z krokami API przechodzi lokalnie (jak w Fazie 2): `npm run smoke`
+- [x] 3.1 Testy przechodzą: `npm test`
+- [x] 3.2 Linting przechodzi: `npm run lint`
+- [x] 3.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 3.4 Build przechodzi: `npm run build`
+- [x] 3.5 Smoke z krokami API przechodzi lokalnie (jak w Fazie 2): `npm run smoke`
 
 ### Phase 4: Strony planisty
 
