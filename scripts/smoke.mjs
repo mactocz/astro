@@ -1,13 +1,17 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
 // that the database role helpers read the role from the token, that only planners can read and write the employees
-// and shifts tables through PostgREST, that the employee and shift API routes keep to the role gate, the validation and
-// their status codes, that the employee and shift pages open for the planner only, and that public registration stays
-// closed. Zero dependencies on purpose. It creates real accounts and removes its own employee and shift rows with the
-// service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
-// (.env / .dev.vars). Values come from `supabase status -o env`.
+// and shifts tables through PostgREST (an employee with a linked account reads only their own employee row, and no
+// session writes the user_id and invited_at columns), that the employee and shift API routes keep to the role gate, the
+// validation and their status codes, that the employee and shift pages open for the planner only, that the invitation
+// mails link to the set-password page, and that public registration stays closed. Zero dependencies on purpose. It
+// creates real accounts and removes its own accounts, employee rows and shift rows with the service-role key, so it
+// only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come
+// from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
+
+import { readFile } from "node:fs/promises";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:4321";
 const { SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_ROLE_KEY } = process.env;
@@ -102,7 +106,55 @@ async function createAccount(label, role) {
   if (!response.ok) {
     abort(`creating the ${label} account failed with status ${response.status}`);
   }
-  return { label, email, jar: new Map() };
+  // The id links the account to an employee row in the account steps.
+  const { id } = await response.json();
+  return { label, email, id, jar: new Map() };
+}
+
+// Admin API calls with the service-role key; `path` continues after /auth/v1/admin/.
+function adminRequest(method, path) {
+  return fetch(`${supabaseOrigin}/auth/v1/admin/${path}`, {
+    method,
+    headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+  });
+}
+
+const ACCOUNT_PAGE_SIZE = 1000;
+const isSmokeAccount = (user) => /^smoke-[^@]+@example\.com$/.test(user?.email ?? "");
+
+// Removes every account this and earlier runs left behind, whoever created it (createAccount here, the invitation route
+// in the app): the e-mail starts with "smoke-" and ends with @example.com. Employee rows linked to an account keep
+// existing (user_id is set to null); the next step deletes them by their own prefix. Answers like a response, so it can
+// be a step.
+async function deleteSmokeAccounts() {
+  const ids = [];
+  for (let page = 1; ; page++) {
+    const response = await adminRequest("GET", `users?page=${page}&per_page=${ACCOUNT_PAGE_SIZE}`);
+    const text = await response.text();
+    const users = parseJson(text)?.users;
+    if (!response.ok || !Array.isArray(users)) {
+      return { status: response.ok ? 502 : response.status, location: "", contentType: "", body: text };
+    }
+    ids.push(...users.filter(isSmokeAccount).map((user) => user.id));
+    if (users.length < ACCOUNT_PAGE_SIZE) break;
+  }
+  for (const id of ids) {
+    const response = await adminRequest("DELETE", `users/${id}`);
+    if (!response.ok) {
+      return { status: response.status, location: "", contentType: "", body: await response.text() };
+    }
+  }
+  return { status: 200, location: "", contentType: "", body: JSON.stringify({ deleted: ids.length }) };
+}
+
+// A mail template of the project, read from disk. Auth renders the mail itself; the step only proves the link in the file.
+async function readTemplate(name) {
+  try {
+    const body = await readFile(new URL(`../supabase/templates/${name}`, import.meta.url), "utf8");
+    return { status: 200, location: "", contentType: "", body };
+  } catch {
+    return { status: 404, location: "", contentType: "", body: "" };
+  }
 }
 
 async function supabaseResult(response) {
@@ -391,6 +443,65 @@ const notPlannerShiftSteps = (actor) => [
     patchedShift,
     "both smoke shifts, the first one ending at minute 420",
   ),
+];
+
+// The employee account steps share two rows, each linked to an account by the service-role key, because only that key
+// writes user_id and invited_at. The first row belongs to the employee account, the second to the account without a
+// role. Their e-mails start with "smoke-" like every row the final cleanup step deletes. The ids are only known once the
+// insert steps have run.
+const ownEmployee = {
+  first_name: "Smoke",
+  last_name: `Smoke-${runId}-own`,
+  email: `smoke-${runId}-own@example.com`,
+  fte_numerator: 1,
+  fte_denominator: 2,
+};
+const noRoleEmployee = {
+  ...ownEmployee,
+  last_name: `Smoke-${runId}-no-role`,
+  email: `smoke-${runId}-no-role@example.com`,
+};
+// The invitation time the service role writes into the first row, and the one a planner then fails to write over it.
+const invitedAt = "2026-11-01T08:00:00+00:00";
+const plannerInvitedAt = "2026-11-02T08:00:00+00:00";
+let ownEmployeeId;
+let noRoleEmployeeId;
+const ownRow = () => `?id=eq.${ownEmployeeId}`;
+const noRoleRow = () => `?id=eq.${noRoleEmployeeId}`;
+
+// PostgREST writes a timestamp in its own notation, so instants are compared, not strings.
+const sameInstant = (value, expected) => typeof value === "string" && Date.parse(value) === Date.parse(expected);
+const isInsertedEmployee = (columns) => (rows) =>
+  Array.isArray(rows) && rows.length === 1 && typeof rows[0].id === "string" && hasColumns(rows[0], columns);
+// Exactly the first row, linked to the employee account and invited at the time the service role wrote; `changes`
+// replace columns of the inserted row.
+const isOwnRow = (changes) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  typeof ownEmployeeId === "string" &&
+  hasColumns(rows[0], { ...ownEmployee, ...changes, id: ownEmployeeId, user_id: employee.id }) &&
+  sameInstant(rows[0].invited_at, invitedAt);
+const isLinkedToNoRoleAccount = (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  typeof noRoleEmployeeId === "string" &&
+  hasColumns(rows[0], { id: noRoleEmployeeId, user_id: noRole.id });
+// A missing column privilege is SQLSTATE 42501 (403 for a signed-in caller). The planner passes every policy of the
+// table, so a refusal with this code can only come from the column grants.
+const isPermissionDenied = (error) => error?.code === "42501";
+
+const plannerReadsOwnRow = (name, changes, describe) => [
+  `${planner.label}: ${name}`,
+  async () => employeesTable("GET", { token: await accessToken(planner), query: ownRow() }),
+  { status: 200, check: isOwnRow(changes), describe },
+];
+
+// The planner writes a column only the service role may write: refused with a permission error, whatever the value.
+// `build` returns the query and body when the step runs, because the row id is only known by then.
+const plannerWriteIsDenied = (description, method, build) => [
+  `${planner.label}: employees ${description} is refused`,
+  async () => employeesTable(method, { token: await accessToken(planner), ...build() }),
+  { statusNotClass: 2, check: isPermissionDenied, describe: "a permission error (42501)" },
 ];
 
 // The API steps share one employee, created through the app by the planner. Names with Polish letters and a mixed-case
@@ -858,6 +969,124 @@ const steps = [
   ...notPlannerEmployeeSteps(noRole),
   [`${anonymous.label}: employees read is rejected`, () => employeesTable("GET"), { statusNotClass: 2 }],
 
+  // Employee accounts: user_id links a row to an Auth account and invited_at records the latest invitation. An employee
+  // reads only their own row and changes nothing, an account without a role reads nothing even when linked, one account
+  // belongs to at most one row, and no session writes the two columns, the planner's included: only the service role does.
+  [
+    `${planner.label}: employees insert returns the row for the employee account`,
+    async () => {
+      const result = await employeesTable("POST", {
+        token: await accessToken(planner),
+        body: ownEmployee,
+        prefer: "return=representation",
+      });
+      ownEmployeeId = parseJson(result.body)?.[0]?.id;
+      return result;
+    },
+    { status: 201, check: isInsertedEmployee(ownEmployee), describe: "the inserted row, echoed back" },
+  ],
+  [
+    "service role: link the employee account to its row and set the invitation time",
+    () =>
+      employeesTable("PATCH", {
+        key: SUPABASE_SERVICE_ROLE_KEY,
+        query: ownRow(),
+        body: { user_id: employee.id, invited_at: invitedAt },
+      }),
+    { statusClass: 2 },
+  ],
+  [
+    `${employee.label}: employees read returns only its own row`,
+    async () => employeesTable("GET", { token: await accessToken(employee) }),
+    { status: 200, check: isOwnRow(), describe: "exactly the row linked to its account, with the invitation time" },
+  ],
+  [
+    `${employee.label}: employees read of every other row returns an empty list`,
+    async () => employeesTable("GET", { token: await accessToken(employee), query: `?id=neq.${ownEmployeeId}` }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${employee.label}: employees update of its own row is refused or hidden`,
+    async () =>
+      employeesTable("PATCH", {
+        token: await accessToken(employee),
+        query: ownRow(),
+        body: { first_name: "Smoke-Changed" },
+      }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${employee.label}: employees insert is rejected although its account is linked`,
+    async () =>
+      employeesTable("POST", {
+        token: await accessToken(employee),
+        body: { ...ownEmployee, email: `smoke-${runId}-employee-insert@example.com` },
+      }),
+    { statusNotClass: 2 },
+  ],
+  plannerReadsOwnRow(
+    "employees row of the account is unchanged after employee write attempts",
+    undefined,
+    "the linked row as inserted",
+  ),
+  [
+    `${planner.label}: employees insert returns the row for the account without a role`,
+    async () => {
+      const result = await employeesTable("POST", {
+        token: await accessToken(planner),
+        body: noRoleEmployee,
+        prefer: "return=representation",
+      });
+      noRoleEmployeeId = parseJson(result.body)?.[0]?.id;
+      return result;
+    },
+    { status: 201, check: isInsertedEmployee(noRoleEmployee), describe: "the inserted row, echoed back" },
+  ],
+  [
+    "service role: linking a second row to the same account is rejected",
+    () =>
+      employeesTable("PATCH", { key: SUPABASE_SERVICE_ROLE_KEY, query: noRoleRow(), body: { user_id: employee.id } }),
+    { status: 409, check: violates("employees_user_id_key"), describe: "an error naming employees_user_id_key" },
+  ],
+  [
+    "service role: link the account without a role to the second row",
+    () => employeesTable("PATCH", { key: SUPABASE_SERVICE_ROLE_KEY, query: noRoleRow(), body: { user_id: noRole.id } }),
+    { statusClass: 2 },
+  ],
+  [
+    `${planner.label}: employees read shows the second row linked to the account without a role`,
+    async () => employeesTable("GET", { token: await accessToken(planner), query: noRoleRow() }),
+    { status: 200, check: isLinkedToNoRoleAccount, describe: "the second row with the user_id of that account" },
+  ],
+  [
+    `${noRole.label}: employees read returns an empty list although its account is linked`,
+    async () => employeesTable("GET", { token: await accessToken(noRole), query: "?select=id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${planner.label}: employees update changes the first name`,
+    async () =>
+      employeesTable("PATCH", {
+        token: await accessToken(planner),
+        query: ownRow(),
+        body: { first_name: "Smoke-Renamed" },
+      }),
+    { statusClass: 2 },
+  ],
+  plannerWriteIsDenied("update of user_id", "PATCH", () => ({ query: ownRow(), body: { user_id: planner.id } })),
+  plannerWriteIsDenied("update of invited_at", "PATCH", () => ({
+    query: ownRow(),
+    body: { invited_at: plannerInvitedAt },
+  })),
+  plannerWriteIsDenied("insert with a user_id", "POST", () => ({
+    body: { ...ownEmployee, email: `smoke-${runId}-planner-link@example.com`, user_id: planner.id },
+  })),
+  plannerReadsOwnRow(
+    "employees row keeps its link and invitation time after planner write attempts",
+    { first_name: "Smoke-Renamed" },
+    "the renamed row, still linked to the employee account and invited at the service-role time",
+  ),
+
   // Shifts table: only the planner reads, adds and edits rows, nobody deletes them, and the constraints hold even for
   // the planner. A name is not unique, and a shift may end after midnight.
   [
@@ -932,6 +1161,18 @@ const steps = [
   ...notPlannerShiftSteps(noRole),
   [`${anonymous.label}: shifts read is rejected`, () => shiftsTable("GET"), { statusNotClass: 2 }],
 
+  // Mail templates: each link goes to the app's set-password page with the token hash and the type of its mail.
+  [
+    "templates: invite.html links to /auth/set-password with type=invite",
+    () => readTemplate("invite.html"),
+    { status: 200, bodyIncludes: "{{ .SiteURL }}/auth/set-password?token_hash={{ .TokenHash }}&type=invite" },
+  ],
+  [
+    "templates: recovery.html links to /auth/set-password with type=recovery",
+    () => readTemplate("recovery.html"),
+    { status: 200, bodyIncludes: "{{ .SiteURL }}/auth/set-password?token_hash={{ .TokenHash }}&type=recovery" },
+  ],
+
   // A forged role: editing user_metadata succeeds, and still grants nothing in the database or in the app.
   [
     `${employee.label}: Supabase accepts a user_metadata role edit`,
@@ -944,9 +1185,10 @@ const steps = [
   visit(employee, "/planner", 403),
   signOut(employee),
 
-  // Always last: removes every row this and earlier runs left behind (the tables have no delete grant for the API, so
-  // only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they were
-  // before.
+  // Always last: removes every account and row this and earlier runs left behind (the tables have no delete grant for the
+  // API, so only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they
+  // were before. The accounts go first: a row linked to one only loses its user_id, and the next step deletes it.
+  ["service role: delete the smoke accounts", deleteSmokeAccounts, { statusClass: 2 }],
   [
     "service role: delete the smoke employees",
     () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),

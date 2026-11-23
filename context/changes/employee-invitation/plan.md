@@ -364,13 +364,13 @@ S-03 (`weekly-schedule-draft`) jest planowane i może być implementowane równo
 
 #### Automated
 
-- [ ] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Smoke z krokami bazy i szablonów przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z `supabase status -o env`): `npm run smoke`
+- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
+- [x] 2.2 Linting przechodzi: `npm run lint`
+- [x] 2.3 Smoke z krokami bazy i szablonów przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z `supabase status -o env`): `npm run smoke`
 
 #### Manual
 
-- [ ] 2.4 Lokalny stos startuje z `otp_expiry = 604800` i `minimum_password_length = 8`; migracja, polityki, granty kolumnowe i treść szablonów zostały przejrzane przez autora
+- [x] 2.4 Lokalny stos startuje z `otp_expiry = 604800` i `minimum_password_length = 8`; migracja, polityki, granty kolumnowe i treść szablonów zostały przejrzane przez autora
 
 ### Phase 3: Serwer: klient admina, zaproszenie, ustawianie hasła
 

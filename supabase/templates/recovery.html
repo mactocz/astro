@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nowe hasło w Shiftly</title>
+  </head>
+  <body style="margin: 0; padding: 24px; background-color: #f4f4f5; font-family: Arial, Helvetica, sans-serif">
+    <div
+      style="
+        max-width: 480px;
+        margin: 0 auto;
+        padding: 24px;
+        background-color: #ffffff;
+        color: #18181b;
+        font-size: 16px;
+        line-height: 1.5;
+      "
+    >
+      <h1 style="margin: 0 0 16px; font-size: 20px">Nowe hasło w Shiftly</h1>
+      <p>
+        Dla konta w Shiftly poproszono o ustawienie nowego hasła. Zwykle robi to planista, który ponownie wysyła
+        zaproszenie.
+      </p>
+      <p>Konto: <strong>{{ .Email }}</strong></p>
+      <p>Aby ustawić nowe hasło, kliknij przycisk poniżej.</p>
+      <p>
+        <a
+          href="{{ .SiteURL }}/auth/set-password?token_hash={{ .TokenHash }}&type=recovery"
+          style="
+            display: inline-block;
+            padding: 12px 20px;
+            background-color: #18181b;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 6px;
+          "
+        >
+          Ustaw nowe hasło
+        </a>
+      </p>
+      <p>
+        Link jest jednorazowy i ważny przez 7 dni. Gdy wygaśnie albo zostanie już użyty, poproś planistę o nowe
+        zaproszenie.
+      </p>
+      <p style="color: #52525b; font-size: 14px">
+        Jeśli nie spodziewasz się tej wiadomości, zignoruj ją: dotychczasowe hasło pozostanie bez zmian.
+      </p>
+    </div>
+  </body>
+</html>

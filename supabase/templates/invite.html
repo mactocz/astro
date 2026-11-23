@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Zaproszenie do Shiftly</title>
+  </head>
+  <body style="margin: 0; padding: 24px; background-color: #f4f4f5; font-family: Arial, Helvetica, sans-serif">
+    <div
+      style="
+        max-width: 480px;
+        margin: 0 auto;
+        padding: 24px;
+        background-color: #ffffff;
+        color: #18181b;
+        font-size: 16px;
+        line-height: 1.5;
+      "
+    >
+      <h1 style="margin: 0 0 16px; font-size: 20px">Zaproszenie do Shiftly</h1>
+      <p>Planista zaprosił Cię do Shiftly, aplikacji do planowania grafików pracy.</p>
+      <p>Konto zostało założone dla adresu: <strong>{{ .Email }}</strong></p>
+      <p>Aby ustawić hasło i zalogować się, kliknij przycisk poniżej.</p>
+      <p>
+        <a
+          href="{{ .SiteURL }}/auth/set-password?token_hash={{ .TokenHash }}&type=invite"
+          style="
+            display: inline-block;
+            padding: 12px 20px;
+            background-color: #18181b;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 6px;
+          "
+        >
+          Ustaw hasło
+        </a>
+      </p>
+      <p>
+        Link jest jednorazowy i ważny przez 7 dni. Gdy wygaśnie albo zostanie już użyty, poproś planistę o nowe
+        zaproszenie.
+      </p>
+      <p style="color: #52525b; font-size: 14px">
+        Jeśli to zaproszenie nie jest przeznaczone dla Ciebie, zignoruj tę wiadomość.
+      </p>
+    </div>
+  </body>
+</html>
