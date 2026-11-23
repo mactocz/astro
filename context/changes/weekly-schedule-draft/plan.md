@@ -350,13 +350,13 @@ S-10 (`employee-invitation`) jest planowane i może być implementowane równole
 
 #### Automated
 
-- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 4.2 Smoke z krokami stron przechodzi lokalnie: `npm run smoke`
+- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — e7a1ee3
+- [x] 4.2 Smoke z krokami stron przechodzi lokalnie: `npm run smoke` — e7a1ee3
 - [ ] 4.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
 
 #### Manual
 
-- [x] 4.4 W przeglądarce na desktopie: lista, tworzenie i edycja grafiku, siatka z przewijaniem poziomym i przyklejoną kolumną, zmiana daty zmienia nagłówki dni, błędy przy polach i fokus na pierwszym błędnym polu, obsługa klawiaturą, informacja D6
-- [x] 4.5 Na telefonie (lub emulacji): formularz da się wypełnić, pole daty działa, siatka przewija się poziomo bez rozjeżdżania strony
+- [x] 4.4 W przeglądarce na desktopie: lista, tworzenie i edycja grafiku, siatka z przewijaniem poziomym i przyklejoną kolumną, zmiana daty zmienia nagłówki dni, błędy przy polach i fokus na pierwszym błędnym polu, obsługa klawiaturą, informacja D6 — e7a1ee3
+- [x] 4.5 Na telefonie (lub emulacji): formularz da się wypełnić, pole daty działa, siatka przewija się poziomo bez rozjeżdżania strony — e7a1ee3
 - [ ] 4.6 Migracja jest zastosowana na hostowanym projekcie (`npx supabase db push`) przed wdrożeniem kodu
 - [ ] 4.7 Po wdrożeniu (`npm run build` i `npx wrangler deploy`) grafik da się utworzyć i edytować na produkcji; nie uruchamiać `npm run smoke` na produkcji
