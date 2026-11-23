@@ -317,6 +317,7 @@ function employee(id: string, lastName: string, firstName: string, createdAt = "
     createdAt,
     userId: null,
     invitedAt: null,
+    activatedAt: null,
   };
 }
 

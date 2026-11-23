@@ -1,14 +1,19 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
 // that the database role helpers read the role from the token, that only planners can read and write the employees
 // and shifts tables through PostgREST (an employee with a linked account reads only their own employee row, and no
-// session writes the user_id and invited_at columns), that the employee and shift API routes keep to the role gate, the
+// session writes the user_id, invited_at and activated_at columns), that the function mark_account_active records the
+// activation of the caller's own row only (an account without a role, an anonymous caller and another employee change
+// nothing, the first activation stays), that the employee and shift API routes keep to the role gate, the
 // validation and their status codes, that the employee and shift pages open for the planner only, that the invitation
 // mails link to the set-password page, the whole invitation flow (invite, invite again, password reset, a foreign
-// account, the tokens from the admin API instead of the mails, the new employee's session and the locked e-mail), and
-// that public registration stays closed. Zero dependencies on purpose. It creates real accounts and removes its own
-// accounts, employee rows and shift rows with the service-role key, so it only runs against a LOCAL Supabase, and the
-// app under test must read the same stack (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation
-// route reads it from there. Values come from `supabase status -o env`.
+// account, the tokens from the admin API instead of the mails, the new employee's session, the activation time that
+// the first password set records and a reset keeps, and the locked e-mail), what the pages of that flow show (the
+// account column and invite button of the employee list, the locked e-mail field of the edit page, the password form
+// of the set-password page; read from the HTML the server renders), and that public registration stays closed. Zero
+// dependencies on purpose. It creates real accounts and removes its own accounts, employee rows and shift rows with the
+// service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
+// (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from there. Values come from
+// `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -276,6 +281,15 @@ function passes(check, value) {
   }
 }
 
+// The text a failed page step prints as what it got: the part of the page the check looked at, not the whole page.
+function excerptOf(excerpt, body) {
+  try {
+    return excerpt(body);
+  } catch {
+    return "(no excerpt)";
+  }
+}
+
 const anonymous = { label: "anonymous", jar: new Map() };
 const noRole = await createAccount("no-role", null);
 const employee = await createAccount("employee", "employee");
@@ -480,6 +494,8 @@ const invitedAt = "2026-11-01T08:00:00+00:00";
 const plannerInvitedAt = "2026-11-02T08:00:00+00:00";
 let ownEmployeeId;
 let noRoleEmployeeId;
+// The activation time the employee account gets from its own call of mark_account_active.
+let ownActivatedAt;
 const ownRow = () => `?id=eq.${ownEmployeeId}`;
 const noRoleRow = () => `?id=eq.${noRoleEmployeeId}`;
 
@@ -654,6 +670,7 @@ let noEmailId;
 let foreignId;
 let inviteeUserId;
 let firstInvitedAt;
+let inviteeActivatedAt;
 let inviteToken;
 let recoveryToken;
 // The new employee opens the link and then holds the session the set-password route gave; later steps sign in again
@@ -740,6 +757,89 @@ const setsPassword = {
   describe: "ok: true, with a session cookie",
 };
 const refusesLink = { status: 400, check: isError("invalid_link"), describe: "the error invalid_link" };
+
+// The invitation UI is read from the HTML the server renders: the React islands are rendered on the server, so their
+// buttons and fields are in the page before any script runs. These helpers cut the pieces out of it. The attribute part
+// of a tag allows quoted values, which may hold a ">" (the Tailwind classes of a button do).
+const TAG_ATTRIBUTES = `(?:"[^"]*"|'[^']*'|[^>"'])*`;
+const tagsOf = (html, name) => [...html.matchAll(new RegExp(`<${name}\\b${TAG_ATTRIBUTES}>`, "g"))].map((m) => m[0]);
+const hasAttribute = (tag, name) => new RegExp(`\\s${name}(?=[\\s=/>]|$)`, "i").test(tag);
+const attributeOf = (tag, name) => new RegExp(`\\s${name}="([^"]*)"`, "i").exec(tag)?.[1];
+const inputById = (html, id) => tagsOf(html, "input").find((tag) => attributeOf(tag, "id") === id);
+
+// The first button of a piece of HTML: its text and whether it is disabled (the attribute, not aria-disabled).
+function firstButton(html) {
+  const match = new RegExp(`<button\\b(${TAG_ATTRIBUTES})>([^<]*)</button>`).exec(html);
+  return match ? { disabled: hasAttribute(match[1], "disabled"), label: match[2].trim() } : undefined;
+}
+
+// What the list and the edit page show of an employee's account: the state label, the button of the invitation island
+// and, only for a button that is disabled for want of an e-mail, the hint next to it. `excludes` is text that must not
+// appear (the label of the other state).
+const noEmailHint = "Dodaj e-mail pracownika";
+const showsAccount =
+  ({ account, button, disabled, excludes }) =>
+  (html) => {
+    const found = firstButton(html);
+    return (
+      (typeof account === "string" ? html.includes(account) : account.test(html)) &&
+      (excludes === undefined || !html.includes(excludes)) &&
+      found?.label === button &&
+      found.disabled === disabled &&
+      html.includes(noEmailHint) === disabled
+    );
+  };
+// A link that is still valid: "Zaproszony 23.11.2026 (link ważny do 30.11.2026)".
+const validInviteLabel = /Zaproszony \d{2}\.\d{2}\.\d{4} \(link ważny do \d{2}\.\d{2}\.\d{4}\)/;
+// An account that has set its password: "Zarejestrowany 23.11.2026".
+const activeLabel = /Zarejestrowany \d{2}\.\d{2}\.\d{4}/;
+
+// The employee list renders each employee twice: as a table row and as a card of the narrow layout. Both carry the id.
+const employeeListItems = (html, id) =>
+  [...html.matchAll(new RegExp(`<(tr|li)\\b[^>]*\\bdata-employee-id="${id}"[^>]*>[\\s\\S]*?</\\1>`, "g"))].map(
+    (match) => match[0],
+  );
+const plannerListsEmployee = (name, id, account, describe) => [
+  `${planner.label}: GET /employees shows ${name}`,
+  () => request(planner, "/employees"),
+  {
+    status: 200,
+    cacheControl: "no-store",
+    bodyCheck: (html) => {
+      const items = employeeListItems(html, id());
+      return items.length === 2 && items.every(showsAccount(account));
+    },
+    describe: `two list items (the table row and the card), each with ${describe}`,
+    excerpt: (html) => employeeListItems(html, id()).join("\n"),
+  },
+];
+
+// The account section of the edit page: the part of the page between the heading "Konto" and the form.
+const accountSection = (html) =>
+  /<section\b[^>]*aria-labelledby="account-heading"[^>]*>[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+const plannerEditPageShows = (name, id, description, bodyCheck, excerpt) => [
+  `${planner.label}: GET /employees/<id> of ${name}`,
+  () => request(planner, `/employees/${id()}`),
+  { status: 200, cacheControl: "no-store", bodyCheck, describe: description, excerpt },
+];
+const emailFieldOf = (html) => inputById(html, "email") ?? "(no e-mail input)";
+
+// The set-password page renders the React form island, not a plain form: the password rule list exists only there.
+const hasPasswordFormIsland = (html) => {
+  const form = tagsOf(html, "form").find((tag) => hasAttribute(tag, "data-set-password-form"));
+  return (
+    form !== undefined &&
+    ["password", "passwordRepeat"].every((id) => {
+      const input = inputById(html, id);
+      return (
+        input !== undefined &&
+        attributeOf(input, "type") === "password" &&
+        attributeOf(input, "autocomplete") === "new-password"
+      );
+    }) &&
+    html.includes('id="password-rules"')
+  );
+};
 
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
@@ -1093,6 +1193,33 @@ const steps = [
       Date.parse(rows[0].invited_at) > Date.parse(firstInvitedAt),
     describe: "the same user_id and a later invited_at",
   }),
+  // Activation (the decision change of 2026-11-23): the account is pending until the employee sets a password, so the
+  // activation time is still empty here and the list shows the invitation, not a registration. These two list steps ask
+  // for the invited label and the "Wyślij ponownie" button, which only a pending account has, so they run before the
+  // password is set.
+  serviceRoleReadsEmployee("the pending account has no activation time yet", () => inviteeId, {
+    check: (rows) => rows.length === 1 && rows[0].user_id === inviteeUserId && rows[0].activated_at === null,
+    describe: "the linked row with an activated_at of null",
+  }),
+  plannerListsEmployee(
+    "the invited employee with the invitation date and the Wyślij ponownie button",
+    () => inviteeId,
+    { account: validInviteLabel, button: "Wyślij ponownie", disabled: false, excludes: "Zarejestrowany" },
+    'the label "Zaproszony dd.mm.rrrr (link ważny do dd.mm.rrrr)" and the enabled button "Wyślij ponownie"',
+  ),
+  plannerEditPageShows(
+    "the invited employee, with the account section",
+    () => inviteeId,
+    'an account section with the label "Zaproszony dd.mm.rrrr (link ważny do dd.mm.rrrr)" and the button "Wyślij ponownie"',
+    (html) =>
+      showsAccount({
+        account: validInviteLabel,
+        button: "Wyślij ponownie",
+        disabled: false,
+        excludes: "Zarejestrowany",
+      })(accountSection(html)),
+    accountSection,
+  ),
   generateTokenStep("an invite token for the pending account", "invite", inviteeInput.email, (token) => {
     inviteToken = token;
   }),
@@ -1102,6 +1229,13 @@ const steps = [
     () => setPasswordPath(inviteToken, "invite"),
     openedLink,
   ),
+  // Still the same unspent token, and the page is the React form island of the set-password page, not a plain form.
+  visitSetPassword("renders the password form island with both fields", () => setPasswordPath(inviteToken, "invite"), {
+    status: 200,
+    bodyCheck: hasPasswordFormIsland,
+    describe: "the set-password form with two new-password fields and the rule list of the island",
+    excerpt: (html) => tagsOf(html, "input").join("\n"),
+  }),
   visitSetPassword("without a token is refused", () => "/auth/set-password?type=invite", refusedLink),
   visitSetPassword(
     "with an unknown link type is refused",
@@ -1118,6 +1252,10 @@ const steps = [
       describe: "an error for the password field",
     },
   ),
+  serviceRoleReadsEmployee("a refused weak password does not activate the account", () => inviteeId, {
+    check: (rows) => rows.length === 1 && rows[0].activated_at === null,
+    describe: "the row with an activated_at of null",
+  }),
   postSetPassword(
     invitee,
     "with an unknown token is refused",
@@ -1136,6 +1274,24 @@ const steps = [
     () => ({ tokenHash: inviteToken, type: "invite", password: inviteePassword }),
     { ...setsPassword, cacheControl: "no-store" },
   ),
+  // The route called mark_account_active with the session of the link: the first password set activates the account.
+  [
+    "service role: setting the password has activated the account",
+    async () => {
+      const result = await employeesTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: `?id=eq.${inviteeId}` });
+      inviteeActivatedAt = parseJson(result.body)?.[0]?.activated_at;
+      return result;
+    },
+    {
+      status: 200,
+      check: (rows) =>
+        rows.length === 1 &&
+        rows[0].user_id === inviteeUserId &&
+        typeof rows[0].activated_at === "string" &&
+        !Number.isNaN(Date.parse(rows[0].activated_at)),
+      describe: "the linked row with an activated_at timestamp",
+    },
+  ],
   postSetPassword(
     anonymous,
     "with the spent token is refused",
@@ -1171,6 +1327,11 @@ const steps = [
     () => ({ tokenHash: recoveryToken, type: "recovery", password: inviteeNewPassword }),
     setsPassword,
   ),
+  // The reset ran mark_account_active again (the route calls it for every link type), and the first activation won.
+  serviceRoleReadsEmployee("a password reset keeps the first activation time", () => inviteeId, {
+    check: (rows) => rows.length === 1 && sameInstant(rows[0].activated_at, inviteeActivatedAt),
+    describe: "the activated_at of the first password set, unchanged",
+  }),
   [
     `${inviteeLogin.label}: signin accepts the new password`,
     () =>
@@ -1225,6 +1386,88 @@ const steps = [
     check: isNotFound,
     describe: "the error not_found",
   }),
+  // What the planner sees (S-10): the account column and the invite button in the list, the locked e-mail on the edit
+  // page. They run before the employee without an e-mail gets one (the PUT below), so that row still shows the disabled
+  // button.
+  [
+    `${planner.label}: GET /employees has the Konto column`,
+    () => request(planner, "/employees"),
+    {
+      status: 200,
+      cacheControl: "no-store",
+      bodyCheck: (html) => /<th\b[^>]*>\s*Konto\s*<\/th>/.test(html),
+      describe: "a Konto column header",
+    },
+  ],
+  plannerListsEmployee(
+    "an employee without an account and the Zaproś button",
+    () => foreignId,
+    { account: "Bez konta", button: "Zaproś", disabled: false },
+    'the label "Bez konta" and the enabled button "Zaproś"',
+  ),
+  // The invitee has set a password by now (B, C above), so the list shows a registration and a password reset, not the
+  // invitation the steps before the password was set looked for.
+  plannerListsEmployee(
+    "the registered employee with the registration date and the Resetuj hasło button",
+    () => inviteeId,
+    { account: activeLabel, button: "Resetuj hasło", disabled: false, excludes: "Zaproszony" },
+    'the label "Zarejestrowany dd.mm.rrrr" (no "Zaproszony") and the enabled button "Resetuj hasło" (not "Wyślij ponownie")',
+  ),
+  plannerListsEmployee(
+    "an employee without an e-mail and a disabled button with the hint",
+    () => noEmailId,
+    { account: "Bez konta", button: "Zaproś", disabled: true },
+    `the label "Bez konta", the disabled button "Zaproś" and the hint "${noEmailHint}"`,
+  ),
+  plannerEditPageShows(
+    "the invited employee, with the e-mail locked",
+    () => inviteeId,
+    "a read-only e-mail field with the address, described by the locked hint, and the text of that hint",
+    (html) => {
+      const field = inputById(html, "email");
+      return (
+        field !== undefined &&
+        hasAttribute(field, "readonly") &&
+        attributeOf(field, "value") === inviteeInput.email &&
+        attributeOf(field, "aria-describedby")?.split(" ").includes("email-locked") === true &&
+        html.includes(emailLockedMessage)
+      );
+    },
+    (html) => `${emailFieldOf(html)}\nlocked hint in the page: ${html.includes(emailLockedMessage)}`,
+  ),
+  plannerEditPageShows(
+    "the registered employee, with the account section",
+    () => inviteeId,
+    'an account section with the label "Zarejestrowany dd.mm.rrrr" (no "Zaproszony") and the button "Resetuj hasło"',
+    (html) =>
+      showsAccount({ account: activeLabel, button: "Resetuj hasło", disabled: false, excludes: "Zaproszony" })(
+        accountSection(html),
+      ),
+    accountSection,
+  ),
+  plannerEditPageShows(
+    "an employee without an account, with the e-mail editable",
+    () => foreignId,
+    'an e-mail field that is not read-only, no locked hint, and an account section with "Bez konta" and the button "Zaproś"',
+    (html) => {
+      const field = inputById(html, "email");
+      return (
+        field !== undefined &&
+        !hasAttribute(field, "readonly") &&
+        attributeOf(field, "value") === foreignEmail &&
+        !html.includes(emailLockedMessage) &&
+        showsAccount({ account: "Bez konta", button: "Zaproś", disabled: false })(accountSection(html))
+      );
+    },
+    (html) => `${emailFieldOf(html)}\n${accountSection(html)}`,
+  ),
+  plannerEditPageShows(
+    "an employee without an e-mail, with the invite button disabled",
+    () => noEmailId,
+    `an account section with "Bez konta", the disabled button "Zaproś" and the hint "${noEmailHint}"`,
+    (html) => showsAccount({ account: "Bez konta", button: "Zaproś", disabled: true })(accountSection(html)),
+    accountSection,
+  ),
   [
     `${planner.label}: PUT /api/employees/<id> with a changed e-mail of an invited employee`,
     () =>
@@ -1465,6 +1708,86 @@ const steps = [
     "the renamed row, still linked to the employee account and invited at the service-role time",
   ),
 
+  // Account activation: employees.activated_at is written only by the function mark_account_active() (security
+  // definer), which touches the row of the caller's own account and only for the employee role. The employee account of
+  // the steps above is linked to ownEmployee, the account without a role to noRoleEmployee. No session writes the
+  // column directly, the planner's included.
+  [
+    `${employee.label}: employees read shows no activation time before the first call`,
+    async () => employeesTable("GET", { token: await accessToken(employee) }),
+    {
+      status: 200,
+      check: (rows) => rows.length === 1 && rows[0].id === ownEmployeeId && rows[0].activated_at === null,
+      describe: "its own row with an activated_at of null",
+    },
+  ],
+  // Refused or a no-op: the control read below decides, whatever status PostgREST answers with.
+  [
+    `${noRole.label}: rpc mark_account_active is refused or changes nothing`,
+    async () => rpc("mark_account_active", await accessToken(noRole)),
+    { statusNotClass: 5 },
+  ],
+  [`${anonymous.label}: rpc mark_account_active is rejected`, () => rpc("mark_account_active"), { statusNotClass: 2 }],
+  [
+    "service role: both linked rows are still not active after the calls of the account without a role and of the anonymous caller",
+    () =>
+      employeesTable("GET", {
+        key: SUPABASE_SERVICE_ROLE_KEY,
+        query: `?id=in.(${ownEmployeeId},${noRoleEmployeeId})&select=id,activated_at`,
+      }),
+    {
+      status: 200,
+      check: (rows) => rows.length === 2 && rows.every((row) => row.activated_at === null),
+      describe: "two rows, both with an activated_at of null",
+    },
+  ],
+  [
+    `${employee.label}: rpc mark_account_active activates its own row`,
+    async () => rpc("mark_account_active", await accessToken(employee)),
+    { statusClass: 2 },
+  ],
+  [
+    `${employee.label}: employees read shows its own activation time`,
+    async () => {
+      const result = await employeesTable("GET", { token: await accessToken(employee) });
+      ownActivatedAt = parseJson(result.body)?.[0]?.activated_at;
+      return result;
+    },
+    {
+      status: 200,
+      check: (rows) =>
+        rows.length === 1 &&
+        rows[0].id === ownEmployeeId &&
+        typeof rows[0].activated_at === "string" &&
+        !Number.isNaN(Date.parse(rows[0].activated_at)),
+      describe: "its own row with an activated_at timestamp",
+    },
+  ],
+  [
+    "service role: the call of one employee left the row of the other linked account alone",
+    () => employeesTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: noRoleRow() }),
+    {
+      status: 200,
+      check: (rows) => rows.length === 1 && rows[0].user_id === noRole.id && rows[0].activated_at === null,
+      describe: "the row of the account without a role, still with an activated_at of null",
+    },
+  ],
+  plannerWriteIsDenied("update of activated_at", "PATCH", () => ({ query: ownRow(), body: { activated_at: null } })),
+  [
+    `${employee.label}: a second rpc mark_account_active call is accepted`,
+    async () => rpc("mark_account_active", await accessToken(employee)),
+    { statusClass: 2 },
+  ],
+  [
+    `${employee.label}: employees read still shows the first activation time`,
+    async () => employeesTable("GET", { token: await accessToken(employee) }),
+    {
+      status: 200,
+      check: (rows) => rows.length === 1 && sameInstant(rows[0].activated_at, ownActivatedAt),
+      describe: "its own row with the activated_at of the first call",
+    },
+  ],
+
   // Shifts table: only the planner reads, adds and edits rows, nobody deletes them, and the constraints hold even for
   // the planner. A name is not unique, and a shift may end after midnight.
   [
@@ -1601,7 +1924,8 @@ for (const [name, run, expected, hint] of steps) {
     (expected.bodyIncludes === undefined || actual.body.includes(expected.bodyIncludes)) &&
     (expected.bodyExcludes === undefined || !actual.body.includes(expected.bodyExcludes)) &&
     (expected.json === undefined || parseJson(actual.body) === expected.json) &&
-    (expected.check === undefined || passes(expected.check, parseJson(actual.body)));
+    (expected.check === undefined || passes(expected.check, parseJson(actual.body))) &&
+    (expected.bodyCheck === undefined || passes(expected.bodyCheck, actual.body));
   const seen = [actual.status, actual.location, expected.contentType === undefined ? "" : actual.contentType];
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}  -> ${seen.join(" ").trim()}`);
   if (!ok) {
@@ -1618,9 +1942,14 @@ for (const [name, run, expected, hint] of steps) {
       expected.bodyExcludes === undefined ? "" : `a body without "${expected.bodyExcludes}"`,
       expected.json === undefined ? "" : `a JSON body of ${JSON.stringify(expected.json)}`,
       expected.check === undefined ? "" : `a JSON body: ${expected.describe ?? "accepted by its check"}`,
+      expected.bodyCheck === undefined ? "" : `a page with ${expected.describe ?? "what its bodyCheck accepts"}`,
     ];
     console.log(`      expected ${wanted.filter(Boolean).join(" ")}`);
     if (expected.json !== undefined || expected.check !== undefined) console.log(`      got ${actual.body}`);
+    // A page is too long to print, so a page step names the part it looked at.
+    if (expected.bodyCheck !== undefined && expected.excerpt !== undefined) {
+      console.log(`      got ${excerptOf(expected.excerpt, actual.body)}`);
+    }
     if (hint) console.log(`      ${hint}`);
   }
 }

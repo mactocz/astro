@@ -4,6 +4,7 @@ import { ServerError } from "@/components/auth/ServerError";
 import { useEmployeeForm } from "@/components/hooks/useEmployeeForm";
 import { Button } from "@/components/ui/button";
 import { EMAIL_MAX_LENGTH, FTE_DENOMINATOR_MAX, NAME_MAX_LENGTH } from "@/lib/services/employee";
+import { EMAIL_LOCKED_MESSAGE } from "@/lib/services/invitation";
 import { cn } from "@/lib/utils";
 import type { Employee } from "@/types";
 
@@ -13,6 +14,7 @@ interface Props {
 
 const hintClass = "mt-1 text-xs text-blue-100/50";
 const FTE_MESSAGE_ID = "fte-message";
+const EMAIL_LOCKED_ID = "email-locked";
 
 interface FteInputProps {
   id: string;
@@ -48,6 +50,8 @@ function FteInput({ id, label, value, onChange, invalid }: FteInputProps) {
 
 export default function EmployeeForm({ employee }: Props) {
   const { values, fieldErrors, serverError, pending, setField, submit } = useEmployeeForm({ employee });
+  // Once an account is linked, the e-mail is the address of that account; the API refuses a change as well.
+  const emailLocked = Boolean(employee?.userId);
 
   return (
     <form className="space-y-4" onSubmit={submit} noValidate>
@@ -84,7 +88,17 @@ export default function EmployeeForm({ employee }: Props) {
           setField("email", value);
         }}
         error={fieldErrors.email}
-        hint={<p className={hintClass}>Opcjonalny. Potrzebny dopiero do zaproszenia do konta.</p>}
+        readOnly={emailLocked}
+        describedBy={emailLocked ? EMAIL_LOCKED_ID : undefined}
+        hint={
+          emailLocked ? (
+            <p id={EMAIL_LOCKED_ID} className={hintClass}>
+              {EMAIL_LOCKED_MESSAGE}
+            </p>
+          ) : (
+            <p className={hintClass}>Opcjonalny. Potrzebny dopiero do zaproszenia do konta.</p>
+          )
+        }
         maxLength={EMAIL_MAX_LENGTH}
         icon={<Mail className="size-4" />}
       />

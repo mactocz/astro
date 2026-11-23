@@ -14,10 +14,16 @@ import type { InviteAccountState, InviteAction, InviteStatus } from "@/types";
 
 const INVITED_AT = "2026-11-06T10:00:00.000Z";
 const VALID_UNTIL = "2026-11-13T10:00:00.000Z";
+const ACTIVATED_AT = "2026-11-09T14:30:00.000Z";
 const USER_ID = "0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90";
 
-function status(invitedAt: string | null, now: string, userId: string | null = USER_ID): InviteStatus {
-  return inviteStatus({ userId, invitedAt }, new Date(now));
+function status(
+  invitedAt: string | null,
+  now: string,
+  userId: string | null = USER_ID,
+  activatedAt: string | null = null,
+): InviteStatus {
+  return inviteStatus({ userId, invitedAt, activatedAt }, new Date(now));
 }
 
 describe("invitation limits", () => {
@@ -146,15 +152,88 @@ describe("inviteStatus", () => {
     expect(status("2026-11-06T10:00:00Z", INVITED_AT)).toStrictEqual(expected);
   });
 
+  it("is active once the account has an activation time", () => {
+    expect(status(INVITED_AT, "2026-11-10T10:00:00.000Z", USER_ID, ACTIVATED_AT)).toStrictEqual({
+      kind: "active",
+      activatedAt: ACTIVATED_AT,
+    });
+  });
+
+  it("is active although the invitation time is also set, and stays active after the link has expired", () => {
+    expect(status(INVITED_AT, "2026-11-09T15:00:00.000Z", USER_ID, ACTIVATED_AT)).toStrictEqual({
+      kind: "active",
+      activatedAt: ACTIVATED_AT,
+    });
+    expect(status(INVITED_AT, "2027-06-01T00:00:00.000Z", USER_ID, ACTIVATED_AT)).toStrictEqual({
+      kind: "active",
+      activatedAt: ACTIVATED_AT,
+    });
+  });
+
+  it("is active without an invitation time", () => {
+    expect(status(null, "2026-11-10T10:00:00.000Z", USER_ID, ACTIVATED_AT)).toStrictEqual({
+      kind: "active",
+      activatedAt: ACTIVATED_AT,
+    });
+  });
+
+  it("falls back to the invitation when the activation time cannot be read", () => {
+    expect(status(INVITED_AT, "2026-11-09T10:00:00.000Z", USER_ID, "not a date")).toStrictEqual({
+      kind: "invited",
+      invitedAt: INVITED_AT,
+      validUntil: VALID_UNTIL,
+      expired: false,
+    });
+    expect(status(INVITED_AT, "2026-11-09T10:00:00.000Z", USER_ID, "")).toMatchObject({ kind: "invited" });
+    expect(status(null, "2026-11-09T10:00:00.000Z", USER_ID, "not a date")).toStrictEqual({ kind: "no_account" });
+  });
+
+  it("is no_account for an activation time without a linked account", () => {
+    expect(status(INVITED_AT, "2026-11-10T10:00:00.000Z", null, ACTIVATED_AT)).toStrictEqual({ kind: "no_account" });
+    expect(status(null, "2026-11-10T10:00:00.000Z", null, ACTIVATED_AT)).toStrictEqual({ kind: "no_account" });
+  });
+
+  it("writes the activation time as UTC ISO, whatever the spelling the database used", () => {
+    const expected = { kind: "active", activatedAt: ACTIVATED_AT };
+
+    expect(status(null, ACTIVATED_AT, USER_ID, "2026-11-09T14:30:00.000000+00:00")).toStrictEqual(expected);
+    expect(status(null, ACTIVATED_AT, USER_ID, "2026-11-09T15:30:00+01:00")).toStrictEqual(expected);
+    expect(status(null, ACTIVATED_AT, USER_ID, "2026-11-09T14:30:00Z")).toStrictEqual(expected);
+  });
+
+  it("does not depend on the clock for an active account", () => {
+    const employee = { userId: USER_ID, invitedAt: INVITED_AT, activatedAt: ACTIVATED_AT };
+
+    expect(inviteStatus(employee, new Date("2000-01-01T00:00:00Z"))).toStrictEqual({
+      kind: "active",
+      activatedAt: ACTIVATED_AT,
+    });
+    expect(inviteStatus(employee, new Date("2100-01-01T00:00:00Z"))).toStrictEqual({
+      kind: "active",
+      activatedAt: ACTIVATED_AT,
+    });
+  });
+
+  it("gives the same result for repeated calls for an active account", () => {
+    const employee = { userId: USER_ID, invitedAt: INVITED_AT, activatedAt: ACTIVATED_AT };
+    const now = new Date("2026-11-10T10:00:00.000Z");
+
+    const result = expectDeterministic((at: Date) => inviteStatus(employee, at), now, {
+      variants: [new Date(now.getTime()), new Date("2026-11-10T12:00:00+02:00")],
+    });
+
+    expect(result).toStrictEqual({ kind: "active", activatedAt: ACTIVATED_AT });
+  });
+
   it("depends on the given time only, not on the clock", () => {
-    const employee = { userId: USER_ID, invitedAt: INVITED_AT };
+    const employee = { userId: USER_ID, invitedAt: INVITED_AT, activatedAt: null };
 
     expect(inviteStatus(employee, new Date("2000-01-01T00:00:00Z"))).toMatchObject({ expired: false });
     expect(inviteStatus(employee, new Date("2100-01-01T00:00:00Z"))).toMatchObject({ expired: true });
   });
 
   it("gives the same result for repeated calls and for equal instants", () => {
-    const employee = { userId: USER_ID, invitedAt: INVITED_AT };
+    const employee = { userId: USER_ID, invitedAt: INVITED_AT, activatedAt: null };
     const now = new Date("2026-11-09T10:00:00.000Z");
     const variants = [new Date(now.getTime()), new Date("2026-11-09T12:00:00+02:00")];
 
@@ -164,12 +243,12 @@ describe("inviteStatus", () => {
   });
 
   it("does not change the employee or the time it is given", () => {
-    const employee = { userId: USER_ID, invitedAt: INVITED_AT };
+    const employee = { userId: USER_ID, invitedAt: INVITED_AT, activatedAt: ACTIVATED_AT };
     const now = new Date("2026-11-09T10:00:00.000Z");
 
     inviteStatus(employee, now);
 
-    expect(employee).toStrictEqual({ userId: USER_ID, invitedAt: INVITED_AT });
+    expect(employee).toStrictEqual({ userId: USER_ID, invitedAt: INVITED_AT, activatedAt: ACTIVATED_AT });
     expect(now.toISOString()).toBe("2026-11-09T10:00:00.000Z");
   });
 });
@@ -217,10 +296,38 @@ describe("formatInviteLabel", () => {
     );
   });
 
+  it("labels an active account by its registration date", () => {
+    expect(formatInviteLabel({ kind: "active", activatedAt: ACTIVATED_AT })).toBe("Zarejestrowany 09.11.2026");
+  });
+
+  it("labels an active account by the registration date only, also when the invitation link has expired", () => {
+    const active = status(INVITED_AT, "2026-11-20T10:00:00.000Z", USER_ID, ACTIVATED_AT);
+
+    expect(formatInviteLabel(active)).toBe("Zarejestrowany 09.11.2026");
+    expect(formatInviteLabel(active)).not.toContain("Zaproszony");
+    expect(formatInviteLabel(active)).not.toContain("link");
+  });
+
+  it("pads the registration day and month with zeros and writes them in UTC", () => {
+    expect(formatInviteLabel({ kind: "active", activatedAt: "2026-01-03T08:00:00.000Z" })).toBe(
+      "Zarejestrowany 03.01.2026",
+    );
+    // 23:30 at UTC-5 is already the next day in UTC.
+    expect(formatInviteLabel(status(null, ACTIVATED_AT, USER_ID, "2026-11-09T23:30:00-05:00"))).toBe(
+      "Zarejestrowany 10.11.2026",
+    );
+  });
+
   it("gives the same label for repeated calls", () => {
     const current = status(INVITED_AT, "2026-11-09T10:00:00.000Z");
 
     expect(expectDeterministic(formatInviteLabel, current)).toBe("Zaproszony 06.11.2026 (link ważny do 13.11.2026)");
+  });
+
+  it("gives the same label for repeated calls for an active account", () => {
+    const current = status(INVITED_AT, "2026-11-10T10:00:00.000Z", USER_ID, ACTIVATED_AT);
+
+    expect(expectDeterministic(formatInviteLabel, current)).toBe("Zarejestrowany 09.11.2026");
   });
 });
 

@@ -21,6 +21,8 @@ export interface Employee extends EmployeeInput {
   readonly userId: string | null;
   /** ISO timestamp of the latest invitation e-mail (also a password-reset link), or null. Only the invitation route writes it. */
   readonly invitedAt: string | null;
+  /** ISO timestamp of the first password set from a link, or null while the account has not been activated. Only `mark_account_active()` writes it. */
+  readonly activatedAt: string | null;
 }
 
 export type EmployeeField = "firstName" | "lastName" | "email" | "fte";
@@ -51,9 +53,14 @@ export type InviteAction = "invite" | "reinvite" | "reset_password";
 /** What the invitation route answers on success; one value per `InviteAction`. */
 export type InviteResult = "invited" | "reinvited" | "password_reset";
 
-/** The invitation as the planner sees it in the employee list. `validUntil` and `invitedAt` are ISO timestamps (UTC). */
+/**
+ * The account as the planner sees it in the employee list: none, invited (the link may still work or may have expired),
+ * or active (the employee has set a password). The timestamps are ISO strings (UTC).
+ */
 export type InviteStatus =
-  { kind: "no_account" } | { kind: "invited"; invitedAt: string; validUntil: string; expired: boolean };
+  | { kind: "no_account" }
+  | { kind: "invited"; invitedAt: string; validUntil: string; expired: boolean }
+  | { kind: "active"; activatedAt: string };
 
 /** One flag per part of the password rule, true when that part is met. */
 export interface PasswordCheck {

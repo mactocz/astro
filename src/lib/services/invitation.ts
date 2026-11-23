@@ -36,12 +36,24 @@ export function decideInviteAction(state: InviteAccountState): InviteAction {
 }
 
 /**
- * The invitation as shown in the employee list. `no_account` without a linked account or a usable `invitedAt`.
- * Otherwise the link is valid for `INVITE_VALIDITY_DAYS` from `invitedAt` (the end moment itself still counts as
- * valid). `now` is passed in, so the result depends on the arguments only. Both timestamps come back as UTC ISO.
+ * The account as shown in the employee list. `no_account` without a linked account. `active` once the employee has set
+ * a password from a link (a usable `activatedAt`, whatever `invitedAt` says). Otherwise the invitation: `no_account`
+ * without a usable `invitedAt`, else the link is valid for `INVITE_VALIDITY_DAYS` from `invitedAt` (the end moment
+ * itself still counts as valid). `now` is passed in, so the result depends on the arguments only. The timestamps come
+ * back as UTC ISO.
  */
-export function inviteStatus(employee: { userId: string | null; invitedAt: string | null }, now: Date): InviteStatus {
-  if (employee.userId === null || employee.invitedAt === null) {
+export function inviteStatus(
+  employee: { userId: string | null; invitedAt: string | null; activatedAt: string | null },
+  now: Date,
+): InviteStatus {
+  if (employee.userId === null) {
+    return { kind: "no_account" };
+  }
+  const activatedMs = employee.activatedAt === null ? Number.NaN : Date.parse(employee.activatedAt);
+  if (!Number.isNaN(activatedMs)) {
+    return { kind: "active", activatedAt: new Date(activatedMs).toISOString() };
+  }
+  if (employee.invitedAt === null) {
     return { kind: "no_account" };
   }
   const invitedMs = Date.parse(employee.invitedAt);
@@ -66,12 +78,16 @@ function formatDate(iso: string): string {
 }
 
 /**
- * "Bez konta", "Zaproszony 06.11.2026 (link ważny do 13.11.2026)" or "Zaproszony 06.11.2026 (link wygasł 13.11.2026)".
- * The expired label speaks of the link only: acceptance is not tracked, so it is unknown whether the password was set.
+ * "Bez konta", "Zaproszony 06.11.2026 (link ważny do 13.11.2026)", "Zaproszony 06.11.2026 (link wygasł 13.11.2026)" or
+ * "Zarejestrowany 09.11.2026". The expired label speaks of the link only: the employee has not set a password from it
+ * (else the status would be `active`), but may still get a new invitation.
  */
 export function formatInviteLabel(status: InviteStatus): string {
   if (status.kind === "no_account") {
     return "Bez konta";
+  }
+  if (status.kind === "active") {
+    return `Zarejestrowany ${formatDate(status.activatedAt)}`;
   }
   const link = status.expired ? "link wygasł" : "link ważny do";
   return `Zaproszony ${formatDate(status.invitedAt)} (${link} ${formatDate(status.validUntil)})`;
