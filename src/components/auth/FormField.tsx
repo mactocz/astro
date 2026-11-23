@@ -18,6 +18,9 @@ interface FormFieldProps {
   icon?: ReactNode;
   endContent?: ReactNode;
   maxLength?: number;
+  /** The range of a date or number input, as the input's `min` and `max` attributes (a date as `YYYY-MM-DD`). */
+  min?: string;
+  max?: string;
   inputMode?: InputHTMLAttributes<HTMLInputElement>["inputMode"];
   autoComplete?: InputHTMLAttributes<HTMLInputElement>["autoComplete"];
 }
@@ -35,6 +38,8 @@ export function FormField({
   icon,
   endContent,
   maxLength,
+  min,
+  max,
   inputMode,
   autoComplete,
 }: FormFieldProps) {
@@ -56,6 +61,8 @@ export function FormField({
           }}
           placeholder={placeholder}
           maxLength={maxLength}
+          min={min}
+          max={max}
           inputMode={inputMode}
           autoComplete={autoComplete}
           aria-invalid={error ? true : undefined}

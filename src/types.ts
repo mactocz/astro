@@ -77,3 +77,21 @@ export interface ScheduleSummary {
 
 export type ScheduleField = "startDate" | "label" | "staffing" | "employeeIds";
 export type ScheduleFieldErrors = Partial<Record<ScheduleField, string>>;
+
+/** A shift as the schedule form offers it: only what the form shows, with the times already formatted. */
+export interface ShiftOption {
+  id: string;
+  name: string;
+  /** Start and end, e.g. "22:00–06:00". */
+  times: string;
+  endsNextDay: boolean;
+  /** Length of the shift, e.g. "8 h". */
+  duration: string;
+}
+
+/** An employee as the schedule form offers them: the id and the name to show, never the e-mail address or the FTE. */
+export interface EmployeeOption {
+  id: string;
+  /** "Last name First name", the order of the employee list. */
+  name: string;
+}

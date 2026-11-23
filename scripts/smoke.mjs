@@ -2,7 +2,8 @@
 // that the database role helpers read the role from the token, that only planners can read and write the employees,
 // shifts and schedules tables through PostgREST and save a schedule atomically through the save_schedule function, that
 // the employee, shift and schedule API routes keep to the role gate, the validation and their status codes, that the
-// employee and shift pages open for the planner only, and that public registration stays closed. Zero dependencies on
+// employee, shift and schedule pages open for the planner only (the schedule list and form show what the database holds),
+// and that public registration stays closed. Zero dependencies on
 // purpose. It creates real accounts and removes its own employee, shift and schedule rows with the service-role key, so
 // it only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars). Values
 // come from `supabase status -o env`.
@@ -866,6 +867,113 @@ const plannerPutsSchedule = (name, path, expected, json = changedApiSchedule) =>
   { contentType: "application/json", ...expected },
 ];
 
+// The schedule pages show the schedule saved through the API, in the state `changedApiSchedule` left it in. The HTML of a
+// page is checked as text: the list through the cells of its table row, the form pages through the <input> tags of the
+// island, which the server renders with the state it received (React writes the value and checked attributes into the
+// markup). So these steps are the proof that listSchedules and getSchedule hand the pages the right data.
+const notFoundScheduleMessage = "Nie znaleziono grafiku";
+// formatPeriod("2026-11-15"): the en dash (U+2013) and the year once.
+const apiSchedulePeriod = "15.11–21.11.2026";
+// Two pieces of the notice of decision D6, which every schedule page carries; the rest of the sentence may be reworded.
+const d6Fragments = ["To szkic grafiku tygodniowego", "art. 129 § 3 Kodeksu pracy"];
+const hasD6Notice = (html) => d6Fragments.every((fragment) => html.includes(fragment));
+
+// The attributes of every <input> tag of a page, one object each. React escapes quotes and angle brackets inside
+// attribute values, so a tag ends at the first ">"; a boolean attribute such as checked has the value "".
+const inputsOf = (html) =>
+  [...html.matchAll(/<input\b([^>]*)>/g)].map(([, attributes]) =>
+    Object.fromEntries(
+      [...attributes.matchAll(/([^\s="'>]+)(?:="([^"]*)")?/g)].map(([, name, value]) => [name, value ?? ""]),
+    ),
+  );
+const isGridCell = (input) => typeof input.id === "string" && input.id.startsWith("cell-");
+const employeeBoxes = (inputs) => inputs.filter((input) => input.name === "employeeIds");
+const isTicked = (box) => "checked" in box;
+
+// The first table row (the chunk of the page that ends at a </tr>) that holds `text`, and the text of its cells.
+const tableRowWith = (html, text) => html.split("</tr>").find((chunk) => chunk.includes(text));
+const cellsOf = (row) =>
+  [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(([, cell]) => cell.replace(/<[^>]*>/g, "").trim());
+
+// The list row of the schedule: the period, the label, the number of people (2), the sum of the grid (5 + 1 + 2), the day
+// of creation and the edit link, whose aria-label names the period and the label.
+const listsApiSchedule = (html) => {
+  const row = tableRowWith(html, apiScheduleLabel);
+  if (row === undefined) return false;
+  const state = changedApiSchedule();
+  const cells = cellsOf(row);
+  return (
+    cells.length === 6 &&
+    cells[0] === apiSchedulePeriod &&
+    cells[1] === apiScheduleLabel &&
+    cells[2] === String(state.employeeIds.length) &&
+    cells[3] === String(state.staffing.reduce((sum, cell) => sum + cell.requiredCount, 0)) &&
+    /^\d{2}\.\d{2}\.\d{4}$/.test(cells[4]) &&
+    cells[5] === "Edytuj" &&
+    row.includes(`href="/schedules/${apiScheduleId}"`) &&
+    row.includes(`aria-label="Edytuj: ${apiSchedulePeriod}, ${apiScheduleLabel}"`)
+  );
+};
+
+// The form of the stored schedule: the date, the label, the seven columns of the replaced start date (a Sunday), exactly
+// the two rows of its shifts with the count of every cell (empty where there is none), and ticked exactly its two people.
+const editsApiSchedule = (html) => {
+  const inputs = inputsOf(html);
+  const state = changedApiSchedule();
+  const inputById = (id) => inputs.find((input) => input.id === id);
+  const countAt = (shiftId, dayOffset) =>
+    state.staffing.find((cell) => cell.shiftId === shiftId && cell.dayOffset === dayOffset)?.requiredCount;
+  const cellsMatch = [apiShiftId, secondApiShiftId].every((shiftId) =>
+    [0, 1, 2, 3, 4, 5, 6].every((dayOffset) => {
+      const cell = inputById(`cell-${shiftId}-${dayOffset}`);
+      return cell !== undefined && (cell.value ?? "") === String(countAt(shiftId, dayOffset) ?? "");
+    }),
+  );
+  const boxes = employeeBoxes(inputs);
+  return (
+    inputById("startDate")?.value === state.startDate &&
+    inputById("label")?.value === apiScheduleLabel &&
+    html.includes(`Okres: ${apiSchedulePeriod}, 7 dni`) &&
+    html.includes("niedz. 15.11") &&
+    html.includes("sob. 21.11") &&
+    cellsMatch &&
+    inputs.filter(isGridCell).length === 14 &&
+    state.employeeIds.every((id) => boxes.some((box) => box.value === id)) &&
+    boxes.every((box) => isTicked(box) === state.employeeIds.includes(box.value))
+  );
+};
+
+// The form of a new schedule: a date input with the range of the schedule rules, every employee ticked (the two of the API
+// steps among them) and no grid row yet.
+const offersNewSchedule = (html) => {
+  const inputs = inputsOf(html);
+  const date = inputs.find((input) => input.id === "startDate");
+  const boxes = employeeBoxes(inputs);
+  return (
+    date?.type === "date" &&
+    date.min === "2020-01-01" &&
+    date.max === "2099-12-31" &&
+    [apiEmployeeId, secondApiEmployeeId].every((id) => boxes.some((box) => box.value === id)) &&
+    boxes.every(isTicked) &&
+    !inputs.some(isGridCell)
+  );
+};
+
+// A page step whose HTML must be accepted by `bodyCheck`, a predicate on the text of the page (the `check` of the other
+// steps gets the parsed JSON); `describe` says what the page should show.
+const visitChecked = (actor, path, status, bodyCheck, describe, cacheControl) => [
+  `${actor.label}: GET ${path} shows ${describe}`,
+  () => request(actor, path),
+  { status, bodyCheck, describe, cacheControl },
+];
+// The form page of the schedule saved through the API; its address needs the id, which only exists once the create step
+// has run, so it is built when the step runs.
+const visitApiSchedulePage = (actor, status, expected) => [
+  `${actor.label}: GET /schedules/<id>${expected.describe ? ` shows ${expected.describe}` : ""}`,
+  () => request(actor, `/schedules/${apiScheduleId}`),
+  { status, ...expected },
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -875,6 +983,8 @@ const steps = [
   visit(anonymous, "/employees/new", 401),
   visit(anonymous, "/shifts", 401),
   visit(anonymous, "/shifts/new", 401),
+  visit(anonymous, "/schedules", 401),
+  visit(anonymous, "/schedules/new", 401),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
@@ -913,6 +1023,8 @@ const steps = [
   signIn(noRole, "aplikacja pod testem nie używa SUPABASE_URL (sprawdź .env i .dev.vars)"),
   visit(noRole, "/dashboard", 403),
   visit(noRole, "/planner", 403),
+  visit(noRole, "/schedules", 403),
+  visit(noRole, "/schedules/new", 403),
   [
     `${noRole.label}: POST /api/schedules`,
     () => request(noRole, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
@@ -950,6 +1062,9 @@ const steps = [
   visit(employee, "/shifts", 403),
   visit(employee, "/shifts/new", 403),
   visit(employee, `/shifts/${unknownShiftId}`, 403),
+  visit(employee, "/schedules", 403),
+  visit(employee, "/schedules/new", 403),
+  visit(employee, `/schedules/${unknownScheduleId}`, 403),
   [
     `${employee.label}: POST /api/employees`,
     () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
@@ -989,6 +1104,8 @@ const steps = [
   visit(planner, "/dashboard", 200),
   visit(planner, "/planner", 200, "Pracownicy"),
   visit(planner, "/planner", 200, "Zmiany"),
+  visit(planner, "/planner", 200, "Grafiki"),
+  visit(planner, "/planner", 200, 'href="/schedules"'),
   visit(planner, "/planner/", 200),
   [
     `${planner.label}: POST /api/employees creates an employee`,
@@ -1289,6 +1406,37 @@ const steps = [
   visitApiShiftPage(planner, 200, apiShiftName),
   visit(planner, `/shifts/${unknownShiftId}`, 404, notFoundShiftMessage),
   visit(planner, "/shifts/not-a-uuid", 404, notFoundShiftMessage),
+  // The schedule pages: the list shows the schedule saved through the API above with its period, people and total, the form
+  // page shows its cells and people, and every one of them carries the D6 notice and is not cached.
+  visit(planner, "/schedules", 200, 'href="/schedules/new"', "no-store"),
+  visitChecked(
+    planner,
+    "/schedules",
+    200,
+    listsApiSchedule,
+    "the API schedule: period 15.11-21.11.2026, label, 2 people, total 8, a creation date and the edit link",
+    "no-store",
+  ),
+  visitChecked(planner, "/schedules", 200, hasD6Notice, "the D6 notice", "no-store"),
+  visit(planner, "/schedules/new", 200, "Nowy grafik", "no-store"),
+  visitChecked(planner, "/schedules/new", 200, hasD6Notice, "the D6 notice", "no-store"),
+  visitChecked(
+    planner,
+    "/schedules/new",
+    200,
+    offersNewSchedule,
+    "a date input from 2020-01-01 to 2099-12-31, every employee ticked and no grid row",
+    "no-store",
+  ),
+  visitApiSchedulePage(planner, 200, { bodyIncludes: apiScheduleLabel, cacheControl: "no-store" }),
+  visitApiSchedulePage(planner, 200, { bodyCheck: hasD6Notice, describe: "the D6 notice", cacheControl: "no-store" }),
+  visitApiSchedulePage(planner, 200, {
+    bodyCheck: editsApiSchedule,
+    describe: "the date, label, cells and people of the API schedule as the form state",
+    cacheControl: "no-store",
+  }),
+  visit(planner, `/schedules/${unknownScheduleId}`, 404, notFoundScheduleMessage),
+  visit(planner, "/schedules/not-a-uuid", 404, notFoundScheduleMessage),
   signOut(planner),
   visit(planner, "/dashboard", 401),
 
@@ -1667,7 +1815,8 @@ for (const [name, run, expected, hint] of steps) {
     (expected.bodyIncludes === undefined || actual.body.includes(expected.bodyIncludes)) &&
     (expected.bodyExcludes === undefined || !actual.body.includes(expected.bodyExcludes)) &&
     (expected.json === undefined || parseJson(actual.body) === expected.json) &&
-    (expected.check === undefined || passes(expected.check, parseJson(actual.body)));
+    (expected.check === undefined || passes(expected.check, parseJson(actual.body))) &&
+    (expected.bodyCheck === undefined || passes(expected.bodyCheck, actual.body));
   const seen = [actual.status, actual.location, expected.contentType === undefined ? "" : actual.contentType];
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}  -> ${seen.join(" ").trim()}`);
   if (!ok) {
@@ -1682,6 +1831,7 @@ for (const [name, run, expected, hint] of steps) {
       expected.bodyExcludes === undefined ? "" : `a body without "${expected.bodyExcludes}"`,
       expected.json === undefined ? "" : `a JSON body of ${JSON.stringify(expected.json)}`,
       expected.check === undefined ? "" : `a JSON body: ${expected.describe ?? "accepted by its check"}`,
+      expected.bodyCheck === undefined ? "" : `a page that shows ${expected.describe ?? "what its check accepts"}`,
     ];
     console.log(`      expected ${wanted.filter(Boolean).join(" ")}`);
     if (expected.json !== undefined || expected.check !== undefined) console.log(`      got ${actual.body}`);

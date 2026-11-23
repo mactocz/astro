@@ -1,0 +1,11 @@
+---
+// Decision D6 (work-time-rules.md): a weekly draft must not be taken for the formal work-time schedule. Shown above the
+// schedule list and above the schedule form. The text is one string (not wrapped markup), so the page carries it on one
+// line and the smoke test can look for it.
+const NOTICE =
+  "To szkic grafiku tygodniowego. Nie zastępuje rozkładu czasu pracy, który zgodnie z art. 129 § 3 Kodeksu pracy obejmuje co najmniej miesiąc i powinien być przekazany pracownikowi z tygodniowym wyprzedzeniem.";
+---
+
+<div role="note" class="mb-6 rounded-xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100/90">
+  {NOTICE}
+</div>
