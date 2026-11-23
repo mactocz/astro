@@ -35,7 +35,15 @@ function expectPlannerOnly(pathname: string) {
 
 const layers: Record<string, { paths: string[]; outcomes: Record<ActorName, AccessDecision> }> = {
   public: {
-    paths: ["/", "/auth/signin", "/api/auth/signin", "/api/auth/signout", "/access-denied"],
+    paths: [
+      "/",
+      "/auth/signin",
+      "/api/auth/signin",
+      "/api/auth/signout",
+      "/auth/set-password",
+      "/api/auth/set-password",
+      "/access-denied",
+    ],
     outcomes: { anonymous: allowed, "signed in without a role": allowed, employee: allowed, planner: allowed },
   },
   "any-role": {
@@ -83,15 +91,20 @@ describe("decideAccess layer matrix", () => {
 });
 
 describe("decideAccess trailing slash", () => {
-  it.each(["/auth/signin", "/api/auth/signout", "/access-denied", "/dashboard", "/employees"])(
-    "%s accepts a single trailing slash and decides the same",
-    (pathname) => {
-      for (const actor of actorNames) {
-        const input = { pathname, ...actors[actor] };
-        expectDeterministic(decideAccess, input, { variants: [{ ...input, pathname: `${pathname}/` }] });
-      }
-    },
-  );
+  it.each([
+    "/auth/signin",
+    "/api/auth/signout",
+    "/auth/set-password",
+    "/api/auth/set-password",
+    "/access-denied",
+    "/dashboard",
+    "/employees",
+  ])("%s accepts a single trailing slash and decides the same", (pathname) => {
+    for (const actor of actorNames) {
+      const input = { pathname, ...actors[actor] };
+      expectDeterministic(decideAccess, input, { variants: [{ ...input, pathname: `${pathname}/` }] });
+    }
+  });
 
   it("keeps the root public and does not turn it into an empty path", () => {
     for (const actor of actorNames) {
@@ -108,10 +121,26 @@ const lookalikes: Record<string, string[]> = {
     "/Auth/signin",
     "/auth/Signin",
     "/API/auth/signout",
+    "/Auth/set-password",
+    "/api/auth/Set-Password",
     "/Access-Denied",
   ],
-  "a longer last segment": ["/dashboardx", "/auth/signin2", "/api/auth/signout-all", "/access-deniedx"],
-  "an extra segment": ["/dashboard/x", "/auth/signin/extra", "/api/auth/signin/x", "/access-denied/x"],
+  "a longer last segment": [
+    "/dashboardx",
+    "/auth/signin2",
+    "/api/auth/signout-all",
+    "/auth/set-password2",
+    "/api/auth/set-passwords",
+    "/access-deniedx",
+  ],
+  "an extra segment": [
+    "/dashboard/x",
+    "/auth/signin/extra",
+    "/api/auth/signin/x",
+    "/auth/set-password/x",
+    "/api/auth/set-password/x",
+    "/access-denied/x",
+  ],
   "a percent sign": ["/%64ashboard", "/dashboard%2F", "/dashboard%2f", "/auth/%73ignin", "/dashboard%00"],
   "a backslash": ["/a\\b", "/auth\\signin", "/dashboard\\", "/api\\auth\\signout"],
   "an empty segment": ["//dashboard", "/auth//signin", "/dashboard//", "/auth/signin//", "//", "///"],
@@ -157,6 +186,7 @@ describe("decideAccess default deny", () => {
     "/employees/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",
     "/api/employees",
     "/api/employees/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",
+    "/api/employees/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90/invite",
     "/shifts",
     "/shifts/new",
     "/shifts/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",

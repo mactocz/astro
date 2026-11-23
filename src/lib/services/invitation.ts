@@ -77,6 +77,32 @@ export function formatInviteLabel(status: InviteStatus): string {
   return `Zaproszony ${formatDate(status.invitedAt)} (${link} ${formatDate(status.validUntil)})`;
 }
 
+/** The text of the 422 answer (and of the read-only field in the form) when an employee with an account gets a new e-mail. */
+export const EMAIL_LOCKED_MESSAGE = "E-mail jest zablokowany po zaproszeniu konta";
+
+/** The kinds of link in the e-mails: `invite` for a new account, `recovery` for a password reset of an active one. */
+export const SET_PASSWORD_LINK_TYPES = ["invite", "recovery"] as const;
+export type SetPasswordLinkType = (typeof SET_PASSWORD_LINK_TYPES)[number];
+
+// What GoTrue puts in {{ .TokenHash }}: a hexadecimal hash, with a "pkce_" prefix for a link requested over PKCE.
+const TOKEN_HASH = /^[A-Za-z0-9_-]{1,200}$/;
+
+/**
+ * The token hash and the type read from a set-password link (the query of the page, the body of the API), or null when
+ * either is missing or malformed. One function for both, so the page and the route give the same answer. It checks the
+ * shape only; whether the token still works is up to Auth.
+ */
+export function parseSetPasswordLink(
+  tokenHash: unknown,
+  type: unknown,
+): { tokenHash: string; type: SetPasswordLinkType } | null {
+  const linkType = SET_PASSWORD_LINK_TYPES.find((candidate) => candidate === type);
+  if (linkType === undefined || typeof tokenHash !== "string" || !TOKEN_HASH.test(tokenHash)) {
+    return null;
+  }
+  return { tokenHash, type: linkType };
+}
+
 function normalizeEmail(email: string | null): string | null {
   const normalized = email?.trim().toLowerCase();
   return normalized === undefined || normalized === "" ? null : normalized;

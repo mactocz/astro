@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  EMAIL_LOCKED_MESSAGE,
   INVITE_VALIDITY_DAYS,
   classifyAuthUser,
   decideInviteAction,
   emailChangeBlocked,
   formatInviteLabel,
   inviteStatus,
+  parseSetPasswordLink,
 } from "@/lib/services/invitation";
 import { expectDeterministic } from "@/lib/testing/determinism";
 import type { InviteAccountState, InviteAction, InviteStatus } from "@/types";
@@ -266,6 +268,57 @@ describe("emailChangeBlocked", () => {
     const input = { existing: { userId: USER_ID, email: "jan@example.com" }, next: "anna@example.com" };
 
     expect(expectDeterministic(({ existing, next }) => emailChangeBlocked(existing, next), input)).toBe(true);
+  });
+});
+
+describe("parseSetPasswordLink", () => {
+  const HASH = "0b5e2d6e7c1a4f8e9a532d1f6c3b8e900b5e2d6e7c1a4f8e9a532d1f";
+
+  it.each<[string, unknown, unknown, ReturnType<typeof parseSetPasswordLink>]>([
+    ["an invite link", HASH, "invite", { tokenHash: HASH, type: "invite" }],
+    ["a recovery link", HASH, "recovery", { tokenHash: HASH, type: "recovery" }],
+    ["a hash with the PKCE prefix", `pkce_${HASH}`, "recovery", { tokenHash: `pkce_${HASH}`, type: "recovery" }],
+    ["a one character hash", "a", "invite", { tokenHash: "a", type: "invite" }],
+    ["a hash of 200 characters", "a".repeat(200), "invite", { tokenHash: "a".repeat(200), type: "invite" }],
+  ])("accepts %s", (_label, tokenHash, type, expected) => {
+    expect(parseSetPasswordLink(tokenHash, type)).toStrictEqual(expected);
+  });
+
+  it.each<[string, unknown, unknown]>([
+    ["a missing hash", undefined, "invite"],
+    ["a null hash", null, "invite"],
+    ["an empty hash", "", "invite"],
+    ["a hash of 201 characters", "a".repeat(201), "invite"],
+    ["a hash with a space", "abc def", "invite"],
+    ["a hash with a quote", 'abc"def', "invite"],
+    ["a hash with a slash", "abc/def", "invite"],
+    ["a hash with a line break", "abc\n", "invite"],
+    ["a number as the hash", 12345, "invite"],
+    ["an array as the hash", [HASH], "invite"],
+    ["a missing type", HASH, undefined],
+    ["a null type", HASH, null],
+    ["an empty type", HASH, ""],
+    ["an unknown type", HASH, "magiclink"],
+    ["the type signup", HASH, "signup"],
+    ["a type in other letter case", HASH, "Invite"],
+    ["a type with a space", HASH, "invite "],
+    ["an array as the type", HASH, ["invite"]],
+  ])("rejects %s", (_label, tokenHash, type) => {
+    expect(parseSetPasswordLink(tokenHash, type)).toBeNull();
+  });
+
+  it("gives the same answer for repeated calls", () => {
+    const input = { tokenHash: HASH, type: "invite" };
+
+    expect(expectDeterministic(({ tokenHash, type }) => parseSetPasswordLink(tokenHash, type), input)).toStrictEqual(
+      input,
+    );
+  });
+});
+
+describe("the e-mail lock message", () => {
+  it("names the cause the planner can act on", () => {
+    expect(EMAIL_LOCKED_MESSAGE).toBe("E-mail jest zablokowany po zaproszeniu konta");
   });
 });
 

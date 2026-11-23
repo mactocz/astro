@@ -18,6 +18,9 @@ export default defineConfig({
     schema: {
       SUPABASE_URL: envField.string({ context: "server", access: "secret", optional: true }),
       SUPABASE_KEY: envField.string({ context: "server", access: "secret", optional: true }),
+      // The service-role key bypasses RLS. Only src/lib/supabase-admin.ts reads it, and ESLint lets only the invitation
+      // route import that module.
+      SUPABASE_SERVICE_ROLE_KEY: envField.string({ context: "server", access: "secret", optional: true }),
     },
   },
 });

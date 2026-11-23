@@ -3,10 +3,12 @@
 // and shifts tables through PostgREST (an employee with a linked account reads only their own employee row, and no
 // session writes the user_id and invited_at columns), that the employee and shift API routes keep to the role gate, the
 // validation and their status codes, that the employee and shift pages open for the planner only, that the invitation
-// mails link to the set-password page, and that public registration stays closed. Zero dependencies on purpose. It
-// creates real accounts and removes its own accounts, employee rows and shift rows with the service-role key, so it
-// only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars). Values come
-// from `supabase status -o env`.
+// mails link to the set-password page, the whole invitation flow (invite, invite again, password reset, a foreign
+// account, the tokens from the admin API instead of the mails, the new employee's session and the locked e-mail), and
+// that public registration stays closed. Zero dependencies on purpose. It creates real accounts and removes its own
+// accounts, employee rows and shift rows with the service-role key, so it only runs against a LOCAL Supabase, and the
+// app under test must read the same stack (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation
+// route reads it from there. Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -83,12 +85,15 @@ async function request(actor, path, { method = "GET", form, json, jsonText, acce
     location: response.headers.get("location") ?? "",
     contentType: response.headers.get("content-type") ?? "",
     cacheControl: response.headers.get("cache-control") ?? "",
+    referrerPolicy: response.headers.get("referrer-policy") ?? "",
+    // The names of the cookies the response sets (the session cookie, for one).
+    setCookies: response.headers.getSetCookie().map((raw) => raw.split("=")[0].trim()),
     body: await response.text(),
   };
 }
 
-async function createAccount(label, role) {
-  const email = `smoke-${label}-${runId}@example.com`;
+// `email` replaces the default address of the account, for an account that must match an employee's e-mail.
+async function createAccount(label, role, email = `smoke-${label}-${runId}@example.com`) {
   let response;
   try {
     response = await fetch(`${supabaseOrigin}/auth/v1/admin/users`, {
@@ -111,11 +116,16 @@ async function createAccount(label, role) {
   return { label, email, id, jar: new Map() };
 }
 
-// Admin API calls with the service-role key; `path` continues after /auth/v1/admin/.
-function adminRequest(method, path) {
+// Admin API calls with the service-role key; `path` continues after /auth/v1/admin/. `json` is sent as the body.
+function adminRequest(method, path, json) {
   return fetch(`${supabaseOrigin}/auth/v1/admin/${path}`, {
     method,
-    headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      ...(json === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    body: json === undefined ? undefined : JSON.stringify(json),
   });
 }
 
@@ -270,6 +280,10 @@ const anonymous = { label: "anonymous", jar: new Map() };
 const noRole = await createAccount("no-role", null);
 const employee = await createAccount("employee", "employee");
 const planner = await createAccount("planner", "planner");
+// An account without a role that already sits on the address of an employee (it dates from when sign-up was open): the
+// invitation must refuse it instead of taking it over. Created here with the others; the final cleanup removes it.
+const foreignEmail = `smoke-inv-${runId}-foreign@example.com`;
+const foreignAccount = await createAccount("inv-foreign", null, foreignEmail);
 
 const visit = (actor, path, status, bodyIncludes, cacheControl) => [
   `${actor.label}: GET ${path}`,
@@ -617,6 +631,116 @@ const plannerPutsShift = (name, path, expected, json = changedApiShift) => [
   { contentType: "application/json", ...expected },
 ];
 
+// The invitation steps share three employees the planner creates through the app: one that gets invited, one without an
+// e-mail, and one whose address belongs to the account without a role (foreignAccount). Their e-mails start with
+// "smoke-inv-", like every account the final cleanup removes; the one without an address is removed by its last name.
+// The tokens for the set-password page come from the admin API (generate_link), because this test never reads a mail:
+// for an account that never confirmed, the invite type works; for a confirmed one only the recovery type does. The ids
+// and tokens are only known once the steps that produce them have run.
+const inviteeInput = {
+  firstName: "Józef",
+  lastName: `Smoke-${runId}-Invitee`,
+  email: `smoke-inv-${runId}-main@example.com`,
+  fteNumerator: 1,
+  fteDenominator: 1,
+};
+const noEmailInput = { ...inviteeInput, lastName: `Smoke-${runId}-NoEmail`, email: null };
+const foreignInput = { ...inviteeInput, lastName: `Smoke-${runId}-Foreign`, email: foreignEmail };
+const inviteePassword = "Smoke-Invitee-Passw0rd!";
+const inviteeNewPassword = "Smoke-Reset-Passw0rd!";
+const emailLockedMessage = "E-mail jest zablokowany po zaproszeniu konta";
+let inviteeId;
+let noEmailId;
+let foreignId;
+let inviteeUserId;
+let firstInvitedAt;
+let inviteToken;
+let recoveryToken;
+// The new employee opens the link and then holds the session the set-password route gave; later steps sign in again
+// with separate actors, so that session stays as it was.
+const invitee = { label: "invited employee", jar: new Map() };
+const inviteeReset = { label: "invited employee (password reset)", jar: new Map() };
+const inviteeLogin = { label: "invited employee (sign-in)", jar: new Map() };
+
+const inviteUrl = (id) => `/api/employees/${id}/invite`;
+// The gate answers before the route runs, so the steps of the other roles may name an employee that does not exist.
+const unknownInviteUrl = inviteUrl(unknownEmployeeId);
+const isError = (error) => (body) => body.error === error;
+const isInviteStatus = (status) => (body) => body.status === status;
+const hasOk = (body) => body.ok === true;
+
+const plannerCreatesEmployee = (name, input, remember) => [
+  `${planner.label}: POST /api/employees creates ${name}`,
+  async () => {
+    const result = await request(planner, "/api/employees", { method: "POST", json: input });
+    remember(parseJson(result.body)?.employee?.id);
+    return result;
+  },
+  {
+    status: 201,
+    contentType: "application/json",
+    check: (body) => typeof body.employee.id === "string",
+    describe: "the created employee",
+  },
+];
+
+// `id` is a function because the employee id is only known once its create step has run.
+const plannerInvites = (name, id, expected, hint) => [
+  `${planner.label}: POST /api/employees/<id>/invite ${name}`,
+  () => request(planner, inviteUrl(id()), { method: "POST" }),
+  { contentType: "application/json", cacheControl: "no-store", ...expected },
+  hint,
+];
+
+const serviceRoleReadsEmployee = (name, id, expected) => [
+  `service role: ${name}`,
+  async () => employeesTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: `?id=eq.${id()}` }),
+  { status: 200, ...expected },
+];
+
+const generateTokenStep = (name, type, email, remember) => [
+  `service role: generate_link issues ${name}`,
+  async () => {
+    const result = await supabaseResult(await adminRequest("POST", "generate_link", { type, email }));
+    remember(parseJson(result.body)?.hashed_token);
+    return result;
+  },
+  {
+    status: 200,
+    check: (link) =>
+      typeof link.hashed_token === "string" && link.hashed_token !== "" && link.verification_type === type,
+    describe: `a ${type} link with a hashed_token`,
+  },
+];
+
+const setPasswordPath = (tokenHash, type) =>
+  `/auth/set-password?token_hash=${encodeURIComponent(tokenHash)}&type=${type}`;
+const visitSetPassword = (name, path, expected) => [
+  `${invitee.label}: GET /auth/set-password ${name}`,
+  () => request(invitee, path()),
+  expected,
+];
+const openedLink = {
+  status: 200,
+  bodyIncludes: "data-set-password-form",
+  cacheControl: "no-store",
+  referrerPolicy: "no-referrer",
+};
+const refusedLink = { status: 400, bodyIncludes: "Link jest nieprawidłowy", cacheControl: "no-store" };
+
+const postSetPassword = (actor, name, body, expected) => [
+  `${actor.label}: POST /api/auth/set-password ${name}`,
+  () => request(actor, "/api/auth/set-password", { method: "POST", json: body() }),
+  { contentType: "application/json", ...expected },
+];
+const setsPassword = {
+  status: 200,
+  setsCookie: "auth-token",
+  check: hasOk,
+  describe: "ok: true, with a session cookie",
+};
+const refusesLink = { status: 400, check: isError("invalid_link"), describe: "the error invalid_link" };
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -641,6 +765,11 @@ const steps = [
     () => request(anonymous, "/api/shifts", { method: "POST", json: apiShift }),
     { status: 401, contentType: "application/json" },
   ],
+  [
+    `${anonymous.label}: POST /api/employees/<id>/invite`,
+    () => request(anonymous, unknownInviteUrl, { method: "POST" }),
+    { status: 401, contentType: "application/json" },
+  ],
 
   // Registration is closed, in the app and in Supabase itself.
   [
@@ -654,6 +783,11 @@ const steps = [
   signIn(noRole, "aplikacja pod testem nie używa SUPABASE_URL (sprawdź .env i .dev.vars)"),
   visit(noRole, "/dashboard", 403),
   visit(noRole, "/planner", 403),
+  [
+    `${noRole.label}: POST /api/employees/<id>/invite`,
+    () => request(noRole, unknownInviteUrl, { method: "POST" }),
+    { status: 403, contentType: "application/json" },
+  ],
   signOut(noRole),
   visit(noRole, "/dashboard", 401),
 
@@ -689,6 +823,11 @@ const steps = [
   [
     `${employee.label}: PUT /api/employees/<id>`,
     () => request(employee, unknownEmployeeUrl, { method: "PUT", json: apiEmployee }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${employee.label}: POST /api/employees/<id>/invite`,
+    () => request(employee, unknownInviteUrl, { method: "POST" }),
     { status: 403, contentType: "application/json" },
   ],
   [
@@ -896,6 +1035,245 @@ const steps = [
   visitApiShiftPage(planner, 200, apiShiftName),
   visit(planner, `/shifts/${unknownShiftId}`, 404, notFoundShiftMessage),
   visit(planner, "/shifts/not-a-uuid", 404, notFoundShiftMessage),
+
+  // Invitations (S-10), with the planner's session. A: a new employee gets an account with the employee role, linked to
+  // the row.
+  plannerCreatesEmployee("the employee to invite", inviteeInput, (id) => {
+    inviteeId = id;
+  }),
+  plannerCreatesEmployee("the employee whose address belongs to a foreign account", foreignInput, (id) => {
+    foreignId = id;
+  }),
+  plannerCreatesEmployee("an employee without an e-mail", noEmailInput, (id) => {
+    noEmailId = id;
+  }),
+  plannerInvites(
+    "creates the account",
+    () => inviteeId,
+    { status: 200, check: isInviteStatus("invited"), describe: "the status invited" },
+    "brak SUPABASE_SERVICE_ROLE_KEY w .dev.vars lub .env aplikacji pod testem (trasa odpowiada 503 not_configured)",
+  ),
+  [
+    "service role: the invited employee is linked to an account and has an invitation time",
+    async () => {
+      const result = await employeesTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: `?id=eq.${inviteeId}` });
+      const row = parseJson(result.body)?.[0];
+      inviteeUserId = row?.user_id;
+      firstInvitedAt = row?.invited_at;
+      return result;
+    },
+    {
+      status: 200,
+      check: (rows) =>
+        rows.length === 1 && typeof rows[0].user_id === "string" && typeof rows[0].invited_at === "string",
+      describe: "one row with a user_id and an invited_at",
+    },
+  ],
+  [
+    "service role: the new account has the employee role and the e-mail of the employee",
+    async () => supabaseResult(await adminRequest("GET", `users/${inviteeUserId}`)),
+    {
+      status: 200,
+      check: (user) =>
+        user.id === inviteeUserId && user.email === inviteeInput.email && user.app_metadata.role === "employee",
+      describe: "the account with the employee role in app_metadata and the address of the employee",
+    },
+  ],
+
+  // B: inviting again before the password is set sends a new link; the token of the page comes from generate_link.
+  plannerInvites("again sends a new link to the pending account", () => inviteeId, {
+    status: 200,
+    check: isInviteStatus("reinvited"),
+    describe: "the status reinvited",
+  }),
+  serviceRoleReadsEmployee("the second invitation moves invited_at forward and keeps the link", () => inviteeId, {
+    check: (rows) =>
+      rows.length === 1 &&
+      rows[0].user_id === inviteeUserId &&
+      Date.parse(rows[0].invited_at) > Date.parse(firstInvitedAt),
+    describe: "the same user_id and a later invited_at",
+  }),
+  generateTokenStep("an invite token for the pending account", "invite", inviteeInput.email, (token) => {
+    inviteToken = token;
+  }),
+  visitSetPassword("opens with the form", () => setPasswordPath(inviteToken, "invite"), openedLink),
+  visitSetPassword(
+    "opens again, because opening spends nothing",
+    () => setPasswordPath(inviteToken, "invite"),
+    openedLink,
+  ),
+  visitSetPassword("without a token is refused", () => "/auth/set-password?type=invite", refusedLink),
+  visitSetPassword(
+    "with an unknown link type is refused",
+    () => setPasswordPath(inviteToken, "magiclink"),
+    refusedLink,
+  ),
+  postSetPassword(
+    invitee,
+    "with a weak password is refused and spends nothing",
+    () => ({ tokenHash: inviteToken, type: "invite", password: "weak" }),
+    {
+      status: 422,
+      check: (body) => typeof body.errors.password === "string",
+      describe: "an error for the password field",
+    },
+  ),
+  postSetPassword(
+    invitee,
+    "with an unknown token is refused",
+    () => ({ tokenHash: "0".repeat(56), type: "invite", password: inviteePassword }),
+    refusesLink,
+  ),
+  postSetPassword(
+    invitee,
+    "with an unknown link type is refused",
+    () => ({ tokenHash: inviteToken, type: "magiclink", password: inviteePassword }),
+    refusesLink,
+  ),
+  postSetPassword(
+    invitee,
+    "with the token and a valid password sets the password and signs in",
+    () => ({ tokenHash: inviteToken, type: "invite", password: inviteePassword }),
+    { ...setsPassword, cacheControl: "no-store" },
+  ),
+  postSetPassword(
+    anonymous,
+    "with the spent token is refused",
+    () => ({ tokenHash: inviteToken, type: "invite", password: inviteePassword }),
+    refusesLink,
+  ),
+  visit(invitee, "/dashboard", 200, inviteeInput.email),
+  visit(invitee, "/employees", 403),
+  visit(invitee, "/shifts", 403),
+  [
+    `${invitee.label}: GET /api/employees`,
+    () => request(invitee, "/api/employees", { accept: "application/json" }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${invitee.label}: POST /api/employees/<id>/invite`,
+    () => request(invitee, inviteUrl(inviteeId), { method: "POST" }),
+    { status: 403, contentType: "application/json" },
+  ],
+
+  // C: inviting the same account again, now that it is active, sends a password reset; its token sets a new password.
+  plannerInvites("again sends a password reset to the active account", () => inviteeId, {
+    status: 200,
+    check: isInviteStatus("password_reset"),
+    describe: "the status password_reset",
+  }),
+  generateTokenStep("a recovery token for the active account", "recovery", inviteeInput.email, (token) => {
+    recoveryToken = token;
+  }),
+  postSetPassword(
+    inviteeReset,
+    "with the recovery token sets a new password and signs in",
+    () => ({ tokenHash: recoveryToken, type: "recovery", password: inviteeNewPassword }),
+    setsPassword,
+  ),
+  [
+    `${inviteeLogin.label}: signin accepts the new password`,
+    () =>
+      request(inviteeLogin, "/api/auth/signin", {
+        method: "POST",
+        form: { email: inviteeInput.email, password: inviteeNewPassword },
+      }),
+    { status: 302, location: "/" },
+  ],
+  [
+    `${inviteeLogin.label}: signin rejects the old password`,
+    () =>
+      request(inviteeLogin, "/api/auth/signin", {
+        method: "POST",
+        form: { email: inviteeInput.email, password: inviteePassword },
+      }),
+    { status: 302, locationPrefix: "/auth/signin?error=" },
+  ],
+
+  // D: a foreign account on the address is refused and left alone, an employee without an e-mail cannot be invited, an
+  // id that is unknown or not a UUID is a 404, and the e-mail of a linked employee is locked.
+  plannerInvites("is refused for an address that belongs to a foreign account", () => foreignId, {
+    status: 409,
+    check: isError("account_exists"),
+    describe: "the error account_exists",
+  }),
+  serviceRoleReadsEmployee("the employee with the foreign account stays without a link", () => foreignId, {
+    check: (rows) => rows.length === 1 && rows[0].user_id === null && rows[0].invited_at === null,
+    describe: "one row without a user_id and without an invited_at",
+  }),
+  [
+    "service role: the foreign account keeps its missing role",
+    async () => supabaseResult(await adminRequest("GET", `users/${foreignAccount.id}`)),
+    {
+      status: 200,
+      check: (user) => user.id === foreignAccount.id && user.app_metadata.role === undefined,
+      describe: "the account without a role in app_metadata",
+    },
+  ],
+  plannerInvites("is refused for an employee without an e-mail", () => noEmailId, {
+    status: 422,
+    check: isError("no_email"),
+    describe: "the error no_email",
+  }),
+  plannerInvites("answers 404 for an unknown id", () => unknownEmployeeId, {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  plannerInvites("answers 404 for an id that is not a UUID", () => "not-a-uuid", {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  [
+    `${planner.label}: PUT /api/employees/<id> with a changed e-mail of an invited employee`,
+    () =>
+      request(planner, `/api/employees/${inviteeId}`, {
+        method: "PUT",
+        json: { ...inviteeInput, email: `smoke-inv-${runId}-changed@example.com` },
+      }),
+    {
+      status: 422,
+      contentType: "application/json",
+      check: (body) => body.errors.email === emailLockedMessage,
+      describe: "errors.email, the locked-address text",
+    },
+  ],
+  [
+    `${planner.label}: PUT /api/employees/<id> with a changed first name of an invited employee`,
+    () =>
+      request(planner, `/api/employees/${inviteeId}`, {
+        method: "PUT",
+        json: { ...inviteeInput, firstName: "Józefa" },
+      }),
+    {
+      status: 200,
+      contentType: "application/json",
+      check: (body) =>
+        body.employee.firstName === "Józefa" &&
+        body.employee.email === inviteeInput.email &&
+        body.employee.userId === inviteeUserId &&
+        typeof body.employee.invitedAt === "string",
+      describe: "the renamed employee with the same e-mail, still linked and invited",
+    },
+  ],
+  [
+    `${planner.label}: PUT /api/employees/<id> with a new e-mail of an employee without an account`,
+    () =>
+      request(planner, `/api/employees/${noEmailId}`, {
+        method: "PUT",
+        json: { ...noEmailInput, email: `smoke-inv-${runId}-late@example.com` },
+      }),
+    {
+      status: 200,
+      contentType: "application/json",
+      check: (body) =>
+        body.employee.email === `smoke-inv-${runId}-late@example.com` &&
+        body.employee.userId === null &&
+        body.employee.invitedAt === null,
+      describe: "the employee with the new e-mail and no account",
+    },
+  ],
   signOut(planner),
   visit(planner, "/dashboard", 401),
 
@@ -1194,6 +1572,12 @@ const steps = [
     () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
     { statusClass: 2 },
   ],
+  // An employee without an e-mail has no address to match the step above, so it goes by its last name.
+  [
+    "service role: delete the smoke employees without an e-mail",
+    () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=is.null&last_name=like.Smoke-*" }),
+    { statusClass: 2 },
+  ],
   [
     "service role: delete the smoke shifts",
     () => shiftsTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?name=like.Smoke-*" }),
@@ -1212,6 +1596,8 @@ for (const [name, run, expected, hint] of steps) {
     (expected.locationPrefix === undefined || actual.location.startsWith(expected.locationPrefix)) &&
     (expected.contentType === undefined || actual.contentType.startsWith(expected.contentType)) &&
     (expected.cacheControl === undefined || actual.cacheControl.includes(expected.cacheControl)) &&
+    (expected.referrerPolicy === undefined || actual.referrerPolicy === expected.referrerPolicy) &&
+    (expected.setsCookie === undefined || actual.setCookies.some((name) => name.includes(expected.setsCookie))) &&
     (expected.bodyIncludes === undefined || actual.body.includes(expected.bodyIncludes)) &&
     (expected.bodyExcludes === undefined || !actual.body.includes(expected.bodyExcludes)) &&
     (expected.json === undefined || parseJson(actual.body) === expected.json) &&
@@ -1226,6 +1612,8 @@ for (const [name, run, expected, hint] of steps) {
       expected.location ?? expected.locationPrefix ?? "",
       expected.contentType ?? "",
       expected.cacheControl === undefined ? "" : `Cache-Control: ${expected.cacheControl}`,
+      expected.referrerPolicy === undefined ? "" : `Referrer-Policy: ${expected.referrerPolicy}`,
+      expected.setsCookie === undefined ? "" : `a Set-Cookie named *${expected.setsCookie}*`,
       expected.bodyIncludes === undefined ? "" : `a body with "${expected.bodyIncludes}"`,
       expected.bodyExcludes === undefined ? "" : `a body without "${expected.bodyExcludes}"`,
       expected.json === undefined ? "" : `a JSON body of ${JSON.stringify(expected.json)}`,
