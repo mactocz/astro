@@ -376,15 +376,15 @@ S-03 (`weekly-schedule-draft`) jest planowane i może być implementowane równo
 
 #### Automated
 
-- [x] 3.1 Testy przechodzą: `npm test`
-- [x] 3.2 Linting przechodzi, w tym reguła ograniczająca import modułu admina: `npm run lint`
-- [x] 3.3 Sprawdzanie typów przechodzi: `npx astro check`
-- [x] 3.4 Build przechodzi: `npm run build`
-- [x] 3.5 Smoke z krokami zaproszenia i ustawiania hasła przechodzi lokalnie (jak w Fazie 2, z `.dev.vars` zawierającym klucz lokalnego stosu): `npm run smoke`
+- [x] 3.1 Testy przechodzą: `npm test` — b7af208
+- [x] 3.2 Linting przechodzi, w tym reguła ograniczająca import modułu admina: `npm run lint` — b7af208
+- [x] 3.3 Sprawdzanie typów przechodzi: `npx astro check` — b7af208
+- [x] 3.4 Build przechodzi: `npm run build` — b7af208
+- [x] 3.5 Smoke z krokami zaproszenia i ustawiania hasła przechodzi lokalnie (jak w Fazie 2, z `.dev.vars` zawierającym klucz lokalnego stosu): `npm run smoke` — b7af208
 
 #### Manual
 
-- [x] 3.6 Wyniki sprawdzeń założeń Supabase zostały zapisane w uwagach implementacji (przyjęcie `otp_expiry = 604800`, ponowne `inviteUserByEmail` dla niepotwierdzonego użytkownika, pole potwierdzenia konta, `generateLink` typu `invite`) i nie wymagają zmiany planu; w razie rozbieżności decyzja wraca do autora
+- [x] 3.6 Wyniki sprawdzeń założeń Supabase zostały zapisane w uwagach implementacji (przyjęcie `otp_expiry = 604800`, ponowne `inviteUserByEmail` dla niepotwierdzonego użytkownika, pole potwierdzenia konta, `generateLink` typu `invite`) i nie wymagają zmiany planu; w razie rozbieżności decyzja wraca do autora — b7af208
 
 ### Phase 4: UI i dokumentacja
 
