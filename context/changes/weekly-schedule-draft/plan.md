@@ -352,7 +352,7 @@ S-10 (`employee-invitation`) jest planowane i może być implementowane równole
 
 - [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — e7a1ee3
 - [x] 4.2 Smoke z krokami stron przechodzi lokalnie: `npm run smoke` — e7a1ee3
-- [ ] 4.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
+- [x] 4.3 CI na pull requeście jest zielone (job `ci` i job `smoke`) — 77b007c
 
 #### Manual
 
