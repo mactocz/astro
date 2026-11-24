@@ -401,13 +401,13 @@ Stan na 2026-11-24: PR #9 (pin CLI) i #8 (S-03) są scalone do `master` merge co
 
 #### Automated
 
-- [x] 1.1 Testy reguł przypisań i polityki dostępu przechodzą w workerd: `npm test`
-- [x] 1.2 Linting przechodzi: `npm run lint`
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy reguł przypisań i polityki dostępu przechodzą w workerd: `npm test` — 83dbe2f
+- [x] 1.2 Linting przechodzi: `npm run lint` — 83dbe2f
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 83dbe2f
 
 #### Manual
 
-- [x] 1.4 Komunikaty błędów po polsku oraz reguły podsumowania obsady (brak, komplet, nadmiar) z testów zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Komunikaty błędów po polsku oraz reguły podsumowania obsady (brak, komplet, nadmiar) z testów zostały przejrzane i zatwierdzone przez autora — 83dbe2f
 
 ### Phase 2: Baza: tabela przypisań i różnicowy zapis
 
