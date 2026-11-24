@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-11-05
+updated: 2026-11-06
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -45,14 +45,14 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | done |
 | S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | done |
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | done |
-| S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | proposed |
+| S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | in-progress |
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | proposed |
 | S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | proposed |
 | S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | proposed |
 | S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | proposed |
 | S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | proposed |
 | S-09 | schedule-generation         | wygenerować propozycję grafiku bez nadpisywania wpisów ręcznych   | S-05, S-07, F-02 | FR-009, FR-011, US-01                         | proposed |
-| S-10 | employee-invitation         | zaprosić pracownika e-mailem; pracownik ustawia hasło z linku     | F-01, S-01    | FR-001, FR-002                                   | proposed |
+| S-10 | employee-invitation         | zaprosić pracownika e-mailem; pracownik ustawia hasło z linku     | F-01, S-01    | FR-001, FR-002                                   | planning |
 | S-11 | employee-own-schedule       | (pracownik) zalogować się i zobaczyć własne zmiany na telefonie   | S-10, S-08    | FR-014                                           | proposed |
 | S-12 | schedule-new-version        | utworzyć nową wersję zatwierdzonego grafiku                       | S-08, S-11    | FR-021                                           | proposed |
 | S-13 | employee-absence-report     | zgłosić nieobecność inną niż urlop; widoczność wzajemna           | S-07, S-11    | FR-004, FR-005, FR-014                           | proposed |
@@ -150,7 +150,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Blockers:** —
 - **Unknowns:** —
 - **Risk:** Model okresu tygodniowego i obsady jest podstawą wszystkich reguł; generowanie celowo wydzielone (S-09), żeby ten wycinek nie rozrósł się o algorytm. Decyzja D6 (`work-time-rules.md`, 2026-10-16): grafik tygodniowy zostaje, a UI i dokumentacja informują, że nie zastępuje formalnego rozkładu czasu pracy (art. 129 § 3: co najmniej miesiąc, przekazany z tygodniowym wyprzedzeniem). Brak blokowania i usuwania pracowników w S-01 (FR-015 zaparkowane) oznacza, że pracownik, który odszedł, zostaje na liście wyboru; wycinek musi to znieść albo FR-015 trzeba wtedy odparkować.
-- **Status:** proposed
+- **Status:** in-progress
 
 ### S-04: Ręczne obsadzanie zmian
 
@@ -242,7 +242,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Unknowns:**
   - Czy ponowne zaproszenie po wygaśnięciu unieważnia poprzedni link? — Owner: user. Block: no.
 - **Risk:** Zależność od zewnętrznej poczty; do tego momentu rdzeń reguł rozwija się bez niej, dlatego wycinek jest równoległy do strumienia planisty.
-- **Status:** proposed
+- **Status:** planning
 
 ### S-11: Własny grafik pracownika
 

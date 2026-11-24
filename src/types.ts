@@ -37,3 +37,61 @@ export interface Shift extends ShiftInput {
 
 export type ShiftField = "name" | "startTime" | "endTime";
 export type ShiftFieldErrors = Partial<Record<ShiftField, string>>;
+
+/** The number of people a shift needs on one day of the schedule; a day without a shift has no cell at all. */
+export interface StaffingCell {
+  /** The id of a shift from the shift dictionary. */
+  shiftId: string;
+  /** Days after the start date, 0 to 6. */
+  dayOffset: number;
+  /** Whole people, 1 to 99. */
+  requiredCount: number;
+}
+
+/** A weekly schedule draft: seven days from `startDate`, the staffing grid and the employees it covers (by id). */
+export interface ScheduleInput {
+  /** The first day as `YYYY-MM-DD`. */
+  startDate: string;
+  label: string | null;
+  staffing: StaffingCell[];
+  employeeIds: string[];
+}
+
+export interface Schedule extends ScheduleInput {
+  id: string;
+  /** ISO timestamp set by the database. */
+  createdAt: string;
+}
+
+/** One row of the schedule list. */
+export interface ScheduleSummary {
+  id: string;
+  startDate: string;
+  label: string | null;
+  /** ISO timestamp set by the database. */
+  createdAt: string;
+  employeeCount: number;
+  /** The sum of the required counts over the whole grid. */
+  totalRequired: number;
+}
+
+export type ScheduleField = "startDate" | "label" | "staffing" | "employeeIds";
+export type ScheduleFieldErrors = Partial<Record<ScheduleField, string>>;
+
+/** A shift as the schedule form offers it: only what the form shows, with the times already formatted. */
+export interface ShiftOption {
+  id: string;
+  name: string;
+  /** Start and end, e.g. "22:00–06:00". */
+  times: string;
+  endsNextDay: boolean;
+  /** Length of the shift, e.g. "8 h". */
+  duration: string;
+}
+
+/** An employee as the schedule form offers them: the id and the name to show, never the e-mail address or the FTE. */
+export interface EmployeeOption {
+  id: string;
+  /** "Last name First name", the order of the employee list. */
+  name: string;
+}

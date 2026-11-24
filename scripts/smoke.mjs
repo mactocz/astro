@@ -1,10 +1,12 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
-// that the database role helpers read the role from the token, that only planners can read and write the employees
-// and shifts tables through PostgREST, that the employee and shift API routes keep to the role gate, the validation and
-// their status codes, that the employee and shift pages open for the planner only, and that public registration stays
-// closed. Zero dependencies on purpose. It creates real accounts and removes its own employee and shift rows with the
-// service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
-// (.env / .dev.vars). Values come from `supabase status -o env`.
+// that the database role helpers read the role from the token, that only planners can read and write the employees,
+// shifts and schedules tables through PostgREST and save a schedule atomically through the save_schedule function, that
+// the employee, shift and schedule API routes keep to the role gate, the validation and their status codes, that the
+// employee, shift and schedule pages open for the planner only (the schedule list and form show what the database holds),
+// and that public registration stays closed. Zero dependencies on
+// purpose. It creates real accounts and removes its own employee, shift and schedule rows with the service-role key, so
+// it only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars). Values
+// come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -141,9 +143,9 @@ async function accessToken(actor) {
   return actor.token;
 }
 
-// Calls a database function through PostgREST. Without a token only the anon key is sent, like a client that never
-// signed in.
-async function rpc(name, token) {
+// Calls a database function through PostgREST; `args` is the object of named arguments (none for the role helpers).
+// Without a token only the anon key is sent, like a client that never signed in.
+async function rpc(name, token, args = {}) {
   const response = await fetch(`${supabaseOrigin}/rest/v1/rpc/${name}`, {
     method: "POST",
     headers: {
@@ -151,7 +153,7 @@ async function rpc(name, token) {
       Authorization: `Bearer ${token ?? SUPABASE_KEY}`,
       "Content-Type": "application/json",
     },
-    body: "{}",
+    body: JSON.stringify(args),
   });
   return supabaseResult(response);
 }
@@ -178,6 +180,18 @@ function employeesTable(method, options) {
 
 function shiftsTable(method, options) {
   return restTable("shifts", method, options);
+}
+
+function schedulesTable(method, options) {
+  return restTable("schedules", method, options);
+}
+
+function scheduleStaffingTable(method, options) {
+  return restTable("schedule_staffing", method, options);
+}
+
+function scheduleEmployeesTable(method, options) {
+  return restTable("schedule_employees", method, options);
 }
 
 // Every signed-in user may edit their own user_metadata, so Supabase is expected to accept this; the role must still
@@ -412,6 +426,8 @@ const unknownEmployeeId = "00000000-0000-4000-8000-000000000000";
 const unknownEmployeeUrl = `/api/employees/${unknownEmployeeId}`;
 const emailTakenMessage = "Ten adres e-mail jest już przypisany do innego pracownika.";
 let apiEmployeeId;
+// The id of the second employee, which the schedules API steps put next to the first one.
+let secondApiEmployeeId;
 
 // The form page of the employee the planner creates. Its address needs the id, which only exists once the create step
 // has run, so it is built when the step runs.
@@ -466,6 +482,8 @@ const apiShiftUrl = () => `/api/shifts/${apiShiftId}`;
 const unknownShiftId = "00000000-0000-4000-8000-000000000000";
 const unknownShiftUrl = `/api/shifts/${unknownShiftId}`;
 let apiShiftId;
+// The id of the second shift, which the schedules API steps put next to the first one.
+let secondApiShiftId;
 
 // The form page of the shift the planner creates. Its address needs the id, which only exists once the create step has
 // run, so it is built when the step runs.
@@ -506,6 +524,456 @@ const plannerPutsShift = (name, path, expected, json = changedApiShift) => [
   { contentType: "application/json", ...expected },
 ];
 
+// The schedules steps share one schedule, saved through the save_schedule function. Its label starts with "Smoke-"
+// because the final cleanup step deletes by that prefix. The shifts and people it refers to are rows created earlier in
+// this run (the two shifts and the employee of the database steps, the employee of the API steps), so their ids are
+// only known once those steps have run, and every state below is a function. The schedule is created as
+// `createdSchedule` (3 cells of 2 shifts, 2 people) and then replaced with `replacedSchedule`: another start date and
+// label, one cell gone (first shift, day 1), one cell with another count (second shift, day 0), one cell new (second
+// shift, day 6) and one person gone. `trimmedSchedule` is that state after the planner deletes the new cell directly.
+const smokeScheduleLabel = `Smoke-${runId}-schedule`;
+const unknownScheduleId = "00000000-0000-4000-8000-000000000000";
+let smokeScheduleId;
+const smokeScheduleRow = () => `?id=eq.${smokeScheduleId}`;
+const smokeScheduleChildren = () => `?schedule_id=eq.${smokeScheduleId}`;
+
+const createdSchedule = () => ({
+  startDate: "2026-11-11",
+  label: smokeScheduleLabel,
+  staffing: [
+    { shiftId: smokeShiftId, dayOffset: 0, requiredCount: 2 },
+    { shiftId: smokeShiftId, dayOffset: 1, requiredCount: 3 },
+    { shiftId: sameNameShiftId, dayOffset: 0, requiredCount: 1 },
+  ],
+  employeeIds: [smokeEmployeeId, apiEmployeeId],
+});
+const replacedSchedule = () => ({
+  startDate: "2026-11-15",
+  label: `Smoke-${runId}-replaced`,
+  staffing: [
+    { shiftId: smokeShiftId, dayOffset: 0, requiredCount: 2 },
+    { shiftId: sameNameShiftId, dayOffset: 0, requiredCount: 4 },
+    { shiftId: sameNameShiftId, dayOffset: 6, requiredCount: 5 },
+  ],
+  employeeIds: [smokeEmployeeId],
+});
+const trimmedSchedule = () => ({
+  ...replacedSchedule(),
+  staffing: replacedSchedule().staffing.filter((cell) => !(cell.shiftId === sameNameShiftId && cell.dayOffset === 6)),
+});
+
+// Saves that must fail as a whole, each with a different broken cell: a required count of 0, a shift that does not
+// exist, and a required count of 0 in a replacement of the existing schedule (whose new date and label must not stick).
+const zeroCountSchedule = () => ({
+  ...createdSchedule(),
+  label: `Smoke-${runId}-atomic-count`,
+  staffing: [{ shiftId: smokeShiftId, dayOffset: 0, requiredCount: 0 }],
+});
+const unknownShiftSchedule = () => ({
+  ...createdSchedule(),
+  label: `Smoke-${runId}-atomic-shift`,
+  staffing: [{ shiftId: unknownShiftId, dayOffset: 0, requiredCount: 1 }],
+});
+const failedReplacement = () => ({
+  ...replacedSchedule(),
+  startDate: "2026-12-02",
+  label: `Smoke-${runId}-replace-fail`,
+  staffing: [{ shiftId: smokeShiftId, dayOffset: 3, requiredCount: 0 }],
+  employeeIds: [smokeEmployeeId, apiEmployeeId],
+});
+
+// The named arguments of save_schedule for a state; an `id` of null creates a schedule, any other replaces that one.
+const saveScheduleArgs = (state, id = null) => ({
+  p_schedule_id: id,
+  p_start_date: state.startDate,
+  p_label: state.label,
+  p_staffing: state.staffing,
+  p_employee_ids: state.employeeIds,
+});
+
+// `check` predicates for the three tables, each given the state the schedule should be in and, as a function, the id of
+// the schedule (the smoke schedule unless another one is named). The cells and the people come back in no promised
+// order, so they are compared as sorted lists; a row from the database carries a timestamp, so the header is compared
+// column by column.
+const isUuidText = (value) =>
+  typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+const sameItems = (actual, expected) => JSON.stringify([...actual].sort()) === JSON.stringify([...expected].sort());
+const cellKey = (shiftId, dayOffset, requiredCount) => `${shiftId}/${dayOffset}/${requiredCount}`;
+const isScheduleHeader =
+  (state, id = () => smokeScheduleId) =>
+  (rows) =>
+    Array.isArray(rows) &&
+    rows.length === 1 &&
+    rows[0].id === id() &&
+    typeof rows[0].created_at === "string" &&
+    rows[0].start_date === state().startDate &&
+    rows[0].label === state().label;
+const isScheduleCells =
+  (state, id = () => smokeScheduleId) =>
+  (rows) =>
+    Array.isArray(rows) &&
+    rows.every((row) => row.schedule_id === id()) &&
+    sameItems(
+      rows.map((row) => cellKey(row.shift_id, row.day_offset, row.required_count)),
+      state().staffing.map((cell) => cellKey(cell.shiftId, cell.dayOffset, cell.requiredCount)),
+    );
+const isSchedulePeople =
+  (state, id = () => smokeScheduleId) =>
+  (rows) =>
+    Array.isArray(rows) &&
+    rows.every((row) => row.schedule_id === id()) &&
+    sameItems(
+      rows.map((row) => row.employee_id),
+      state().employeeIds,
+    );
+
+// Reads the header, the cells and the people of a schedule back in three steps and compares each with `state`. The
+// schedule is the smoke schedule unless `id` (a function, like `state`) names another one.
+const plannerReadsSchedule = (name, state, what, id = () => smokeScheduleId) => [
+  [
+    `${planner.label}: schedules read ${name}`,
+    async () => schedulesTable("GET", { token: await accessToken(planner), query: `?id=eq.${id()}` }),
+    { status: 200, check: isScheduleHeader(state, id), describe: `the header of ${what}` },
+  ],
+  [
+    `${planner.label}: schedule_staffing read ${name}`,
+    async () => scheduleStaffingTable("GET", { token: await accessToken(planner), query: `?schedule_id=eq.${id()}` }),
+    { status: 200, check: isScheduleCells(state, id), describe: `exactly the cells of ${what}` },
+  ],
+  [
+    `${planner.label}: schedule_employees read ${name}`,
+    async () => scheduleEmployeesTable("GET", { token: await accessToken(planner), query: `?schedule_id=eq.${id()}` }),
+    { status: 200, check: isSchedulePeople(state, id), describe: `exactly the people of ${what}` },
+  ],
+];
+
+// A save that must be rejected; the error names the broken constraint, so a rejection for any other reason does not
+// pass. `id` is a function because the id of the smoke schedule is only known once the create step has run.
+const plannerRejectsSave = (description, state, constraint, id = () => null) => [
+  `${planner.label}: rpc save_schedule ${description} is rejected`,
+  async () => rpc("save_schedule", await accessToken(planner), saveScheduleArgs(state(), id())),
+  { statusNotClass: 2, check: violates(constraint), describe: `an error naming ${constraint}` },
+];
+
+// Each rejected insert breaks exactly one boundary, so the constraint named in the error is the proof of why. `body` is
+// a function for the same reason as `id` above.
+const scheduleTables = {
+  schedules: schedulesTable,
+  schedule_staffing: scheduleStaffingTable,
+  schedule_employees: scheduleEmployeesTable,
+};
+const plannerRejectsScheduleRow = (table, description, body, constraint) => [
+  `${planner.label}: ${table} insert ${description} is rejected`,
+  async () => scheduleTables[table]("POST", { token: await accessToken(planner), body: body() }),
+  { statusNotClass: 2, check: violates(constraint), describe: `an error naming ${constraint}` },
+];
+
+// A signed-in account without planner rights: the tables look empty, a save and the inserts are refused, and updates and
+// deletes of the child rows are refused or hidden. The planner's reads afterwards are the proof that nothing changed,
+// whatever status PostgREST used to answer. The children have no id column, hence select=schedule_id.
+const notPlannerScheduleSteps = (actor) => [
+  [
+    `${actor.label}: schedules read returns an empty list`,
+    async () => schedulesTable("GET", { token: await accessToken(actor), query: "?select=id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: schedule_staffing read returns an empty list`,
+    async () => scheduleStaffingTable("GET", { token: await accessToken(actor), query: "?select=schedule_id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: schedule_employees read returns an empty list`,
+    async () => scheduleEmployeesTable("GET", { token: await accessToken(actor), query: "?select=schedule_id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: rpc save_schedule creating a schedule is rejected`,
+    async () =>
+      rpc(
+        "save_schedule",
+        await accessToken(actor),
+        saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-${actor.label}-rpc-create` }),
+      ),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: rpc save_schedule replacing the schedule is rejected`,
+    async () =>
+      rpc(
+        "save_schedule",
+        await accessToken(actor),
+        saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-${actor.label}-rpc-replace` }, smokeScheduleId),
+      ),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedules insert is rejected`,
+    async () =>
+      schedulesTable("POST", {
+        token: await accessToken(actor),
+        body: { start_date: "2026-11-11", label: `Smoke-${runId}-${actor.label}-insert` },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedule_staffing insert is rejected`,
+    async () =>
+      scheduleStaffingTable("POST", {
+        token: await accessToken(actor),
+        body: { schedule_id: smokeScheduleId, shift_id: sameNameShiftId, day_offset: 3, required_count: 1 },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedule_employees insert is rejected`,
+    async () =>
+      scheduleEmployeesTable("POST", {
+        token: await accessToken(actor),
+        body: { schedule_id: smokeScheduleId, employee_id: apiEmployeeId },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedules update is refused or hidden`,
+    async () =>
+      schedulesTable("PATCH", {
+        token: await accessToken(actor),
+        query: smokeScheduleRow(),
+        body: { start_date: "2026-12-01" },
+      }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: schedules delete is rejected`,
+    async () => schedulesTable("DELETE", { token: await accessToken(actor), query: smokeScheduleRow() }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedule_staffing delete is refused or hidden`,
+    async () => scheduleStaffingTable("DELETE", { token: await accessToken(actor), query: smokeScheduleChildren() }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: schedule_employees delete is refused or hidden`,
+    async () => scheduleEmployeesTable("DELETE", { token: await accessToken(actor), query: smokeScheduleChildren() }),
+    { statusNotClass: 5 },
+  ],
+  ...plannerReadsSchedule(
+    `is unchanged after ${actor.label} write attempts`,
+    replacedSchedule,
+    "the replaced schedule, unchanged",
+  ),
+];
+
+// The schedules API steps share one schedule, created through the app by the planner and then replaced. Its label starts
+// with "Smoke-" because the final cleanup step deletes by that prefix, and so do the labels of the bodies that must be
+// refused: a refused save that left a row behind would show up in the last read of the API steps. It refers to the two
+// shifts and the two employees of the API steps (their ids are only known once those steps have run, so every state is
+// a function). `apiSchedule` is created (3 cells of 2 shifts, 2 people) and then replaced with `changedApiSchedule`:
+// another start date, one cell with another count (first shift, day 0), one cell gone (first shift, day 6) and one cell
+// new (second shift, day 4); the people stay.
+const apiScheduleLabel = `Smoke-${runId}-api`;
+let apiScheduleId;
+const apiScheduleUrl = () => `/api/schedules/${apiScheduleId}`;
+const unknownScheduleUrl = `/api/schedules/${unknownScheduleId}`;
+
+const apiSchedule = () => ({
+  startDate: "2026-11-11",
+  label: apiScheduleLabel,
+  staffing: [
+    { shiftId: apiShiftId, dayOffset: 0, requiredCount: 2 },
+    { shiftId: apiShiftId, dayOffset: 6, requiredCount: 3 },
+    { shiftId: secondApiShiftId, dayOffset: 3, requiredCount: 1 },
+  ],
+  employeeIds: [apiEmployeeId, secondApiEmployeeId],
+});
+const changedApiSchedule = () => ({
+  startDate: "2026-11-15",
+  label: apiScheduleLabel,
+  staffing: [
+    { shiftId: apiShiftId, dayOffset: 0, requiredCount: 5 },
+    { shiftId: secondApiShiftId, dayOffset: 3, requiredCount: 1 },
+    { shiftId: secondApiShiftId, dayOffset: 4, requiredCount: 2 },
+  ],
+  employeeIds: [apiEmployeeId, secondApiEmployeeId],
+});
+
+// Bodies the routes must refuse. The first one is wrong in four fields at once (a date that does not exist, a label of 61
+// characters, no cells, no people), the second only in one (a cell for the same shift and day twice, the rest is valid).
+// The other three are well-formed, so they pass the validation and the database refuses them: a shift or a person that
+// does not exist, once in a new schedule and once in a replacement of the existing one, whose new date and label must
+// not stick.
+const invalidApiSchedule = () => ({ startDate: "2026-02-30", label: "x".repeat(61), staffing: [], employeeIds: [] });
+const repeatedCellApiSchedule = () => ({
+  ...apiSchedule(),
+  label: `${apiScheduleLabel}-repeated`,
+  staffing: [
+    { shiftId: apiShiftId, dayOffset: 2, requiredCount: 1 },
+    { shiftId: apiShiftId, dayOffset: 2, requiredCount: 2 },
+  ],
+});
+const unknownShiftApiSchedule = () => ({
+  ...apiSchedule(),
+  label: `${apiScheduleLabel}-unknown-shift`,
+  staffing: [{ shiftId: unknownShiftId, dayOffset: 0, requiredCount: 1 }],
+});
+const unknownEmployeeApiSchedule = () => ({
+  ...apiSchedule(),
+  label: `${apiScheduleLabel}-unknown-employee`,
+  employeeIds: [unknownEmployeeId],
+});
+const failedApiReplacement = () => ({
+  ...changedApiSchedule(),
+  startDate: "2026-12-02",
+  label: `${apiScheduleLabel}-replace-fail`,
+  staffing: [{ shiftId: unknownShiftId, dayOffset: 0, requiredCount: 1 }],
+});
+
+// What the actors without planner rights send: a well-formed body that names a shift and a person that do not exist, so
+// that nothing could be stored even if the gate let it through (the route would answer 422 instead of 401 or 403).
+const deniedApiSchedule = {
+  startDate: "2026-11-11",
+  label: `Smoke-${runId}-denied`,
+  staffing: [{ shiftId: unknownShiftId, dayOffset: 0, requiredCount: 1 }],
+  employeeIds: [unknownEmployeeId],
+};
+
+// The routes answer with the id of the saved schedule and nothing else.
+const isApiScheduleSaved = (body) => isUuidText(body.id) && body.id === apiScheduleId && Object.keys(body).length === 1;
+const duplicateCellMessage = "Ta sama zmiana nie może mieć dwóch wpisów obsady na ten sam dzień.";
+// The 422 body names exactly these fields, each with a message.
+const hasErrorsOnFields =
+  (...fields) =>
+  (body) =>
+    sameItems(Object.keys(body.errors), fields) && fields.every((field) => typeof body.errors[field] === "string");
+const hasRepeatedCellError = (body) =>
+  hasErrorsOnFields("staffing")(body) && body.errors.staffing === duplicateCellMessage;
+const isUnknownReference = (body) => body.error === "unknown_reference";
+// The schedules whose label starts like the API steps' labels: only the one saved through the API, no leftover of a
+// refused save.
+const isOnlyApiSchedule = (rows) => Array.isArray(rows) && rows.length === 1 && rows[0].id === apiScheduleId;
+
+// `body` is a function that returns the `json`, `form` or `jsonText` option of the request, because the ids in it are
+// only known once earlier steps have run.
+const plannerPostsSchedule = (name, body, expected) => [
+  `${planner.label}: POST /api/schedules ${name}`,
+  () => request(planner, "/api/schedules", { method: "POST", ...body() }),
+  { contentType: "application/json", ...expected },
+];
+const plannerPutsSchedule = (name, path, expected, json = changedApiSchedule) => [
+  `${planner.label}: PUT ${name}`,
+  () => request(planner, path(), { method: "PUT", json: json() }),
+  { contentType: "application/json", ...expected },
+];
+
+// The schedule pages show the schedule saved through the API, in the state `changedApiSchedule` left it in. The HTML of a
+// page is checked as text: the list through the cells of its table row, the form pages through the <input> tags of the
+// island, which the server renders with the state it received (React writes the value and checked attributes into the
+// markup). So these steps are the proof that listSchedules and getSchedule hand the pages the right data.
+const notFoundScheduleMessage = "Nie znaleziono grafiku";
+// formatPeriod("2026-11-15"): the en dash (U+2013) and the year once.
+const apiSchedulePeriod = "15.11–21.11.2026";
+// Two pieces of the notice of decision D6, which every schedule page carries; the rest of the sentence may be reworded.
+const d6Fragments = ["To szkic grafiku tygodniowego", "art. 129 § 3 Kodeksu pracy"];
+const hasD6Notice = (html) => d6Fragments.every((fragment) => html.includes(fragment));
+
+// The attributes of every <input> tag of a page, one object each. React escapes quotes and angle brackets inside
+// attribute values, so a tag ends at the first ">"; a boolean attribute such as checked has the value "".
+const inputsOf = (html) =>
+  [...html.matchAll(/<input\b([^>]*)>/g)].map(([, attributes]) =>
+    Object.fromEntries(
+      [...attributes.matchAll(/([^\s="'>]+)(?:="([^"]*)")?/g)].map(([, name, value]) => [name, value ?? ""]),
+    ),
+  );
+const isGridCell = (input) => typeof input.id === "string" && input.id.startsWith("cell-");
+const employeeBoxes = (inputs) => inputs.filter((input) => input.name === "employeeIds");
+const isTicked = (box) => "checked" in box;
+
+// The first table row (the chunk of the page that ends at a </tr>) that holds `text`, and the text of its cells.
+const tableRowWith = (html, text) => html.split("</tr>").find((chunk) => chunk.includes(text));
+const cellsOf = (row) =>
+  [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(([, cell]) => cell.replace(/<[^>]*>/g, "").trim());
+
+// The list row of the schedule: the period, the label, the number of people (2), the sum of the grid (5 + 1 + 2), the day
+// of creation and the edit link, whose aria-label names the period and the label.
+const listsApiSchedule = (html) => {
+  const row = tableRowWith(html, apiScheduleLabel);
+  if (row === undefined) return false;
+  const state = changedApiSchedule();
+  const cells = cellsOf(row);
+  return (
+    cells.length === 6 &&
+    cells[0] === apiSchedulePeriod &&
+    cells[1] === apiScheduleLabel &&
+    cells[2] === String(state.employeeIds.length) &&
+    cells[3] === String(state.staffing.reduce((sum, cell) => sum + cell.requiredCount, 0)) &&
+    /^\d{2}\.\d{2}\.\d{4}$/.test(cells[4]) &&
+    cells[5] === "Edytuj" &&
+    row.includes(`href="/schedules/${apiScheduleId}"`) &&
+    row.includes(`aria-label="Edytuj: ${apiSchedulePeriod}, ${apiScheduleLabel}"`)
+  );
+};
+
+// The form of the stored schedule: the date, the label, the seven columns of the replaced start date (a Sunday), exactly
+// the two rows of its shifts with the count of every cell (empty where there is none), and ticked exactly its two people.
+const editsApiSchedule = (html) => {
+  const inputs = inputsOf(html);
+  const state = changedApiSchedule();
+  const inputById = (id) => inputs.find((input) => input.id === id);
+  const countAt = (shiftId, dayOffset) =>
+    state.staffing.find((cell) => cell.shiftId === shiftId && cell.dayOffset === dayOffset)?.requiredCount;
+  const cellsMatch = [apiShiftId, secondApiShiftId].every((shiftId) =>
+    [0, 1, 2, 3, 4, 5, 6].every((dayOffset) => {
+      const cell = inputById(`cell-${shiftId}-${dayOffset}`);
+      return cell !== undefined && (cell.value ?? "") === String(countAt(shiftId, dayOffset) ?? "");
+    }),
+  );
+  const boxes = employeeBoxes(inputs);
+  return (
+    inputById("startDate")?.value === state.startDate &&
+    inputById("label")?.value === apiScheduleLabel &&
+    html.includes(`Okres: ${apiSchedulePeriod}, 7 dni`) &&
+    html.includes("niedz. 15.11") &&
+    html.includes("sob. 21.11") &&
+    cellsMatch &&
+    inputs.filter(isGridCell).length === 14 &&
+    state.employeeIds.every((id) => boxes.some((box) => box.value === id)) &&
+    boxes.every((box) => isTicked(box) === state.employeeIds.includes(box.value))
+  );
+};
+
+// The form of a new schedule: a date input with the range of the schedule rules, every employee ticked (the two of the API
+// steps among them) and no grid row yet.
+const offersNewSchedule = (html) => {
+  const inputs = inputsOf(html);
+  const date = inputs.find((input) => input.id === "startDate");
+  const boxes = employeeBoxes(inputs);
+  return (
+    date?.type === "date" &&
+    date.min === "2020-01-01" &&
+    date.max === "2099-12-31" &&
+    [apiEmployeeId, secondApiEmployeeId].every((id) => boxes.some((box) => box.value === id)) &&
+    boxes.every(isTicked) &&
+    !inputs.some(isGridCell)
+  );
+};
+
+// A page step whose HTML must be accepted by `bodyCheck`, a predicate on the text of the page (the `check` of the other
+// steps gets the parsed JSON); `describe` says what the page should show.
+const visitChecked = (actor, path, status, bodyCheck, describe, cacheControl) => [
+  `${actor.label}: GET ${path} shows ${describe}`,
+  () => request(actor, path),
+  { status, bodyCheck, describe, cacheControl },
+];
+// The form page of the schedule saved through the API; its address needs the id, which only exists once the create step
+// has run, so it is built when the step runs.
+const visitApiSchedulePage = (actor, status, expected) => [
+  `${actor.label}: GET /schedules/<id>${expected.describe ? ` shows ${expected.describe}` : ""}`,
+  () => request(actor, `/schedules/${apiScheduleId}`),
+  { status, ...expected },
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -515,6 +983,8 @@ const steps = [
   visit(anonymous, "/employees/new", 401),
   visit(anonymous, "/shifts", 401),
   visit(anonymous, "/shifts/new", 401),
+  visit(anonymous, "/schedules", 401),
+  visit(anonymous, "/schedules/new", 401),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
@@ -530,6 +1000,16 @@ const steps = [
     () => request(anonymous, "/api/shifts", { method: "POST", json: apiShift }),
     { status: 401, contentType: "application/json" },
   ],
+  [
+    `${anonymous.label}: POST /api/schedules`,
+    () => request(anonymous, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
+    { status: 401, contentType: "application/json" },
+  ],
+  [
+    `${anonymous.label}: PUT /api/schedules/<id>`,
+    () => request(anonymous, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
+    { status: 401, contentType: "application/json" },
+  ],
 
   // Registration is closed, in the app and in Supabase itself.
   [
@@ -543,6 +1023,18 @@ const steps = [
   signIn(noRole, "aplikacja pod testem nie używa SUPABASE_URL (sprawdź .env i .dev.vars)"),
   visit(noRole, "/dashboard", 403),
   visit(noRole, "/planner", 403),
+  visit(noRole, "/schedules", 403),
+  visit(noRole, "/schedules/new", 403),
+  [
+    `${noRole.label}: POST /api/schedules`,
+    () => request(noRole, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${noRole.label}: PUT /api/schedules/<id>`,
+    () => request(noRole, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
+    { status: 403, contentType: "application/json" },
+  ],
   signOut(noRole),
   visit(noRole, "/dashboard", 401),
 
@@ -570,6 +1062,9 @@ const steps = [
   visit(employee, "/shifts", 403),
   visit(employee, "/shifts/new", 403),
   visit(employee, `/shifts/${unknownShiftId}`, 403),
+  visit(employee, "/schedules", 403),
+  visit(employee, "/schedules/new", 403),
+  visit(employee, `/schedules/${unknownScheduleId}`, 403),
   [
     `${employee.label}: POST /api/employees`,
     () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
@@ -590,6 +1085,16 @@ const steps = [
     () => request(employee, unknownShiftUrl, { method: "PUT", json: apiShift }),
     { status: 403, contentType: "application/json" },
   ],
+  [
+    `${employee.label}: POST /api/schedules`,
+    () => request(employee, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
+    { status: 403, contentType: "application/json" },
+  ],
+  [
+    `${employee.label}: PUT /api/schedules/<id>`,
+    () => request(employee, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
+    { status: 403, contentType: "application/json" },
+  ],
   signOut(employee),
   visit(employee, "/dashboard", 401),
 
@@ -599,6 +1104,8 @@ const steps = [
   visit(planner, "/dashboard", 200),
   visit(planner, "/planner", 200, "Pracownicy"),
   visit(planner, "/planner", 200, "Zmiany"),
+  visit(planner, "/planner", 200, "Grafiki"),
+  visit(planner, "/planner", 200, 'href="/schedules"'),
   visit(planner, "/planner/", 200),
   [
     `${planner.label}: POST /api/employees creates an employee`,
@@ -669,7 +1176,11 @@ const steps = [
   }),
   [
     `${planner.label}: POST /api/employees creates a second employee`,
-    () => request(planner, "/api/employees", { method: "POST", json: secondApiEmployee }),
+    async () => {
+      const result = await request(planner, "/api/employees", { method: "POST", json: secondApiEmployee });
+      secondApiEmployeeId = parseJson(result.body)?.employee?.id;
+      return result;
+    },
     {
       status: 201,
       contentType: "application/json",
@@ -708,7 +1219,11 @@ const steps = [
   ],
   [
     `${planner.label}: POST /api/shifts with the same name creates a second shift`,
-    () => request(planner, "/api/shifts", { method: "POST", json: secondApiShift }),
+    async () => {
+      const result = await request(planner, "/api/shifts", { method: "POST", json: secondApiShift });
+      secondApiShiftId = parseJson(result.body)?.shift?.id;
+      return result;
+    },
     {
       status: 201,
       contentType: "application/json",
@@ -773,6 +1288,112 @@ const steps = [
     check: isNotFound,
     describe: "the error not_found",
   }),
+  // The schedules API: a schedule is created and replaced through the app, the database shows exactly what was sent, and
+  // every refused request leaves nothing behind. The schedule refers to the two shifts and the two employees above.
+  [
+    `${planner.label}: POST /api/schedules creates a schedule`,
+    async () => {
+      const result = await request(planner, "/api/schedules", { method: "POST", json: apiSchedule() });
+      apiScheduleId = parseJson(result.body)?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: isApiScheduleSaved,
+      describe: "the id of the new schedule and nothing else",
+    },
+  ],
+  ...plannerReadsSchedule(
+    "shows the schedule created through the API",
+    apiSchedule,
+    "the schedule created through the API (3 cells, 2 people)",
+    () => apiScheduleId,
+  ),
+  plannerPutsSchedule("/api/schedules/<id> changes the date and the staffing", apiScheduleUrl, {
+    status: 200,
+    cacheControl: "no-store",
+    check: isApiScheduleSaved,
+    describe: "the id of the same schedule and nothing else",
+  }),
+  ...plannerReadsSchedule(
+    "shows exactly the schedule replaced through the API",
+    changedApiSchedule,
+    "the replaced schedule (another date, a cell changed, removed and added, the same 2 people)",
+    () => apiScheduleId,
+  ),
+  plannerPostsSchedule(
+    "with a date that does not exist, a label of 61 characters, no cells and no people",
+    () => ({ json: invalidApiSchedule() }),
+    {
+      status: 422,
+      check: hasErrorsOnFields("startDate", "label", "staffing", "employeeIds"),
+      describe: "errors for exactly the startDate, label, staffing and employeeIds fields",
+    },
+  ),
+  plannerPostsSchedule("with a cell repeated for the same shift and day", () => ({ json: repeatedCellApiSchedule() }), {
+    status: 422,
+    check: hasRepeatedCellError,
+    describe: "an error for exactly the staffing field, the repeated-cell text",
+  }),
+  plannerPostsSchedule("with a shift that does not exist", () => ({ json: unknownShiftApiSchedule() }), {
+    status: 422,
+    check: isUnknownReference,
+    describe: "the error unknown_reference",
+  }),
+  plannerPostsSchedule("with an employee that does not exist", () => ({ json: unknownEmployeeApiSchedule() }), {
+    status: 422,
+    check: isUnknownReference,
+    describe: "the error unknown_reference",
+  }),
+  plannerPostsSchedule("with a form body", () => ({ form: apiSchedule() }), { status: 415 }),
+  plannerPostsSchedule("with a body that is not JSON", () => ({ jsonText: "{" }), {
+    status: 400,
+    check: isInvalidJson,
+    describe: "the error invalid_json",
+  }),
+  plannerPutsSchedule(
+    "/api/schedules/<id> with a date that does not exist, a label of 61 characters, no cells and no people",
+    apiScheduleUrl,
+    {
+      status: 422,
+      check: hasErrorsOnFields("startDate", "label", "staffing", "employeeIds"),
+      describe: "errors for exactly the startDate, label, staffing and employeeIds fields",
+    },
+    invalidApiSchedule,
+  ),
+  plannerPutsSchedule(
+    "/api/schedules/<id> with a shift that does not exist",
+    apiScheduleUrl,
+    {
+      status: 422,
+      check: isUnknownReference,
+      describe: "the error unknown_reference",
+    },
+    failedApiReplacement,
+  ),
+  plannerPutsSchedule("/api/schedules/<unknown UUID>", () => unknownScheduleUrl, {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  plannerPutsSchedule("/api/schedules/not-a-uuid", () => "/api/schedules/not-a-uuid", {
+    status: 404,
+    check: isNotFound,
+    describe: "the error not_found",
+  }),
+  ...plannerReadsSchedule(
+    "is unchanged after the refused requests",
+    changedApiSchedule,
+    "the replaced schedule, unchanged",
+    () => apiScheduleId,
+  ),
+  [
+    `${planner.label}: schedules read finds only the schedule of the API steps`,
+    async () => schedulesTable("GET", { token: await accessToken(planner), query: `?label=like.${apiScheduleLabel}*` }),
+    { status: 200, check: isOnlyApiSchedule, describe: "only the schedule saved through the API" },
+  ],
   // The pages with names and e-mail addresses must not be cached.
   visit(planner, "/employees", 200, apiEmployee.lastName, "no-store"),
   visit(planner, "/employees/new", 200, undefined, "no-store"),
@@ -785,6 +1406,37 @@ const steps = [
   visitApiShiftPage(planner, 200, apiShiftName),
   visit(planner, `/shifts/${unknownShiftId}`, 404, notFoundShiftMessage),
   visit(planner, "/shifts/not-a-uuid", 404, notFoundShiftMessage),
+  // The schedule pages: the list shows the schedule saved through the API above with its period, people and total, the form
+  // page shows its cells and people, and every one of them carries the D6 notice and is not cached.
+  visit(planner, "/schedules", 200, 'href="/schedules/new"', "no-store"),
+  visitChecked(
+    planner,
+    "/schedules",
+    200,
+    listsApiSchedule,
+    "the API schedule: period 15.11-21.11.2026, label, 2 people, total 8, a creation date and the edit link",
+    "no-store",
+  ),
+  visitChecked(planner, "/schedules", 200, hasD6Notice, "the D6 notice", "no-store"),
+  visit(planner, "/schedules/new", 200, "Nowy grafik", "no-store"),
+  visitChecked(planner, "/schedules/new", 200, hasD6Notice, "the D6 notice", "no-store"),
+  visitChecked(
+    planner,
+    "/schedules/new",
+    200,
+    offersNewSchedule,
+    "a date input from 2020-01-01 to 2099-12-31, every employee ticked and no grid row",
+    "no-store",
+  ),
+  visitApiSchedulePage(planner, 200, { bodyIncludes: apiScheduleLabel, cacheControl: "no-store" }),
+  visitApiSchedulePage(planner, 200, { bodyCheck: hasD6Notice, describe: "the D6 notice", cacheControl: "no-store" }),
+  visitApiSchedulePage(planner, 200, {
+    bodyCheck: editsApiSchedule,
+    describe: "the date, label, cells and people of the API schedule as the form state",
+    cacheControl: "no-store",
+  }),
+  visit(planner, `/schedules/${unknownScheduleId}`, 404, notFoundScheduleMessage),
+  visit(planner, "/schedules/not-a-uuid", 404, notFoundScheduleMessage),
   signOut(planner),
   visit(planner, "/dashboard", 401),
 
@@ -932,6 +1584,190 @@ const steps = [
   ...notPlannerShiftSteps(noRole),
   [`${anonymous.label}: shifts read is rejected`, () => shiftsTable("GET"), { statusNotClass: 2 }],
 
+  // Schedules tables and the save_schedule function: only the planner reads and saves, a save is atomic, the constraints
+  // and foreign keys hold even for the planner, and nobody deletes a schedule. These steps send bearer tokens straight
+  // to PostgREST, without the app. They use the shifts and employees of the steps above, so they come after them.
+  [
+    `${planner.label}: rpc save_schedule creates a schedule`,
+    async () => {
+      const result = await rpc("save_schedule", await accessToken(planner), saveScheduleArgs(createdSchedule()));
+      smokeScheduleId = parseJson(result.body);
+      return result;
+    },
+    { status: 200, check: isUuidText, describe: "the id of the new schedule" },
+  ],
+  ...plannerReadsSchedule("shows the created schedule", createdSchedule, "the created schedule (3 cells, 2 people)"),
+  [
+    `${planner.label}: rpc save_schedule replaces the schedule`,
+    async () => rpc("save_schedule", await accessToken(planner), saveScheduleArgs(replacedSchedule(), smokeScheduleId)),
+    { status: 200, check: (id) => id === smokeScheduleId, describe: "the id of the same schedule" },
+  ],
+  ...plannerReadsSchedule(
+    "shows exactly the replaced schedule",
+    replacedSchedule,
+    "the replaced schedule (another date, a cell removed, changed and added, 1 person)",
+  ),
+  plannerRejectsSave("with a required count of 0", zeroCountSchedule, "schedule_staffing_required_count_valid"),
+  plannerRejectsSave("with a shift that does not exist", unknownShiftSchedule, "schedule_staffing_shift_id_fkey"),
+  [
+    `${planner.label}: schedules read finds no schedule left by the rejected saves`,
+    async () =>
+      schedulesTable("GET", { token: await accessToken(planner), query: `?label=like.Smoke-${runId}-atomic*` }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  plannerRejectsSave(
+    "replacing the schedule with a required count of 0",
+    failedReplacement,
+    "schedule_staffing_required_count_valid",
+    () => smokeScheduleId,
+  ),
+  ...plannerReadsSchedule(
+    "is unchanged after the rejected replacement",
+    replacedSchedule,
+    "the replaced schedule, unchanged",
+  ),
+  [
+    `${planner.label}: rpc save_schedule with an unknown schedule id returns 404`,
+    async () =>
+      rpc("save_schedule", await accessToken(planner), saveScheduleArgs(createdSchedule(), unknownScheduleId)),
+    { status: 404, check: (error) => error.code === "PT404", describe: "an error with the code PT404" },
+  ],
+  plannerRejectsScheduleRow(
+    "schedules",
+    "with a start date of 2019-12-31",
+    () => ({ start_date: "2019-12-31", label: `Smoke-${runId}-date` }),
+    "schedules_start_date_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedules",
+    "with an empty label",
+    () => ({ start_date: "2026-11-11", label: "" }),
+    "schedules_label_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedules",
+    "with a leading space in the label",
+    () => ({ start_date: "2026-11-11", label: ` Smoke-${runId}-space` }),
+    "schedules_label_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_staffing",
+    "with a day offset of 7",
+    () => ({ schedule_id: smokeScheduleId, shift_id: smokeShiftId, day_offset: 7, required_count: 1 }),
+    "schedule_staffing_day_offset_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_staffing",
+    "with a required count of 100",
+    () => ({ schedule_id: smokeScheduleId, shift_id: smokeShiftId, day_offset: 2, required_count: 100 }),
+    "schedule_staffing_required_count_valid",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_staffing",
+    "with a repeated primary key",
+    () => ({ schedule_id: smokeScheduleId, shift_id: smokeShiftId, day_offset: 0, required_count: 1 }),
+    "schedule_staffing_pkey",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_employees",
+    "with a repeated primary key",
+    () => ({ schedule_id: smokeScheduleId, employee_id: smokeEmployeeId }),
+    "schedule_employees_pkey",
+  ),
+  [
+    `${planner.label}: schedules delete is rejected`,
+    async () => schedulesTable("DELETE", { token: await accessToken(planner), query: smokeScheduleRow() }),
+    { statusNotClass: 2 },
+  ],
+  ...plannerReadsSchedule(
+    "still exists after the delete attempt",
+    replacedSchedule,
+    "the replaced schedule, unchanged",
+  ),
+  // Anonymous: no table, no function. The planner's reads after the signed-in accounts below cover these attempts too.
+  [`${anonymous.label}: schedules read is rejected`, () => schedulesTable("GET"), { statusNotClass: 2 }],
+  [`${anonymous.label}: schedule_staffing read is rejected`, () => scheduleStaffingTable("GET"), { statusNotClass: 2 }],
+  [
+    `${anonymous.label}: schedule_employees read is rejected`,
+    () => scheduleEmployeesTable("GET"),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedules insert is rejected`,
+    () => schedulesTable("POST", { body: { start_date: "2026-11-11", label: `Smoke-${runId}-anonymous-insert` } }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedule_staffing insert is rejected`,
+    () =>
+      scheduleStaffingTable("POST", {
+        body: { schedule_id: smokeScheduleId, shift_id: sameNameShiftId, day_offset: 3, required_count: 1 },
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedule_employees insert is rejected`,
+    () => scheduleEmployeesTable("POST", { body: { schedule_id: smokeScheduleId, employee_id: apiEmployeeId } }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: rpc save_schedule is rejected`,
+    () =>
+      rpc(
+        "save_schedule",
+        undefined,
+        saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-anonymous-rpc` }),
+      ),
+    { statusNotClass: 2 },
+  ],
+  ...notPlannerScheduleSteps(employee),
+  ...notPlannerScheduleSteps(noRole),
+  // The child rows are the one thing a planner may delete directly; a single cell goes, the rest stays.
+  [
+    `${planner.label}: schedule_staffing delete removes one cell`,
+    async () =>
+      scheduleStaffingTable("DELETE", {
+        token: await accessToken(planner),
+        query: `${smokeScheduleChildren()}&shift_id=eq.${sameNameShiftId}&day_offset=eq.6`,
+      }),
+    { statusClass: 2 },
+  ],
+  ...plannerReadsSchedule(
+    "shows the schedule without the deleted cell",
+    trimmedSchedule,
+    "the replaced schedule without the cell of the second shift on day 6",
+  ),
+  // The foreign keys are on delete restrict: no shift or employee that a schedule uses can be removed, not even with the
+  // service-role key. The planner's reads show that the rows are still there.
+  [
+    "service role: delete of a shift used by a schedule is rejected",
+    () => shiftsTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: smokeShiftRow() }),
+    {
+      statusNotClass: 2,
+      check: violates("schedule_staffing_shift_id_fkey"),
+      describe: "an error naming schedule_staffing_shift_id_fkey",
+    },
+  ],
+  plannerReadsShifts(
+    "shifts rows still exist after the service role delete attempt",
+    patchedShift,
+    "both smoke shifts, the first one ending at minute 420",
+  ),
+  [
+    "service role: delete of an employee used by a schedule is rejected",
+    () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: smokeRow() }),
+    {
+      statusNotClass: 2,
+      check: violates("schedule_employees_employee_id_fkey"),
+      describe: "an error naming schedule_employees_employee_id_fkey",
+    },
+  ],
+  plannerReadsEmployee(
+    "employees row still exists after the service role delete attempt",
+    patchedFte,
+    "the smoke employee with FTE 3/4",
+  ),
+
   // A forged role: editing user_metadata succeeds, and still grants nothing in the database or in the app.
   [
     `${employee.label}: Supabase accepts a user_metadata role edit`,
@@ -946,7 +1782,13 @@ const steps = [
 
   // Always last: removes every row this and earlier runs left behind (the tables have no delete grant for the API, so
   // only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they were
-  // before.
+  // before. The schedules go first: their foreign keys to shifts and employees are on delete restrict, and deleting a
+  // schedule cascades to its cells and people.
+  [
+    "service role: delete the smoke schedules",
+    () => schedulesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?label=like.Smoke-*" }),
+    { statusClass: 2 },
+  ],
   [
     "service role: delete the smoke employees",
     () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
@@ -973,7 +1815,8 @@ for (const [name, run, expected, hint] of steps) {
     (expected.bodyIncludes === undefined || actual.body.includes(expected.bodyIncludes)) &&
     (expected.bodyExcludes === undefined || !actual.body.includes(expected.bodyExcludes)) &&
     (expected.json === undefined || parseJson(actual.body) === expected.json) &&
-    (expected.check === undefined || passes(expected.check, parseJson(actual.body)));
+    (expected.check === undefined || passes(expected.check, parseJson(actual.body))) &&
+    (expected.bodyCheck === undefined || passes(expected.bodyCheck, actual.body));
   const seen = [actual.status, actual.location, expected.contentType === undefined ? "" : actual.contentType];
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}  -> ${seen.join(" ").trim()}`);
   if (!ok) {
@@ -988,6 +1831,7 @@ for (const [name, run, expected, hint] of steps) {
       expected.bodyExcludes === undefined ? "" : `a body without "${expected.bodyExcludes}"`,
       expected.json === undefined ? "" : `a JSON body of ${JSON.stringify(expected.json)}`,
       expected.check === undefined ? "" : `a JSON body: ${expected.describe ?? "accepted by its check"}`,
+      expected.bodyCheck === undefined ? "" : `a page that shows ${expected.describe ?? "what its check accepts"}`,
     ];
     console.log(`      expected ${wanted.filter(Boolean).join(" ")}`);
     if (expected.json !== undefined || expected.check !== undefined) console.log(`      got ${actual.body}`);

@@ -1,0 +1,84 @@
+---
+import PlannerLayout from "@/layouts/PlannerLayout.astro";
+import ScheduleForm from "@/components/schedules/ScheduleForm";
+import ScheduleNotice from "@/components/schedules/ScheduleNotice.astro";
+import { listEmployees } from "@/lib/employees";
+import { toEmployeeOptions, toShiftOptions } from "@/lib/schedule-options";
+import { getSchedule } from "@/lib/schedules";
+import { listShifts } from "@/lib/shifts";
+import type { EmployeeOption, ShiftOption } from "@/types";
+
+const { supabase } = Astro.locals;
+if (!supabase) {
+  // The access gate lets nobody through without a configured client, so this is a misconfiguration.
+  throw new Error("The Supabase client is missing; check SUPABASE_URL and SUPABASE_KEY.");
+}
+
+// getSchedule answers null for an id that is not a UUID, without querying the database.
+const { id } = Astro.params;
+const schedule = id === undefined ? null : await getSchedule(supabase, id);
+
+let shiftOptions: ShiftOption[] = [];
+let employeeOptions: EmployeeOption[] = [];
+if (schedule) {
+  // The form offers the whole dictionary and the whole roster, so a shift or a person can be added to the schedule.
+  const [shifts, employees] = await Promise.all([listShifts(supabase), listEmployees(supabase)]);
+  shiftOptions = toShiftOptions(shifts);
+  employeeOptions = toEmployeeOptions(employees);
+} else {
+  // The project has no 404 page, so a missing schedule gets its own message with this status.
+  Astro.response.status = 404;
+}
+
+// The form lists the names of the employees: no cache may keep this page.
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<PlannerLayout title={schedule ? "Edytuj grafik" : "Nie znaleziono grafiku"}>
+  {schedule ? (
+    <>
+      <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+        Edytuj grafik
+      </h1>
+
+      <ScheduleNotice />
+
+      {shiftOptions.length > 0 && employeeOptions.length > 0 ? (
+        <div class="rounded-2xl border border-white/10 bg-white/10 p-6 backdrop-blur-xl sm:p-8">
+          <ScheduleForm schedule={schedule} shifts={shiftOptions} employees={employeeOptions} client:load />
+        </div>
+      ) : (
+        <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
+          <p class="text-blue-100/80">
+            Żeby edytować grafik, potrzebujesz co najmniej jednej zmiany i jednego pracownika.
+          </p>
+          <ul class="mt-4 space-y-2">
+            {shiftOptions.length === 0 && (
+              <li>
+                <a href="/shifts/new" class="text-purple-300 hover:underline">
+                  Dodaj zmianę
+                </a>
+              </li>
+            )}
+            {employeeOptions.length === 0 && (
+              <li>
+                <a href="/employees/new" class="text-purple-300 hover:underline">
+                  Dodaj pracownika
+                </a>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+    </>
+  ) : (
+    <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
+      <h1 class="mb-4 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+        Nie znaleziono grafiku
+      </h1>
+      <a href="/schedules" class="text-purple-300 hover:underline">
+        Wróć do listy grafików
+      </a>
+    </div>
+  )}
+</PlannerLayout>
