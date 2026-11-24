@@ -7,7 +7,9 @@
 // constraints and only a planner reads and changes it, that the function mark_account_active records the activation of
 // the caller's own row only (an account without a role, an anonymous caller and another employee change nothing, the
 // first activation stays), that the employee, shift and schedule API routes keep to the role gate, the validation and
-// their status codes, that the employee, shift and schedule pages open for the planner only (the schedule list and form
+// their status codes (the routes that add and remove one assignment of a schedule are idempotent, and the save of a
+// schedule answers 409 with the number of assignments it would remove until the body confirms the removal), that the
+// employee, shift and schedule pages open for the planner only (the schedule list and form
 // show what the database holds), that the invitation mails link to the set-password page, the whole invitation flow
 // (invite, invite again, password reset, a foreign account, the tokens from the admin API instead of the mails, the
 // new employee's session, the activation time that the first password set records and a reset keeps, and the locked
@@ -1351,6 +1353,179 @@ const visitApiSchedulePage = (actor, status, expected) => [
   { status, ...expected },
 ];
 
+// The assignment routes (POST and DELETE /api/schedules/<id>/assignments) are tried on a schedule of their own, created
+// through the app, so that the schedule above stays in the states its steps expect. Its label starts with "Smoke-" because
+// the final cleanup step deletes by that prefix (its assignments go with it by cascade), and it must not start with the
+// label of the schedule above: the read after the refused requests and the list page find that one by its prefix. It has
+// three cells (A and B are the first API shift on days 0 and 1, C is the second one on day 0) and two people in the
+// roster, the two API employees: the second one holds an assignment only in the block of steps that try DELETE (which
+// needs a neighbour of another person in the same cell), every other step works with the first one. No employee of this
+// run is left to be outside the roster (the employee of the database steps does not exist yet), so the steps for a person
+// outside the roster name the id that no employee has: it breaks the same foreign key, the one to the roster. The saves
+// that drop cells A and B, which then hold assignments, are refused (409) until the body confirms them with
+// `confirmRemoval: true`. Every state is a function, because the ids in it are only known once earlier steps have run.
+const routeScheduleLabel = `Smoke-${runId}-route-assign`;
+let routeScheduleId;
+const routeAssignmentsUrl = () => `/api/schedules/${routeScheduleId}/assignments`;
+const routeScheduleUrl = () => `/api/schedules/${routeScheduleId}`;
+const routeScheduleChildren = () => `?schedule_id=eq.${routeScheduleId}`;
+const unknownAssignmentsUrl = `/api/schedules/${unknownScheduleId}/assignments`;
+const malformedAssignmentsUrl = "/api/schedules/not-a-uuid/assignments";
+
+const routeCellAt = (cell) => ({ A: [apiShiftId, 0], B: [apiShiftId, 1], C: [secondApiShiftId, 0] })[cell];
+// `counts` maps a cell name to its required count.
+const routeState = (suffix, counts) => ({
+  startDate: "2026-11-11",
+  label: `${routeScheduleLabel}${suffix}`,
+  staffing: Object.entries(counts).map(([cell, requiredCount]) => {
+    const [shiftId, dayOffset] = routeCellAt(cell);
+    return { shiftId, dayOffset, requiredCount };
+  }),
+  employeeIds: [apiEmployeeId, secondApiEmployeeId],
+});
+const routeSchedule = () => routeState("", { A: 2, B: 1, C: 1 });
+// What a save sends that drops cells A and B: once with a label that must not stick (the save is refused) and once to
+// stay (the save is confirmed).
+const refusedRouteSchedule = () => routeState("-refused", { C: 1 });
+const trimmedRouteSchedule = () => routeState("-trimmed", { C: 1 });
+
+// The body of the assignment routes for a cell; the person is the one of the roster unless another is named.
+const routeAssignment = (cell, employeeId = apiEmployeeId) => {
+  const [shiftId, dayOffset] = routeCellAt(cell);
+  return { shiftId, dayOffset, employeeId };
+};
+// The assignments the table should hold: those of the named cells, for the person of the roster. The witness is the one
+// the refused requests must leave alone.
+const routeAssignmentsOf =
+  (...cells) =>
+  () =>
+    cells.map((cell) => routeAssignment(cell));
+const routeWitness = routeAssignmentsOf("C");
+// The same for assignments named one by one, as [cell, who] pairs: "first" is the person of the roster that
+// `routeAssignment` names by default, "second" the other one (see the steps that try DELETE).
+const routePersonOf = (who) => (who === "second" ? secondApiEmployeeId : apiEmployeeId);
+const routeAssignmentsAmong =
+  (...named) =>
+  () =>
+    named.map(([cell, who]) => routeAssignment(cell, routePersonOf(who)));
+
+// A body that the gate must turn away before the route sees it. The cell and the person do not exist, so nothing could be
+// stored even if the gate let it through (the route would answer 422 instead of 401 or 403).
+const deniedAssignment = { shiftId: unknownShiftId, dayOffset: 0, employeeId: unknownEmployeeId };
+// POST and DELETE of an actor without planner rights; `reason` is what the gate says (the 401 and the 403 differ in it).
+const deniedAssignmentCalls = (actor, status, reason) =>
+  ["POST", "DELETE"].map((method) => [
+    `${actor.label}: ${method} /api/schedules/<id>/assignments`,
+    () => request(actor, unknownAssignmentsUrl, { method, json: deniedAssignment }),
+    {
+      status,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: isError(reason),
+      describe: `the error ${reason}`,
+    },
+  ]);
+
+// Both routes answer a successful write with exactly { ok: true }.
+const isAssignmentWritten = (body) => body.ok === true && Object.keys(body).length === 1;
+const wasWritten = { status: 200, check: isAssignmentWritten, describe: "ok: true and nothing else" };
+const isUnsupportedMediaType = (body) => body.error === "unsupported_media_type";
+// The route does not take the confirmation of the save for one unless it is exactly true; the 409 says how many
+// assignments it would have removed.
+const wouldRemoveAssignments = (count) => (body) =>
+  body.error === "assignments_would_be_removed" && body.removed === count && Object.keys(body).length === 2;
+const isRouteScheduleSaved = (body) =>
+  isUuidText(body.id) && body.id === routeScheduleId && Object.keys(body).length === 1;
+
+// `check` predicate for the assignments of the route schedule: exactly the expected ones (a function that lists them),
+// each with the source the column defaults to; the rows come back in no promised order.
+const isRouteAssignments = (expected) => (rows) =>
+  Array.isArray(rows) &&
+  rows.every((row) => row.schedule_id === routeScheduleId && row.source === "manual") &&
+  sameItems(
+    rows.map((row) => assignmentKey(row.shift_id, row.day_offset, row.employee_id)),
+    expected().map((assignment) => assignmentKey(assignment.shiftId, assignment.dayOffset, assignment.employeeId)),
+  );
+
+const plannerReadsRouteAssignments = (name, expected, what) => [
+  `${planner.label}: schedule_assignments of the route schedule read ${name}`,
+  async () => assignmentsTable("GET", { token: await accessToken(planner), query: routeScheduleChildren() }),
+  {
+    status: 200,
+    check: isRouteAssignments(expected),
+    describe: `exactly the assignments of ${what}, all with source manual`,
+  },
+];
+// The header, the cells, the people and the assignments of the route schedule, read back in four steps.
+const plannerReadsRouteSchedule = (name, state, expected, what) => [
+  ...plannerReadsSchedule(name, state, what, () => routeScheduleId),
+  plannerReadsRouteAssignments(name, expected, what),
+];
+
+// A call of the assignment routes by the planner. `url` is a function and `body` returns the `json`, `form` or `jsonText`
+// option of the request, because the ids in them are only known once earlier steps have run.
+const plannerCallsAssignments = (method, name, url, body, expected) => [
+  `${planner.label}: ${method} /api/schedules/<id>/assignments ${name}`,
+  () => request(planner, url(), { method, ...body() }),
+  { contentType: "application/json", cacheControl: "no-store", ...expected },
+];
+// The same, followed by a read that shows that the table still holds the witness and nothing else, so a refused POST
+// added nothing and a DELETE that found nothing took nothing away.
+const plannerTriesAssignmentCall = (method, name, url, body, expected) => [
+  plannerCallsAssignments(method, name, url, body, expected),
+  plannerReadsRouteAssignments(`is unchanged after ${method} ${name}`, routeWitness, "the witness alone"),
+];
+// A DELETE by the planner followed by a read of the whole table, which must then hold exactly `expected` (`what` says
+// what that is): the assignment the body names is gone, or was never there, and nothing else has gone with it. `url` and
+// `assignment` are functions, like `url` and `body` above; `assignment` returns the body itself.
+const plannerDeletesRouteAssignment = (name, url, assignment, expected, what) => [
+  plannerCallsAssignments("DELETE", name, url, () => ({ json: assignment() }), wasWritten),
+  plannerReadsRouteAssignments(`holds what is left after DELETE ${name}`, expected, what),
+];
+// What both methods must refuse in the same way, before the cell or the person is looked at.
+const refusedRouteCalls = (method) => [
+  ...plannerTriesAssignmentCall(
+    method,
+    "with a bad shift id, a day offset of 7 and a bad employee id",
+    routeAssignmentsUrl,
+    () => ({ json: { shiftId: "not-a-uuid", dayOffset: 7, employeeId: "nope" } }),
+    {
+      status: 422,
+      check: hasErrorsOnFields("shiftId", "dayOffset", "employeeId"),
+      describe: "errors for exactly the shiftId, dayOffset and employeeId fields",
+    },
+  ),
+  ...plannerTriesAssignmentCall(
+    method,
+    "with a form body",
+    routeAssignmentsUrl,
+    () => ({ form: routeAssignment("A") }),
+    {
+      status: 415,
+      check: isUnsupportedMediaType,
+      describe: "the error unsupported_media_type",
+    },
+  ),
+  ...plannerTriesAssignmentCall(
+    method,
+    "with a body that is not JSON",
+    routeAssignmentsUrl,
+    () => ({ jsonText: "{" }),
+    {
+      status: 400,
+      check: isInvalidJson,
+      describe: "the error invalid_json",
+    },
+  ),
+  ...plannerTriesAssignmentCall(
+    method,
+    "on an id that is not a UUID",
+    () => malformedAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    { status: 404, check: isNotFound, describe: "the error not_found" },
+  ),
+];
+
 // The invitation steps share three employees the planner creates through the app: one that gets invited, one without an
 // e-mail, and one whose address belongs to the account without a role (foreignAccount). Their e-mails start with
 // "smoke-inv-", like every account the final cleanup removes; the one without an address is removed by its last name.
@@ -1576,6 +1751,7 @@ const steps = [
     () => request(anonymous, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
     { status: 401, contentType: "application/json" },
   ],
+  ...deniedAssignmentCalls(anonymous, 401, "unauthenticated"),
   [
     `${anonymous.label}: PUT /api/schedules/<id>`,
     () => request(anonymous, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -1606,6 +1782,7 @@ const steps = [
     () => request(noRole, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
     { status: 403, contentType: "application/json" },
   ],
+  ...deniedAssignmentCalls(noRole, 403, "forbidden"),
   [
     `${noRole.label}: PUT /api/schedules/<id>`,
     () => request(noRole, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -1676,6 +1853,7 @@ const steps = [
     () => request(employee, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
     { status: 403, contentType: "application/json" },
   ],
+  ...deniedAssignmentCalls(employee, 403, "forbidden"),
   [
     `${employee.label}: PUT /api/schedules/<id>`,
     () => request(employee, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -1969,6 +2147,266 @@ const steps = [
     check: isNotFound,
     describe: "the error not_found",
   }),
+  // The assignment routes, on a schedule of their own (see routeSchedule). An assignment is added and removed by one
+  // request each, and both are idempotent: adding what is there and removing what is gone answer 200 and change nothing.
+  [
+    `${planner.label}: POST /api/schedules creates the schedule for the assignment routes`,
+    async () => {
+      const result = await request(planner, "/api/schedules", { method: "POST", json: routeSchedule() });
+      routeScheduleId = parseJson(result.body)?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: (body) => isUuidText(body.id) && Object.keys(body).length === 1,
+      describe: "the id of the new schedule and nothing else",
+    },
+  ],
+  ...plannerReadsRouteSchedule(
+    "shows the schedule created for the assignment routes",
+    routeSchedule,
+    () => [],
+    "the route schedule (3 cells, 2 people, no assignments)",
+  ),
+  plannerCallsAssignments(
+    "POST",
+    "adds an assignment",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments("shows the assignment just added", routeAssignmentsOf("A"), "the assignment just added"),
+  plannerCallsAssignments(
+    "POST",
+    "again accepts the assignment that is there",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments(
+    "still shows one assignment after the repeated POST",
+    routeAssignmentsOf("A"),
+    "the one assignment, not repeated",
+  ),
+  plannerCallsAssignments(
+    "DELETE",
+    "removes the assignment",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments("shows no assignment after the DELETE", () => [], "none (the assignment is gone)"),
+  plannerCallsAssignments(
+    "DELETE",
+    "again accepts the removal of what is gone",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments("still shows no assignment after the repeated DELETE", () => [], "none"),
+  // From here on one assignment, in cell C, is always there: the witness that the requests below must leave alone. The
+  // block after it gives the witness neighbours and takes them away again, so that it is alone again when the block is over.
+  plannerCallsAssignments(
+    "POST",
+    "adds the witness",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("C") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments("shows the witness", routeWitness, "the witness alone"),
+  // A DELETE takes exactly the assignment its body names, by the whole key (schedule, shift, day, person), and nothing next
+  // to it. Every part of the key has a neighbour that a filter missing that part would take along: the assignment A of the
+  // first person is joined by the same person on the same day and another shift (the witness C), by the same person on the
+  // same shift and another day (B) and by another person in the same cell (A of the second person). For the schedule, the
+  // same key is sent to a schedule that does not exist while the assignment is there. Each DELETE is followed by a read of
+  // the whole table, so what is taken, and what is not, shows. A DELETE of what is already gone is tried with the
+  // neighbours there as well; the removals that follow it leave the witness alone in the table.
+  plannerCallsAssignments(
+    "POST",
+    "adds the assignment of cell A for the first person",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerCallsAssignments(
+    "POST",
+    "adds the assignment of cell A for the second person",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A", secondApiEmployeeId) }),
+    wasWritten,
+  ),
+  plannerCallsAssignments(
+    "POST",
+    "adds the assignment of cell B for the first person",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("B") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments(
+    "shows the witness with the three neighbours of cell A",
+    routeAssignmentsAmong(["A", "first"], ["A", "second"], ["B", "first"], ["C", "first"]),
+    "cells A, B and C of the first person and cell A of the second person",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "with the key of the assignment of cell A of the first person, on a schedule that does not exist",
+    () => unknownAssignmentsUrl,
+    () => routeAssignment("A"),
+    routeAssignmentsAmong(["A", "first"], ["A", "second"], ["B", "first"], ["C", "first"]),
+    "cells A, B and C of the first person and cell A of the second person (nothing is taken)",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell A of the first person takes that one only",
+    routeAssignmentsUrl,
+    () => routeAssignment("A"),
+    routeAssignmentsAmong(["A", "second"], ["B", "first"], ["C", "first"]),
+    "cell A of the second person and cells B and C of the first person (the one of cell A of the first person is gone)",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell A of the first person again finds nothing, the neighbours stay",
+    routeAssignmentsUrl,
+    () => routeAssignment("A"),
+    routeAssignmentsAmong(["A", "second"], ["B", "first"], ["C", "first"]),
+    "cell A of the second person and cells B and C of the first person (as before)",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell A of the second person takes that one only",
+    routeAssignmentsUrl,
+    () => routeAssignment("A", secondApiEmployeeId),
+    routeAssignmentsAmong(["B", "first"], ["C", "first"]),
+    "cells B and C of the first person",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell B of the first person takes that one only",
+    routeAssignmentsUrl,
+    () => routeAssignment("B"),
+    routeWitness,
+    "the witness alone",
+  ),
+  ...refusedRouteCalls("POST"),
+  ...refusedRouteCalls("DELETE"),
+  // A well-formed body that names a cell without staffing, a person outside the roster or a schedule that does not exist
+  // breaks a foreign key (422 unknown_reference when adding); a removal of such an assignment finds nothing and is a 200.
+  ...plannerTriesAssignmentCall(
+    "POST",
+    "in a cell without staffing",
+    routeAssignmentsUrl,
+    () => ({ json: { shiftId: apiShiftId, dayOffset: 3, employeeId: apiEmployeeId } }),
+    { status: 422, check: isUnknownReference, describe: "the error unknown_reference" },
+  ),
+  ...plannerTriesAssignmentCall(
+    "POST",
+    "for a person outside the roster",
+    routeAssignmentsUrl,
+    // Both API employees are in the roster by now, and no other employee exists at this point of the run: the id that no
+    // employee has breaks the same foreign key (schedule_assignments_employee_fkey, to the roster of the schedule).
+    () => ({ json: routeAssignment("A", unknownEmployeeId) }),
+    { status: 422, check: isUnknownReference, describe: "the error unknown_reference" },
+  ),
+  ...plannerTriesAssignmentCall(
+    "POST",
+    "on a schedule that does not exist",
+    () => unknownAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    { status: 422, check: isUnknownReference, describe: "the error unknown_reference" },
+  ),
+  ...plannerTriesAssignmentCall(
+    "DELETE",
+    "of an assignment in a cell without staffing finds nothing",
+    routeAssignmentsUrl,
+    () => ({ json: { shiftId: apiShiftId, dayOffset: 3, employeeId: apiEmployeeId } }),
+    wasWritten,
+  ),
+  ...plannerTriesAssignmentCall(
+    "DELETE",
+    "on a schedule that does not exist finds nothing",
+    () => unknownAssignmentsUrl,
+    // The key of the witness, which is in the table: only the schedule of the request tells it from the assignment there.
+    () => ({ json: routeAssignment("C") }),
+    wasWritten,
+  ),
+  // The save of the schedule over the routes: it refuses to drop cells A and B once they hold an assignment each, unless
+  // the body confirms it with exactly `confirmRemoval: true`. A refused save changes nothing, its label included.
+  plannerCallsAssignments(
+    "POST",
+    "adds an assignment in cell A",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerCallsAssignments(
+    "POST",
+    "adds an assignment in cell B",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("B") }),
+    wasWritten,
+  ),
+  ...plannerReadsRouteSchedule(
+    "shows the three assignments, one in each cell",
+    routeSchedule,
+    routeAssignmentsOf("A", "B", "C"),
+    "the route schedule, with an assignment in each of its three cells",
+  ),
+  plannerPutsSchedule(
+    "/api/schedules/<id> dropping two cells with assignments is refused without a confirmation",
+    routeScheduleUrl,
+    {
+      status: 409,
+      cacheControl: "no-store",
+      check: wouldRemoveAssignments(2),
+      describe: "the error assignments_would_be_removed and removed: 2, nothing else",
+    },
+    refusedRouteSchedule,
+  ),
+  ...plannerReadsRouteSchedule(
+    "is unchanged after the refused PUT",
+    routeSchedule,
+    routeAssignmentsOf("A", "B", "C"),
+    "the route schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerPutsSchedule(
+    '/api/schedules/<id> with confirmRemoval "yes" is refused like no confirmation',
+    routeScheduleUrl,
+    {
+      status: 409,
+      cacheControl: "no-store",
+      check: wouldRemoveAssignments(2),
+      describe: "the error assignments_would_be_removed and removed: 2, nothing else",
+    },
+    () => ({ ...refusedRouteSchedule(), confirmRemoval: "yes" }),
+  ),
+  ...plannerReadsRouteSchedule(
+    'is unchanged after the PUT with confirmRemoval "yes"',
+    routeSchedule,
+    routeAssignmentsOf("A", "B", "C"),
+    "the route schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerPutsSchedule(
+    "/api/schedules/<id> with confirmRemoval true drops the cells and their assignments",
+    routeScheduleUrl,
+    {
+      status: 200,
+      cacheControl: "no-store",
+      check: isRouteScheduleSaved,
+      describe: "the id of the same schedule and nothing else",
+    },
+    () => ({ ...trimmedRouteSchedule(), confirmRemoval: true }),
+  ),
+  ...plannerReadsRouteSchedule(
+    "shows the schedule without cells A and B and only the assignment of cell C",
+    trimmedRouteSchedule,
+    routeWitness,
+    "the route schedule with the single cell C, and its assignment (those of the dropped cells are gone)",
+  ),
+  // A view that was loaded before the save still offers cell A: adding there now breaks the foreign key.
+  ...plannerTriesAssignmentCall(
+    "POST",
+    "in a cell that a save has just dropped",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    { status: 422, check: isUnknownReference, describe: "the error unknown_reference" },
+  ),
   ...plannerReadsSchedule(
     "is unchanged after the refused requests",
     changedApiSchedule,

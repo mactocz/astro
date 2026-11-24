@@ -13,6 +13,9 @@ const DETAIL_SELECT =
 const NOT_FOUND = "PT404";
 // A shift or an employee that does not exist (any more) is the only foreign key a save can break.
 const FOREIGN_KEY_VIOLATION = "23503";
+// The SQLSTATE PT409 that save_schedule raises when a save would remove assignments and was not confirmed; PostgREST turns
+// it into HTTP 409 and returns the number of assignments, as text, in `details`.
+const REMOVAL_UNCONFIRMED = "PT409";
 
 interface ScheduleListRow {
   id: string;
@@ -33,7 +36,13 @@ interface ScheduleRow {
 }
 
 type SaveFailure = "not_found" | "unknown_reference" | "failed";
-export type SaveScheduleResult = { ok: true; id: string } | { ok: false; error: SaveFailure };
+// removal_unconfirmed carries the number of assignments the save would have removed, so it is a variant of its own.
+interface RemovalUnconfirmed {
+  ok: false;
+  error: "removal_unconfirmed";
+  removed: number;
+}
+export type SaveScheduleResult = { ok: true; id: string } | { ok: false; error: SaveFailure } | RemovalUnconfirmed;
 
 // Plain code-unit order, the one validateScheduleInput sorts by, so a stored schedule reads back in the same order as a
 // validated one.
@@ -75,12 +84,19 @@ function readFailure(action: string, error: PostgrestError): Error {
   return new Error(`Reading schedules failed (${action}).`);
 }
 
-function saveFailure(error: PostgrestError): { ok: false; error: SaveFailure } {
+function saveFailure(error: PostgrestError): { ok: false; error: SaveFailure } | RemovalUnconfirmed {
   if (error.code === NOT_FOUND) {
     return { ok: false, error: "not_found" };
   }
   if (error.code === FOREIGN_KEY_VIOLATION) {
     return { ok: false, error: "unknown_reference" };
+  }
+  if (error.code === REMOVAL_UNCONFIRMED) {
+    const removed = Number.parseInt(error.details, 10);
+    // A count that cannot be read cannot be shown to the planner to confirm, so it is a failure like any other.
+    if (!Number.isNaN(removed) && removed >= 1) {
+      return { ok: false, error: "removal_unconfirmed", removed };
+    }
   }
   logDatabaseError("schedules", "save", error);
   return { ok: false, error: "failed" };
@@ -115,27 +131,30 @@ export async function getSchedule(supabase: SupabaseClient, id: string): Promise
 
 /**
  * Stores a schedule (the input is already validated and normalised) in one transaction through the `save_schedule`
- * function: a new one for an `id` of null, otherwise it replaces the date, the label, the grid and the employees of that
- * schedule. `not_found` when no schedule is visible with this id (missing, or hidden by RLS); `unknown_reference` when a
- * shift or an employee of the input does not exist. Either way nothing is stored.
+ * function: a new one for an `id` of null, otherwise it changes the date and the label of that schedule and brings its
+ * grid and its employees to the input, keeping the assignments of every cell and person that stays. `not_found` when no
+ * schedule is visible with this id (missing, or hidden by RLS); `unknown_reference` when a shift or an employee of the
+ * input does not exist; `removal_unconfirmed`, with the number of assignments concerned, when the save would remove a cell
+ * or a person that has assignments and `confirmRemoval` is not true (it is meant for the second attempt, after the planner
+ * was told that number). Either way nothing is stored.
  */
 export async function saveSchedule(
   supabase: SupabaseClient,
   id: string | null,
   input: ScheduleInput,
+  confirmRemoval = false,
 ): Promise<SaveScheduleResult> {
   if (id !== null && !isUuid(id)) {
     return { ok: false, error: "not_found" };
   }
-  // The function has no default arguments, so all six are always sent, the schedule id too (null creates). The
-  // confirmation of removing assignments is always false for now.
+  // The function has no default arguments, so all six are always sent, the schedule id too (null creates).
   const response = await supabase.rpc("save_schedule", {
     p_schedule_id: id,
     p_start_date: input.startDate,
     p_label: input.label,
     p_staffing: input.staffing.map(({ shiftId, dayOffset, requiredCount }) => ({ shiftId, dayOffset, requiredCount })),
     p_employee_ids: input.employeeIds,
-    p_confirm_removals: false,
+    p_confirm_removals: confirmRemoval,
   });
   if (response.error) {
     return saveFailure(response.error);
