@@ -392,7 +392,7 @@ S-03 (`weekly-schedule-draft`) jest planowane i może być implementowane równo
 
 - [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — ab234c1
 - [x] 4.2 Smoke przechodzi lokalnie: `npm run smoke` — ab234c1
-- [ ] 4.3 CI na pull requeście jest zielone (job `ci` i job `smoke`, z kontenerem `mailpit`)
+- [x] 4.3 CI na pull requeście jest zielone (job `ci` i job `smoke`, z kontenerem `mailpit`) — 49a7cd3
 
 #### Manual
 
