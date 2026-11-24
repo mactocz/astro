@@ -17,6 +17,12 @@ export interface Employee extends EmployeeInput {
   id: string;
   /** ISO timestamp set by the database. */
   createdAt: string;
+  /** The id of the linked Auth account, or null while the employee has none. Only the invitation route writes it. */
+  readonly userId: string | null;
+  /** ISO timestamp of the latest invitation e-mail (also a password-reset link), or null. Only the invitation route writes it. */
+  readonly invitedAt: string | null;
+  /** ISO timestamp of the first password set from a link, or null while the account has not been activated. Only `mark_account_active()` writes it. */
+  readonly activatedAt: string | null;
 }
 
 export type EmployeeField = "firstName" | "lastName" | "email" | "fte";
@@ -94,4 +100,31 @@ export interface EmployeeOption {
   id: string;
   /** "Last name First name", the order of the employee list. */
   name: string;
+}
+
+/** The state of the Auth account behind an employee: no account, one that never confirmed its invitation, or an active one. */
+export type InviteAccountState = "none" | "pending" | "active";
+
+/** What the invitation route does for an account state: a first invitation, a new link, or a password-reset link. */
+export type InviteAction = "invite" | "reinvite" | "reset_password";
+
+/** What the invitation route answers on success; one value per `InviteAction`. */
+export type InviteResult = "invited" | "reinvited" | "password_reset";
+
+/**
+ * The account as the planner sees it in the employee list: none, invited (the link may still work or may have expired),
+ * or active (the employee has set a password). The timestamps are ISO strings (UTC).
+ */
+export type InviteStatus =
+  | { kind: "no_account" }
+  | { kind: "invited"; invitedAt: string; validUntil: string; expired: boolean }
+  | { kind: "active"; activatedAt: string };
+
+/** One flag per part of the password rule, true when that part is met. */
+export interface PasswordCheck {
+  minLength: boolean;
+  upper: boolean;
+  digit: boolean;
+  special: boolean;
+  maxLength: boolean;
 }

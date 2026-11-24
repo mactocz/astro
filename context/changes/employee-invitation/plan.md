@@ -352,52 +352,52 @@ S-03 (`weekly-schedule-draft`) jest planowane i może być implementowane równo
 
 #### Automated
 
-- [ ] 1.1 Testy reguł hasła i zaproszenia przechodzą w workerd: `npm test`
-- [ ] 1.2 Linting przechodzi: `npm run lint`
-- [ ] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy reguł hasła i zaproszenia przechodzą w workerd: `npm test` — f86162c
+- [x] 1.2 Linting przechodzi: `npm run lint` — f86162c
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — f86162c
 
 #### Manual
 
-- [ ] 1.4 Komunikaty hasła po polsku, format etykiet stanu zaproszenia (w tym neutralne "link wygasł") i tabela decyzji zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Komunikaty hasła po polsku, format etykiet stanu zaproszenia (w tym neutralne "link wygasł") i tabela decyzji zostały przejrzane i zatwierdzone przez autora — f86162c
 
 ### Phase 2: Konfiguracja Auth i schemat
 
 #### Automated
 
-- [ ] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Smoke z krokami bazy i szablonów przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z `supabase status -o env`): `npm run smoke`
+- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset` — 738d047
+- [x] 2.2 Linting przechodzi: `npm run lint` — 738d047
+- [x] 2.3 Smoke z krokami bazy i szablonów przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env`/`.dev.vars` wskazującymi ten sam lokalny stos, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z `supabase status -o env`): `npm run smoke` — 738d047
 
 #### Manual
 
-- [ ] 2.4 Lokalny stos startuje z `otp_expiry = 604800` i `minimum_password_length = 8`; migracja, polityki, granty kolumnowe i treść szablonów zostały przejrzane przez autora
+- [x] 2.4 Lokalny stos startuje z `otp_expiry = 604800` i `minimum_password_length = 8`; migracja, polityki, granty kolumnowe i treść szablonów zostały przejrzane przez autora — 738d047
 
 ### Phase 3: Serwer: klient admina, zaproszenie, ustawianie hasła
 
 #### Automated
 
-- [ ] 3.1 Testy przechodzą: `npm test`
-- [ ] 3.2 Linting przechodzi, w tym reguła ograniczająca import modułu admina: `npm run lint`
-- [ ] 3.3 Sprawdzanie typów przechodzi: `npx astro check`
-- [ ] 3.4 Build przechodzi: `npm run build`
-- [ ] 3.5 Smoke z krokami zaproszenia i ustawiania hasła przechodzi lokalnie (jak w Fazie 2, z `.dev.vars` zawierającym klucz lokalnego stosu): `npm run smoke`
+- [x] 3.1 Testy przechodzą: `npm test` — b7af208
+- [x] 3.2 Linting przechodzi, w tym reguła ograniczająca import modułu admina: `npm run lint` — b7af208
+- [x] 3.3 Sprawdzanie typów przechodzi: `npx astro check` — b7af208
+- [x] 3.4 Build przechodzi: `npm run build` — b7af208
+- [x] 3.5 Smoke z krokami zaproszenia i ustawiania hasła przechodzi lokalnie (jak w Fazie 2, z `.dev.vars` zawierającym klucz lokalnego stosu): `npm run smoke` — b7af208
 
 #### Manual
 
-- [ ] 3.6 Wyniki sprawdzeń założeń Supabase zostały zapisane w uwagach implementacji (przyjęcie `otp_expiry = 604800`, ponowne `inviteUserByEmail` dla niepotwierdzonego użytkownika, pole potwierdzenia konta, `generateLink` typu `invite`) i nie wymagają zmiany planu; w razie rozbieżności decyzja wraca do autora
+- [x] 3.6 Wyniki sprawdzeń założeń Supabase zostały zapisane w uwagach implementacji (przyjęcie `otp_expiry = 604800`, ponowne `inviteUserByEmail` dla niepotwierdzonego użytkownika, pole potwierdzenia konta, `generateLink` typu `invite`) i nie wymagają zmiany planu; w razie rozbieżności decyzja wraca do autora — b7af208
 
 ### Phase 4: UI i dokumentacja
 
 #### Automated
 
-- [ ] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 4.2 Smoke przechodzi lokalnie: `npm run smoke`
-- [ ] 4.3 CI na pull requeście jest zielone (job `ci` i job `smoke`, z kontenerem `mailpit`)
+- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — ab234c1
+- [x] 4.2 Smoke przechodzi lokalnie: `npm run smoke` — ab234c1
+- [x] 4.3 CI na pull requeście jest zielone (job `ci` i job `smoke`, z kontenerem `mailpit`) — 49a7cd3
 
 #### Manual
 
-- [ ] 4.4 Na lokalnym stosie z Mailpit: zaproszenie z listy, odebranie maila, link z `/auth/set-password`, ustawienie hasła z listą warunków, logowanie i `/dashboard`; ponowne zaproszenie przed ustawieniem hasła unieważnia pierwszy link; zaproszenie aktywnego konta wysyła link resetu; wygasły lub zużyty link pokazuje komunikat; szablony maili wyglądają poprawnie
-- [ ] 4.5 W przeglądarce: stan konta na liście i w edycji, przycisk (w tym nieaktywny bez e-maila), e-mail zablokowany po zaproszeniu, a11y formularza hasła i obsługa klawiaturą; na telefonie formularz hasła i lista (etykieta stanu) są czytelne
-- [ ] 4.6 Dokumentacja (CLAUDE.md, README.md, AGENTS.md, deploy-plan.md) opisuje nową zasadę klucza service-role, checklistę i bramkę SMTP spójnie z kodem
+- [x] 4.4 Na lokalnym stosie z Mailpit: zaproszenie z listy, odebranie maila, link z `/auth/set-password`, ustawienie hasła z listą warunków, logowanie i `/dashboard`; ponowne zaproszenie przed ustawieniem hasła unieważnia pierwszy link; zaproszenie aktywnego konta wysyła link resetu; wygasły lub zużyty link pokazuje komunikat; szablony maili wyglądają poprawnie — ab234c1
+- [x] 4.5 W przeglądarce: stan konta na liście i w edycji, przycisk (w tym nieaktywny bez e-maila), e-mail zablokowany po zaproszeniu, a11y formularza hasła i obsługa klawiaturą; na telefonie formularz hasła i lista (etykieta stanu) są czytelne — ab234c1
+- [x] 4.6 Dokumentacja (CLAUDE.md, README.md, AGENTS.md, deploy-plan.md) opisuje nową zasadę klucza service-role, checklistę i bramkę SMTP spójnie z kodem — ab234c1
 - [ ] 4.7 Własny nadawca SMTP jest skonfigurowany w hostowanym Supabase, a ustawienia Auth (7 dni, minimum 8, szablony, adresy) są zastosowane (bramka przed wdrożeniem na produkcję)
 - [ ] 4.8 Migracja jest zastosowana na hostowanym projekcie (`npx supabase db push`), sekret Workera ustawiony i po wdrożeniu (`npm run build` i `npx wrangler deploy`) zaproszenie prawdziwego adresu kończy się zalogowanym pracownikiem; nie uruchamiać `npm run smoke` na produkcji

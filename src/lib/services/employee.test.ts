@@ -308,7 +308,17 @@ describe("formatFteLabel", () => {
 });
 
 function employee(id: string, lastName: string, firstName: string, createdAt = "2026-01-01T10:00:00.000Z"): Employee {
-  return { id, firstName, lastName, email: null, fte: { numerator: 1, denominator: 1 }, createdAt };
+  return {
+    id,
+    firstName,
+    lastName,
+    email: null,
+    fte: { numerator: 1, denominator: 1 },
+    createdAt,
+    userId: null,
+    invitedAt: null,
+    activatedAt: null,
+  };
 }
 
 const ids = (employees: readonly Employee[]) => employees.map((entry) => entry.id);

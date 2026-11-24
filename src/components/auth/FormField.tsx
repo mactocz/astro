@@ -23,6 +23,10 @@ interface FormFieldProps {
   max?: string;
   inputMode?: InputHTMLAttributes<HTMLInputElement>["inputMode"];
   autoComplete?: InputHTMLAttributes<HTMLInputElement>["autoComplete"];
+  /** The value stays visible and is sent with the form, but cannot be edited. */
+  readOnly?: boolean;
+  /** Id of an element outside the field that describes it (a list of rules, say); it joins the error in aria-describedby. */
+  describedBy?: string;
 }
 
 export function FormField({
@@ -42,8 +46,11 @@ export function FormField({
   max,
   inputMode,
   autoComplete,
+  readOnly,
+  describedBy,
 }: FormFieldProps) {
   const errorId = `${id}-error`;
+  const describedByIds = [error ? errorId : undefined, describedBy].filter(Boolean).join(" ");
   return (
     <div>
       <label htmlFor={id} className="mb-1 block text-sm text-blue-100/80">
@@ -65,12 +72,14 @@ export function FormField({
           max={max}
           inputMode={inputMode}
           autoComplete={autoComplete}
+          readOnly={readOnly}
           aria-invalid={error ? true : undefined}
-          aria-describedby={error ? errorId : undefined}
+          aria-describedby={describedByIds || undefined}
           className={cn(
             inputBase,
             !icon && "pl-3",
             error ? "border-red-400/60 focus:ring-red-400" : "border-white/20 focus:ring-purple-400",
+            readOnly && "cursor-not-allowed bg-white/5 text-white/60",
           )}
         />
         {endContent}
