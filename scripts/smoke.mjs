@@ -2,19 +2,21 @@
 // that the database role helpers read the role from the token, that only planners can read and write the employees,
 // shifts and schedules tables through PostgREST (an employee with a linked account reads only their own employee row,
 // and no session writes the user_id, invited_at and activated_at columns), that a schedule is saved atomically through
-// the save_schedule function, that the function mark_account_active records the activation of the caller's own row only
-// (an account without a role, an anonymous caller and another employee change nothing, the first activation stays),
-// that the employee, shift and schedule API routes keep to the role gate, the validation and their status codes, that
-// the employee, shift and schedule pages open for the planner only (the schedule list and form show what the database
-// holds), that the invitation mails link to the set-password page, the whole invitation flow (invite, invite again,
-// password reset, a foreign account, the tokens from the admin API instead of the mails, the new employee's session,
-// the activation time that the first password set records and a reset keeps, and the locked e-mail), what the pages of
-// that flow show (the account column and invite button of the employee list, the locked e-mail field of the edit page,
-// the password form of the set-password page; read from the HTML the server renders), and that public registration
-// stays closed. Zero dependencies on purpose. It creates real accounts and removes its own accounts, employee, shift
-// and schedule rows with the service-role key, so it only runs against a LOCAL Supabase, and the app under test must
-// read the same stack (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from
-// there. Values come from `supabase status -o env`.
+// the save_schedule function (a save changes only the difference, so it keeps the assignments of what stays and refuses
+// to drop those of a removed cell or person without a confirmation), that an assignment keeps to its foreign keys and
+// constraints and only a planner reads and changes it, that the function mark_account_active records the activation of
+// the caller's own row only (an account without a role, an anonymous caller and another employee change nothing, the
+// first activation stays), that the employee, shift and schedule API routes keep to the role gate, the validation and
+// their status codes, that the employee, shift and schedule pages open for the planner only (the schedule list and form
+// show what the database holds), that the invitation mails link to the set-password page, the whole invitation flow
+// (invite, invite again, password reset, a foreign account, the tokens from the admin API instead of the mails, the
+// new employee's session, the activation time that the first password set records and a reset keeps, and the locked
+// e-mail), what the pages of that flow show (the account column and invite button of the employee list, the locked
+// e-mail field of the edit page, the password form of the set-password page; read from the HTML the server renders),
+// and that public registration stays closed. Zero dependencies on purpose. It creates real accounts and removes its own
+// accounts, employee, shift and schedule rows with the service-role key, so it only runs against a LOCAL Supabase, and
+// the app under test must read the same stack (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation
+// route reads it from there. Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -258,6 +260,10 @@ function scheduleStaffingTable(method, options) {
 
 function scheduleEmployeesTable(method, options) {
   return restTable("schedule_employees", method, options);
+}
+
+function assignmentsTable(method, options) {
+  return restTable("schedule_assignments", method, options);
 }
 
 // Every signed-in user may edit their own user_metadata, so Supabase is expected to accept this; the role must still
@@ -532,6 +538,10 @@ const isLinkedToNoRoleAccount = (rows) =>
 // A missing column privilege is SQLSTATE 42501 (403 for a signed-in caller). The planner passes every policy of the
 // table, so a refusal with this code can only come from the column grants.
 const isPermissionDenied = (error) => error?.code === "42501";
+// The same code for the function itself: without execute the error names the function, while a caller that may execute it
+// is stopped one step later, at the table (`permission denied for table schedules`). Only the first proves the revoke.
+const isFunctionDenied = (error) =>
+  isPermissionDenied(error) && typeof error?.message === "string" && error.message.includes("function save_schedule");
 
 const plannerReadsOwnRow = (name, changes, describe) => [
   `${planner.label}: ${name}`,
@@ -722,13 +732,16 @@ const failedReplacement = () => ({
   employeeIds: [smokeEmployeeId, apiEmployeeId],
 });
 
-// The named arguments of save_schedule for a state; an `id` of null creates a schedule, any other replaces that one.
-const saveScheduleArgs = (state, id = null) => ({
+// The named arguments of save_schedule for a state; an `id` of null creates a schedule, any other saves over that one.
+// `confirmRemovals` says whether the assignments of a removed cell or person may go with it; the function has no default
+// arguments, so all six are always sent (an explicit null is the caller's to pass).
+const saveScheduleArgs = (state, id = null, confirmRemovals = false) => ({
   p_schedule_id: id,
   p_start_date: state.startDate,
   p_label: state.label,
   p_staffing: state.staffing,
   p_employee_ids: state.employeeIds,
+  p_confirm_removals: confirmRemovals,
 });
 
 // `check` predicates for the three tables, each given the state the schedule should be in and, as a function, the id of
@@ -801,6 +814,7 @@ const scheduleTables = {
   schedules: schedulesTable,
   schedule_staffing: scheduleStaffingTable,
   schedule_employees: scheduleEmployeesTable,
+  schedule_assignments: assignmentsTable,
 };
 const plannerRejectsScheduleRow = (table, description, body, constraint) => [
   `${planner.label}: ${table} insert ${description} is rejected`,
@@ -903,6 +917,229 @@ const notPlannerScheduleSteps = (actor) => [
     `is unchanged after ${actor.label} write attempts`,
     replacedSchedule,
     "the replaced schedule, unchanged",
+  ),
+];
+
+// The assignment steps share a schedule of their own, so that they leave the one above alone. Its cells are named A to E:
+// A and B are the first shift on days 0 and 1, C, D and E the second shift on days 0, 1 and 2. It covers the two people
+// of the API steps. It is created as `createdAssignSchedule` (cells A to D, both people) and then saved over, each state
+// differing from the one before in what its step is about: another label; another count and the new cell E; the count
+// of B set directly (no save); cell A gone; one person gone. Six assignments sit on it: A and B once for each person, C
+// and D for the API employee only. Removing a cell or a person is first refused (the label of such a save must not
+// stick) and then confirmed. The label starts with "Smoke-" because the final cleanup step deletes by that prefix; the
+// assignments go with the schedule by cascade. Every state is a function, because the ids in it are only known once
+// earlier steps have run.
+const assignScheduleLabel = `Smoke-${runId}-assign`;
+let assignScheduleId;
+const assignScheduleChildren = () => `?schedule_id=eq.${assignScheduleId}`;
+
+const assignCellAt = (cell) =>
+  ({
+    A: [smokeShiftId, 0],
+    B: [smokeShiftId, 1],
+    C: [sameNameShiftId, 0],
+    D: [sameNameShiftId, 1],
+    E: [sameNameShiftId, 2],
+  })[cell];
+// `counts` maps a cell name to its required count; the people default to both of the API steps.
+const assignState = (suffix, counts, employeeIds = [smokeEmployeeId, apiEmployeeId]) => ({
+  startDate: "2026-11-11",
+  label: `${assignScheduleLabel}${suffix}`,
+  staffing: Object.entries(counts).map(([cell, requiredCount]) => {
+    const [shiftId, dayOffset] = assignCellAt(cell);
+    return { shiftId, dayOffset, requiredCount };
+  }),
+  employeeIds,
+});
+const createdAssignSchedule = () => assignState("", { A: 2, B: 3, C: 1, D: 2 });
+const renamedAssignSchedule = () => assignState("-renamed", { A: 2, B: 3, C: 1, D: 2 });
+const recountedAssignSchedule = () => assignState("-renamed", { A: 1, B: 3, C: 1, D: 2, E: 1 });
+const patchedAssignSchedule = () => assignState("-renamed", { A: 1, B: 4, C: 1, D: 2, E: 1 });
+const withoutCellAssignSchedule = () => assignState("-no-cell", { B: 4, C: 1, D: 2, E: 1 });
+const withoutPersonAssignSchedule = () => assignState("-no-person", { B: 4, C: 1, D: 2, E: 1 }, [smokeEmployeeId]);
+// Saves that the database must refuse as long as they are not confirmed. Each has a label of its own, which must not
+// stick: the header is updated before the refusal, and the refusal has to undo that.
+const refusedCellAssignSchedule = () => assignState("-refused-cell", { B: 4, C: 1, D: 2, E: 1 });
+const refusedPersonAssignSchedule = () => assignState("-refused-person", { B: 4, C: 1, D: 2, E: 1 }, [smokeEmployeeId]);
+const refusedBothAssignSchedule = () => assignState("-refused-both", { C: 1, D: 2, E: 1 }, [smokeEmployeeId]);
+// The arguments of the signature that save_schedule had before S-04, which no longer exists.
+const oldSignatureArgs = () => {
+  const args = saveScheduleArgs({ ...createdAssignSchedule(), label: `${assignScheduleLabel}-old-signature` });
+  delete args.p_confirm_removals;
+  return args;
+};
+
+const assignmentIn = (cell, employeeId) => {
+  const [shiftId, dayOffset] = assignCellAt(cell);
+  return { cell, shiftId, dayOffset, employeeId };
+};
+// The six assignments, the first one added alone and the other five in one batch. What is left once cell A is gone, and
+// once the API employee is gone as well, are filters of the same list.
+const allAssignments = () => [
+  assignmentIn("A", smokeEmployeeId),
+  assignmentIn("A", apiEmployeeId),
+  assignmentIn("B", smokeEmployeeId),
+  assignmentIn("B", apiEmployeeId),
+  assignmentIn("C", apiEmployeeId),
+  assignmentIn("D", apiEmployeeId),
+];
+const firstAssignment = () => allAssignments().slice(0, 1);
+const otherAssignments = () => allAssignments().slice(1);
+const assignmentsWithoutCellA = () => allAssignments().filter((assignment) => assignment.cell !== "A");
+const assignmentsOfSmokeEmployeeOnly = () =>
+  assignmentsWithoutCellA().filter((assignment) => assignment.employeeId === smokeEmployeeId);
+// The columns of the table for an assignment; `source` is left out, because the default is what S-04 relies on.
+const assignmentRow = ({ shiftId, dayOffset, employeeId }) => ({
+  schedule_id: assignScheduleId,
+  shift_id: shiftId,
+  day_offset: dayOffset,
+  employee_id: employeeId,
+});
+const assignmentFilter = ({ shiftId, dayOffset, employeeId }) =>
+  `${assignScheduleChildren()}&shift_id=eq.${shiftId}&day_offset=eq.${dayOffset}&employee_id=eq.${employeeId}`;
+const cellFilter = (cell) => {
+  const [shiftId, dayOffset] = assignCellAt(cell);
+  return `${assignScheduleChildren()}&shift_id=eq.${shiftId}&day_offset=eq.${dayOffset}`;
+};
+
+// Rows that each break exactly one rule of the table, for the planner's attempts. The first sits on day 5, on which the
+// schedule has no cell; the second is in cell B, but its person is in no roster of these steps (an employee of the API
+// steps that the schedule does not cover); the third is valid but for its source (cell D exists, the person is in the
+// roster and the key is free).
+const assignmentInCellWithoutStaffing = () => assignmentRow({ ...assignmentIn("A", smokeEmployeeId), dayOffset: 5 });
+const assignmentOfPersonOutsideRoster = () => assignmentRow(assignmentIn("B", secondApiEmployeeId));
+const assignmentWithBogusSource = () => ({ ...assignmentRow(assignmentIn("D", smokeEmployeeId)), source: "bogus" });
+
+// `check` predicates for the assignments of the schedule: exactly the expected ones (a function that lists them), each
+// with the source the column defaults to. The rows come back in no promised order, so they are compared as sorted lists.
+const assignmentKey = (shiftId, dayOffset, employeeId) => `${shiftId}/${dayOffset}/${employeeId}`;
+const isAssignments = (expected) => (rows) =>
+  Array.isArray(rows) &&
+  rows.every((row) => row.schedule_id === assignScheduleId && row.source === "manual") &&
+  sameItems(
+    rows.map((row) => assignmentKey(row.shift_id, row.day_offset, row.employee_id)),
+    expected().map((assignment) => assignmentKey(assignment.shiftId, assignment.dayOffset, assignment.employeeId)),
+  );
+// PT409 is the refusal of a save that would take assignments along; the count comes back as text in `details`.
+const refusesRemoval = (count) => (error) =>
+  error.code === "PT409" && error.message === "Assignments would be removed" && error.details === String(count);
+const isAssignScheduleId = (id) => id === assignScheduleId;
+
+const plannerReadsAssignments = (name, expected, what) => [
+  `${planner.label}: schedule_assignments read ${name}`,
+  async () => assignmentsTable("GET", { token: await accessToken(planner), query: assignScheduleChildren() }),
+  {
+    status: 200,
+    check: isAssignments(expected),
+    describe: `exactly the assignments of ${what}, all with source manual`,
+  },
+];
+// The header, the cells, the people and the assignments of the assignment schedule, read back in four steps.
+const plannerReadsAssignSchedule = (name, state, expected, what) => [
+  ...plannerReadsSchedule(name, state, what, () => assignScheduleId),
+  plannerReadsAssignments(name, expected, what),
+];
+
+// A save of the assignment schedule over itself that the planner makes; `confirmRemovals` is passed on as it is.
+const plannerSavesAssignSchedule = (description, state, expected, confirmRemovals = false) => [
+  `${planner.label}: rpc save_schedule ${description}`,
+  async () =>
+    rpc("save_schedule", await accessToken(planner), saveScheduleArgs(state(), assignScheduleId, confirmRemovals)),
+  expected,
+];
+const savesAssignSchedule = { status: 200, check: isAssignScheduleId, describe: "the id of the same schedule" };
+const refusesRemovalOf = (count) => ({
+  status: 409,
+  check: refusesRemoval(count),
+  describe: `an error with the code PT409, the message "Assignments would be removed" and the details "${count}"`,
+});
+
+// A signed-in account without planner rights, at a time when the assignment schedule holds all six assignments: the table
+// looks empty, an insert is refused, a delete and an update of a required count are refused or hidden, and so is a save
+// that would take assignments along with a removed cell, even though it carries the confirmation (so that only the
+// policies stand in the way). The planner's reads afterwards are the proof that nothing changed, whatever status
+// PostgREST used to answer.
+const notPlannerAssignmentSteps = (actor) => [
+  [
+    `${actor.label}: schedule_assignments read returns an empty list`,
+    async () => assignmentsTable("GET", { token: await accessToken(actor), query: "?select=schedule_id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: schedule_assignments insert is rejected`,
+    async () =>
+      assignmentsTable("POST", {
+        token: await accessToken(actor),
+        body: assignmentRow(assignmentIn("C", smokeEmployeeId)),
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedule_assignments delete is refused or hidden`,
+    async () => assignmentsTable("DELETE", { token: await accessToken(actor), query: assignScheduleChildren() }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: schedule_staffing update of the required count is refused or hidden`,
+    async () =>
+      scheduleStaffingTable("PATCH", {
+        token: await accessToken(actor),
+        query: cellFilter("A"),
+        body: { required_count: 9 },
+      }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: rpc save_schedule dropping a cell with assignments and a confirmation is rejected`,
+    async () =>
+      rpc(
+        "save_schedule",
+        await accessToken(actor),
+        saveScheduleArgs(assignState(`-${actor.label}-rpc`, { B: 3, C: 1, D: 2 }), assignScheduleId, true),
+      ),
+    { statusNotClass: 2 },
+  ],
+  ...plannerReadsAssignSchedule(
+    `is unchanged after ${actor.label} write attempts`,
+    createdAssignSchedule,
+    allAssignments,
+    "the assignment schedule, unchanged",
+  ),
+];
+
+// The same for a caller that never signed in, which the database does not let near the table or the function at all.
+const anonymousAssignmentSteps = [
+  [`${anonymous.label}: schedule_assignments read is rejected`, () => assignmentsTable("GET"), { statusNotClass: 2 }],
+  [
+    `${anonymous.label}: schedule_assignments insert is rejected`,
+    () => assignmentsTable("POST", { body: assignmentRow(assignmentIn("C", smokeEmployeeId)) }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedule_assignments delete is rejected`,
+    () => assignmentsTable("DELETE", { query: assignScheduleChildren() }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedule_staffing update of the required count is rejected`,
+    () => scheduleStaffingTable("PATCH", { query: cellFilter("A"), body: { required_count: 9 } }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: rpc save_schedule dropping a cell with assignments and a confirmation is rejected`,
+    () =>
+      rpc(
+        "save_schedule",
+        undefined,
+        saveScheduleArgs(assignState(`-${anonymous.label}-rpc`, { B: 3, C: 1, D: 2 }), assignScheduleId, true),
+      ),
+    { statusNotClass: 2, check: isFunctionDenied, describe: "a permission error (42501) for the function itself" },
+  ],
+  ...plannerReadsAssignSchedule(
+    `is unchanged after ${anonymous.label} write attempts`,
+    createdAssignSchedule,
+    allAssignments,
+    "the assignment schedule, unchanged",
   ),
 ];
 
@@ -2666,6 +2903,224 @@ const steps = [
     trimmedSchedule,
     "the replaced schedule without the cell of the second shift on day 6",
   ),
+  // Assignments: a planner puts people on the cells of a schedule, and the database keeps the rules of the table. The cell
+  // and the person must belong to the schedule (composite foreign keys), the source is manual or generated, an entry is
+  // never updated, and nobody but a planner sees or changes one. A save of the schedule changes only the difference: it
+  // keeps the assignments of every cell and person that stays, and it takes those of a removed cell or person along only
+  // when the caller confirms (PT409 otherwise, with nothing changed). These steps use a schedule of their own (see
+  // assignState), after the shifts and people above.
+  [
+    `${planner.label}: rpc save_schedule creates the schedule for the assignment steps`,
+    async () => {
+      const result = await rpc("save_schedule", await accessToken(planner), saveScheduleArgs(createdAssignSchedule()));
+      assignScheduleId = parseJson(result.body);
+      return result;
+    },
+    { status: 200, check: isUuidText, describe: "the id of the new schedule" },
+  ],
+  ...plannerReadsAssignSchedule(
+    "shows the new schedule without assignments",
+    createdAssignSchedule,
+    () => [],
+    "the new assignment schedule (4 cells, 2 people, no assignments)",
+  ),
+  // The function has six parameters and no defaults; the signature of five was dropped, so a call of the old shape finds
+  // no function (PostgREST: PGRST202) and, above all, creates nothing.
+  [
+    `${planner.label}: rpc save_schedule with the five arguments of the old signature is rejected`,
+    async () => rpc("save_schedule", await accessToken(planner), oldSignatureArgs()),
+    {
+      statusNotClass: 2,
+      check: (error) => error.code === "PGRST202",
+      describe: "an error with the code PGRST202 (no such function)",
+    },
+  ],
+  [
+    `${planner.label}: schedules read finds no schedule left by the old signature`,
+    async () =>
+      schedulesTable("GET", { token: await accessToken(planner), query: `?label=like.${assignScheduleLabel}-old*` }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${planner.label}: schedule_assignments insert adds an assignment`,
+    async () =>
+      assignmentsTable("POST", { token: await accessToken(planner), body: assignmentRow(firstAssignment()[0]) }),
+    { status: 201 },
+  ],
+  plannerReadsAssignments("shows the new assignment with source manual", firstAssignment, "the assignment just added"),
+  plannerRejectsScheduleRow(
+    "schedule_assignments",
+    "with a repeated primary key",
+    () => assignmentRow(firstAssignment()[0]),
+    "schedule_assignments_pkey",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_assignments",
+    "in a cell without staffing",
+    assignmentInCellWithoutStaffing,
+    "schedule_assignments_cell_fkey",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_assignments",
+    "for a person outside the roster",
+    assignmentOfPersonOutsideRoster,
+    "schedule_assignments_employee_fkey",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_assignments",
+    "with a source of bogus",
+    assignmentWithBogusSource,
+    "schedule_assignments_source_valid",
+  ),
+  plannerReadsAssignments("is unchanged after the rejected inserts", firstAssignment, "the assignment just added"),
+  // No update grant at all: even a value that the source constraint would accept is refused, with a permission error.
+  [
+    `${planner.label}: schedule_assignments update is refused`,
+    async () =>
+      assignmentsTable("PATCH", {
+        token: await accessToken(planner),
+        query: assignmentFilter(firstAssignment()[0]),
+        body: { source: "generated" },
+      }),
+    { statusNotClass: 2, check: isPermissionDenied, describe: "a permission error (42501)" },
+  ],
+  plannerReadsAssignments(
+    "is unchanged after the update attempt",
+    firstAssignment,
+    "the assignment just added, still with source manual",
+  ),
+  [
+    `${planner.label}: schedule_assignments insert adds five more in one request`,
+    async () =>
+      assignmentsTable("POST", {
+        token: await accessToken(planner),
+        body: otherAssignments().map((assignment) => assignmentRow(assignment)),
+      }),
+    { status: 201 },
+  ],
+  plannerReadsAssignments("shows all six assignments", allAssignments, "the six assignments"),
+  ...notPlannerAssignmentSteps(employee),
+  ...notPlannerAssignmentSteps(noRole),
+  ...anonymousAssignmentSteps,
+  // A save that changes the schedule but removes nothing needs no confirmation and keeps every assignment, also those of
+  // a cell whose count it sets: the cell keeps its row, so nothing cascades.
+  plannerSavesAssignSchedule(
+    "changing only the label keeps every assignment",
+    renamedAssignSchedule,
+    savesAssignSchedule,
+  ),
+  ...plannerReadsAssignSchedule(
+    "shows the new label and all six assignments",
+    renamedAssignSchedule,
+    allAssignments,
+    "the renamed assignment schedule",
+  ),
+  plannerSavesAssignSchedule(
+    "changing a required count and adding a cell keeps every assignment",
+    recountedAssignSchedule,
+    savesAssignSchedule,
+  ),
+  ...plannerReadsAssignSchedule(
+    "shows the new count, the new cell and all six assignments",
+    recountedAssignSchedule,
+    allAssignments,
+    "the assignment schedule with cell A at 1 (two people in it) and cell E added",
+  ),
+  // The same column grant, used directly: the planner may set a required count, and nothing else of a cell.
+  [
+    `${planner.label}: schedule_staffing update changes the required count of a cell`,
+    async () =>
+      scheduleStaffingTable("PATCH", {
+        token: await accessToken(planner),
+        query: cellFilter("B"),
+        body: { required_count: 4 },
+      }),
+    { statusClass: 2 },
+  ],
+  ...plannerReadsAssignSchedule(
+    "shows the count set directly and all six assignments",
+    patchedAssignSchedule,
+    allAssignments,
+    "the assignment schedule with cell B at 4",
+  ),
+  [
+    `${planner.label}: schedule_staffing update of the shift is refused`,
+    async () =>
+      scheduleStaffingTable("PATCH", {
+        token: await accessToken(planner),
+        query: cellFilter("B"),
+        body: { shift_id: sameNameShiftId },
+      }),
+    { statusNotClass: 2, check: isPermissionDenied, describe: "a permission error (42501)" },
+  ],
+  ...plannerReadsAssignSchedule(
+    "is unchanged after the refused update of the shift",
+    patchedAssignSchedule,
+    allAssignments,
+    "the assignment schedule, unchanged",
+  ),
+  // Removing a cell or a person that holds assignments: refused without a confirmation, with the count in the error and
+  // nothing changed (the label of the refused save included), then done with it, as the planner, and only those
+  // assignments go. Cell A holds two assignments, the API employee three of the four that are left after it, and a save
+  // that drops cell B and the API employee together touches four (not five: an assignment is counted once).
+  plannerSavesAssignSchedule(
+    "dropping a cell with assignments is refused without a confirmation",
+    refusedCellAssignSchedule,
+    refusesRemovalOf(2),
+  ),
+  ...plannerReadsAssignSchedule(
+    "is unchanged after the refused removal of a cell",
+    patchedAssignSchedule,
+    allAssignments,
+    "the assignment schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerSavesAssignSchedule(
+    "dropping the cell with a confirmation removes its assignments",
+    withoutCellAssignSchedule,
+    savesAssignSchedule,
+    true,
+  ),
+  ...plannerReadsAssignSchedule(
+    "shows the schedule without cell A and the two assignments in it",
+    withoutCellAssignSchedule,
+    assignmentsWithoutCellA,
+    "the assignment schedule without cell A, and four assignments (those of the other cells stay)",
+  ),
+  plannerSavesAssignSchedule(
+    "dropping a person with assignments is refused without a confirmation",
+    refusedPersonAssignSchedule,
+    refusesRemovalOf(3),
+  ),
+  ...plannerReadsAssignSchedule(
+    "is unchanged after the refused removal of a person",
+    withoutCellAssignSchedule,
+    assignmentsWithoutCellA,
+    "the assignment schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerSavesAssignSchedule(
+    "dropping a cell and a person is refused when the confirmation is null, and counts each assignment once",
+    refusedBothAssignSchedule,
+    refusesRemovalOf(4),
+    null,
+  ),
+  ...plannerReadsAssignSchedule(
+    "is unchanged after the refused removal of a cell and a person",
+    withoutCellAssignSchedule,
+    assignmentsWithoutCellA,
+    "the assignment schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerSavesAssignSchedule(
+    "dropping the person with a confirmation removes their assignments",
+    withoutPersonAssignSchedule,
+    savesAssignSchedule,
+    true,
+  ),
+  ...plannerReadsAssignSchedule(
+    "shows the schedule without the API employee and the three assignments of that person",
+    withoutPersonAssignSchedule,
+    assignmentsOfSmokeEmployeeOnly,
+    "the assignment schedule with one person, and one assignment (the other person's assignments are gone)",
+  ),
   // The foreign keys are on delete restrict: no shift or employee that a schedule uses can be removed, not even with the
   // service-role key. The planner's reads show that the rows are still there.
   [
@@ -2724,12 +3179,19 @@ const steps = [
   // Always last: removes every account and row this and earlier runs left behind (the tables have no delete grant for the
   // API, so only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they
   // were before. The schedules go first: their foreign keys to shifts and employees are on delete restrict, and deleting
-  // a schedule cascades to its cells and people. The accounts go next: a row linked to one only loses its user_id, and
-  // the employee steps after them delete it. The shifts go last, once no schedule refers to them.
+  // a schedule cascades to its cells, people and assignments. The accounts go next: a row linked to one only loses its
+  // user_id, and the employee steps after them delete it. The shifts go last, once no schedule refers to them.
   [
     "service role: delete the smoke schedules",
     () => schedulesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?label=like.Smoke-*" }),
     { statusClass: 2 },
+  ],
+  // The assignment schedule still held an assignment, which only the cascade through its cell and its person can have
+  // removed.
+  [
+    "service role: no assignment of the smoke schedule is left",
+    () => assignmentsTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: assignScheduleChildren() }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
   ],
   ["service role: delete the smoke accounts", deleteSmokeAccounts, { statusClass: 2 }],
   [

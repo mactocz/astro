@@ -127,13 +127,15 @@ export async function saveSchedule(
   if (id !== null && !isUuid(id)) {
     return { ok: false, error: "not_found" };
   }
-  // The function has no default arguments, so all five are always sent, the schedule id too (null creates).
+  // The function has no default arguments, so all six are always sent, the schedule id too (null creates). The
+  // confirmation of removing assignments is always false for now.
   const response = await supabase.rpc("save_schedule", {
     p_schedule_id: id,
     p_start_date: input.startDate,
     p_label: input.label,
     p_staffing: input.staffing.map(({ shiftId, dayOffset, requiredCount }) => ({ shiftId, dayOffset, requiredCount })),
     p_employee_ids: input.employeeIds,
+    p_confirm_removals: false,
   });
   if (response.error) {
     return saveFailure(response.error);

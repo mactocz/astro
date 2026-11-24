@@ -413,15 +413,15 @@ Stan na 2026-11-24: PR #9 (pin CLI) i #8 (S-03) są scalone do `master` merge co
 
 #### Automated
 
-- [ ] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
-- [ ] 2.4 Build przechodzi: `npm run build`
-- [ ] 2.5 Smoke z krokami bazy i RPC przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env` i `.dev.vars` wskazującymi ten sam lokalny stos, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z `supabase status -o env`): `npm run smoke`
+- [x] 2.1 Migracja stosuje się czysto na świeżej lokalnej bazie (przy działającym `npx supabase start`): `npx supabase db reset`
+- [x] 2.2 Linting przechodzi: `npm run lint`
+- [x] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 2.4 Build przechodzi: `npm run build`
+- [x] 2.5 Smoke z krokami bazy i RPC przechodzi lokalnie (po `npx supabase start`, `npm run build` i `npm run preview` z `.env` i `.dev.vars` wskazującymi ten sam lokalny stos, ze zmiennymi `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_ROLE_KEY` z `supabase status -o env`): `npm run smoke`
 
 #### Manual
 
-- [ ] 2.6 Polityki RLS, uprawnienia (w tym kolumnowy `update` i `execute` funkcji), klucze obce z kaskadą, ograniczenia, kontrakt `PT409` i komentarze w migracji zostały przejrzane przez autora
+- [x] 2.6 Polityki RLS, uprawnienia (w tym kolumnowy `update` i `execute` funkcji), klucze obce z kaskadą, ograniczenia, kontrakt `PT409` i komentarze w migracji zostały przejrzane przez autora
 
 ### Phase 3: Dostęp do danych i API
 
