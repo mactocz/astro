@@ -450,13 +450,13 @@ Stan na 2026-11-24: PR #9 (pin CLI) i #8 (S-03) są scalone do `master` merge co
 
 #### Automated
 
-- [x] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 5.2 Smoke z krokami stron przechodzi lokalnie: `npm run smoke`
+- [x] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — e1cf758
+- [x] 5.2 Smoke z krokami stron przechodzi lokalnie: `npm run smoke` — e1cf758
 - [ ] 5.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
 
 #### Manual
 
-- [x] 5.4 W przeglądarce na desktopie: dodanie i zdjęcie zmiany w komórce zmienia przycisk i licznik od razu; kilka zmian jednego dnia dla jednej osoby; brak, komplet i nadmiar w podsumowaniu (z tekstowym `−n` i `+n`); komunikat i wycofanie przy błędzie (np. po zatrzymaniu serwera lub usunięciu zmiany z obsady w innej karcie); obsługa klawiaturą i odczyt `aria-pressed`; przyklejona kolumna przy przewijaniu poziomym
-- [x] 5.5 Na telefonie (lub emulacji): strona się ładuje, tabela przewija się poziomo, przyciski dają się nacisnąć bez rozjeżdżania strony
+- [x] 5.4 W przeglądarce na desktopie: dodanie i zdjęcie zmiany w komórce zmienia przycisk i licznik od razu; kilka zmian jednego dnia dla jednej osoby; brak, komplet i nadmiar w podsumowaniu (z tekstowym `−n` i `+n`); komunikat i wycofanie przy błędzie (np. po zatrzymaniu serwera lub usunięciu zmiany z obsady w innej karcie); obsługa klawiaturą i odczyt `aria-pressed`; przyklejona kolumna przy przewijaniu poziomym — e1cf758
+- [x] 5.5 Na telefonie (lub emulacji): strona się ładuje, tabela przewija się poziomo, przyciski dają się nacisnąć bez rozjeżdżania strony — e1cf758
 - [ ] 5.6 Migracja jest zastosowana na hostowanym projekcie (`npx supabase db push`) przed wdrożeniem kodu, a po niej od razu wdrożenie, bo stara wersja aplikacji wywołuje usuniętą sygnaturę `save_schedule`
 - [ ] 5.7 Po wdrożeniu (`npm run build` i `npx wrangler deploy`) przypisanie da się dodać i zdjąć na produkcji; nie uruchamiać `npm run smoke` na produkcji
