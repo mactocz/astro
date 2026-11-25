@@ -12,6 +12,9 @@ const OPEN_PATHS: Readonly<Record<string, OpenLayer>> = {
   "/auth/signin": "public",
   "/api/auth/signin": "public",
   "/api/auth/signout": "public",
+  // The link in an invitation or password-reset e-mail is opened without a session; the token in it is the credential.
+  "/auth/set-password": "public",
+  "/api/auth/set-password": "public",
   "/access-denied": "public",
   "/dashboard": "any-role",
 };

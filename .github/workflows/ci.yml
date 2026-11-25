@@ -43,19 +43,23 @@ jobs:
       - run: npm ci
       - name: Start local Supabase
         run: |
-          supabase start -x studio,imgproxy,mailpit,edge-runtime,logflare,vector,realtime,storage-api,postgres-meta,supavisor
+          # mailpit stays: Auth must have a mail server to hand an invitation to, or the invitation route gets an error.
+          # The smoke test never reads the mails; it takes the tokens from the admin API (generate_link).
+          supabase start -x studio,imgproxy,edge-runtime,logflare,vector,realtime,storage-api,postgres-meta,supavisor
           supabase status -o env | grep -E '^(API_URL|ANON_KEY|SERVICE_ROLE_KEY)=' > supabase.env
       - name: Configure secrets for build and preview
         run: |
           source supabase.env
-          printf 'SUPABASE_URL=%s\nSUPABASE_KEY=%s\n' "$API_URL" "$ANON_KEY" > .env
+          # The service-role key is the one of this throwaway local stack, not a repository secret. The invitation route
+          # reads it as a Worker secret (here .dev.vars), like production does.
+          printf 'SUPABASE_URL=%s\nSUPABASE_KEY=%s\nSUPABASE_SERVICE_ROLE_KEY=%s\n' "$API_URL" "$ANON_KEY" "$SERVICE_ROLE_KEY" > .env
           cp .env .dev.vars
       - run: npm run build
       - name: Run smoke test against production preview
         run: |
           npm run preview -- --port 4321 &
           for i in $(seq 1 60); do curl -sf -o /dev/null http://localhost:4321/ && break; sleep 1; done
-          # The service-role key goes to the smoke command only, never to the preview or the build.
+          # The smoke command gets the keys in its own environment, as locally.
           source supabase.env
           SUPABASE_URL="$API_URL" SUPABASE_KEY="$ANON_KEY" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" BASE_URL=http://localhost:4321 npm run smoke
       - if: always()

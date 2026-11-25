@@ -1,7 +1,10 @@
 ---
 import PlannerLayout from "@/layouts/PlannerLayout.astro";
+import InviteButton from "@/components/employees/InviteButton";
 import { listEmployees } from "@/lib/employees";
 import { formatFteLabel } from "@/lib/services/employee";
+import { formatInviteLabel, inviteStatus } from "@/lib/services/invitation";
+import type { Employee } from "@/types";
 
 const { supabase } = Astro.locals;
 if (!supabase) {
@@ -10,6 +13,12 @@ if (!supabase) {
 }
 
 const employees = await listEmployees(supabase);
+
+// One clock for the whole page, so every label counts the validity of its link from the same moment.
+const now = new Date();
+const accountLabel = (employee: Employee) => formatInviteLabel(inviteStatus(employee, now));
+// The button resets the password of an active account; the label and the button read the same status, so they agree.
+const isActive = (employee: Employee) => inviteStatus(employee, now).kind === "active";
 
 // Names and e-mail addresses are personal data: no cache may keep this page.
 Astro.response.headers.set("Cache-Control", "no-store");
@@ -47,6 +56,9 @@ Astro.response.headers.set("Cache-Control", "no-store");
               <th scope="col" class="px-4 py-3 font-medium">
                 Etat
               </th>
+              <th scope="col" class="px-4 py-3 font-medium">
+                Konto
+              </th>
               <th scope="col" class="px-4 py-3">
                 <span class="sr-only">Akcje</span>
               </th>
@@ -54,12 +66,23 @@ Astro.response.headers.set("Cache-Control", "no-store");
           </thead>
           <tbody class="divide-y divide-white/10">
             {employees.map((employee) => (
-              <tr>
+              <tr data-employee-id={employee.id}>
                 <td class="px-4 py-3 font-semibold text-white">
                   {employee.lastName} {employee.firstName}
                 </td>
                 <td class="px-4 py-3 break-all text-blue-100/80">{employee.email ?? "—"}</td>
                 <td class="px-4 py-3 whitespace-nowrap text-blue-100/80">{formatFteLabel(employee.fte)}</td>
+                <td class="px-4 py-3 text-blue-100/80">
+                  <p class="mb-2">{accountLabel(employee)}</p>
+                  <InviteButton
+                    employeeId={employee.id}
+                    hasEmail={employee.email !== null}
+                    hasAccount={employee.userId !== null}
+                    isActive={isActive(employee)}
+                    email={employee.email}
+                    client:load
+                  />
+                </td>
                 <td class="px-4 py-3 text-right">
                   <a
                     href={`/employees/${employee.id}`}
@@ -77,11 +100,25 @@ Astro.response.headers.set("Cache-Control", "no-store");
 
       <ul class="space-y-3 md:hidden">
         {employees.map((employee) => (
-          <li class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-xl">
+          <li
+            data-employee-id={employee.id}
+            class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-xl"
+          >
             <p class="font-semibold text-white">
               {employee.lastName} {employee.firstName}
             </p>
-            <p class="mt-1 text-sm break-all text-blue-100/80">{employee.email ?? "—"}</p>
+            <div class="mt-2 text-sm text-blue-100/80">
+              <p class="mb-2">{accountLabel(employee)}</p>
+              <InviteButton
+                employeeId={employee.id}
+                hasEmail={employee.email !== null}
+                hasAccount={employee.userId !== null}
+                isActive={isActive(employee)}
+                email={employee.email}
+                client:load
+              />
+            </div>
+            <p class="mt-3 text-sm break-all text-blue-100/80">{employee.email ?? "—"}</p>
             <p class="mt-1 text-sm text-blue-100/80">{formatFteLabel(employee.fte)}</p>
             <a
               href={`/employees/${employee.id}`}

@@ -70,6 +70,26 @@ const astroConfig = defineConfig({
   },
 });
 
+// The service-role key bypasses RLS, so only the invitation route may reach it. The `*` stands for the `[id]` directory:
+// square brackets are glob syntax, so `[id]` itself would match the single letters i and d.
+const adminClientConfig = defineConfig({
+  files: ["src/**/*.{ts,tsx,astro}"],
+  ignores: ["src/lib/supabase-admin.ts", "src/pages/api/employees/*/invite.ts"],
+  rules: {
+    "no-restricted-imports": [
+      "error",
+      {
+        patterns: [
+          {
+            group: ["@/lib/supabase-admin", "**/supabase-admin"],
+            message: "Klucz service-role wolno użyć tylko w trasie zaproszenia",
+          },
+        ],
+      },
+    ],
+  },
+});
+
 const scriptsConfig = defineConfig({
   files: ["scripts/**/*.mjs"],
   extends: [tseslint.configs.disableTypeChecked],
@@ -84,6 +104,7 @@ export default defineConfig(
   eslintPluginAstro.configs["flat/recommended"],
   eslintPluginAstro.configs["flat/jsx-a11y-recommended"],
   astroConfig,
+  adminClientConfig,
   scriptsConfig,
   eslintPluginPrettier,
 );
