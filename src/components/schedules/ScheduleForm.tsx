@@ -39,7 +39,7 @@ function periodPreview(startDate: string): string | null {
 
 // A shift that is in the stored schedule but no longer on the list: it keeps its row, so a save does not drop its cells.
 function unavailableShift(id: string): ShiftOption {
-  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "" };
+  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "", startMinute: 0, endMinute: 0 };
 }
 
 export default function ScheduleForm({ shifts, employees, schedule, assignmentCount = 0 }: Props) {

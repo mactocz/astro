@@ -118,7 +118,7 @@ export interface CoverageCell {
   surplus: number;
 }
 
-/** A shift as the schedule form offers it: only what the form shows, with the times already formatted. */
+/** A shift as the schedule pages offer it: the times already formatted, plus the minutes the work-time rules use. */
 export interface ShiftOption {
   id: string;
   name: string;
@@ -127,13 +127,18 @@ export interface ShiftOption {
   endsNextDay: boolean;
   /** Length of the shift, e.g. "8 h". */
   duration: string;
+  /** Minutes after midnight (0 to 1439), as in `ShiftInput`. */
+  startMinute: number;
+  /** Minutes after midnight (0 to 1439), as in `ShiftInput`; an end earlier than the start means the next day. */
+  endMinute: number;
 }
 
-/** An employee as the schedule form offers them: the id and the name to show, never the e-mail address or the FTE. */
+/** An employee as the schedule pages offer them: the id, the name to show and the FTE, never the e-mail address. */
 export interface EmployeeOption {
   id: string;
   /** "Last name First name", the order of the employee list. */
   name: string;
+  fte: Fte;
 }
 
 /** The state of the Auth account behind an employee: no account, one that never confirmed its invitation, or an active one. */

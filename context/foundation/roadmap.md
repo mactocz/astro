@@ -47,7 +47,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | done |
 | S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | in-progress |
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | done |
-| S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | proposed |
+| S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | in-progress |
 | S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | proposed |
 | S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | proposed |
 | S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | proposed |
@@ -166,7 +166,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 
 ### S-05: Naruszenia reguł na żywo
 
-- **Outcome:** Planista może zobaczyć podczas układania krytyczne naruszenia (odpoczynek dobowy, odpoczynek tygodniowy, limit 8 godzin na dobę, limit godzin zależny od etatu) oraz ostrzeżenia o brakach obsady, każde z czytelnym powodem i miejscem w grafiku.
+- **Outcome:** Planista może zobaczyć podczas układania krytyczne naruszenia (odpoczynek dobowy, odpoczynek tygodniowy, limit 8 godzin na dobę, pułap 48 godzin w tygodniu) oraz ostrzeżenia o przekroczeniu normy tygodniowej etatu i o brakach obsady, każde z czytelnym powodem i miejscem w grafiku.
 - **Change ID:** live-rule-violations
 - **PRD refs:** FR-010, US-01
 - **Prerequisites:** S-04, F-02
@@ -174,10 +174,10 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Blockers:** —
 - **Unknowns:**
   - Wartości progów i definicja doby i tygodnia — rozstrzygnięte 2026-10-16: wartości z tekstu Kodeksu pracy i decyzje D1 do D6 zaakceptowane przez autora, zob. `context/foundation/work-time-rules.md`. — Owner: user. Block: no.
-  - Jak liczyć dobę przy zmianach przechodzących przez północ (dokument zaleca potwierdzenie na przykładach testowych)? — Owner: user. Block: no.
+  - Jak liczyć dobę przy zmianach przechodzących przez północ (dokument zaleca potwierdzenie na przykładach testowych)? — rozstrzygnięte 2026-11-25 w planowaniu: doba to okno 24 godzin od rozpoczęcia pracy (art. 128 § 3), tydzień odpoczynku to siedem dni grafiku, przejście na inną zmianę to inna godzina rozpoczęcia, ocena tylko w obrębie jednego grafiku; limit godzin zależny od etatu jest ostrzeżeniem względem normy tygodniowej, nie krytycznym naruszeniem (norma z art. 130 jest miesięczną średnią), zob. `context/changes/live-rule-violations/plan.md`. — Owner: user. Block: no.
   - Czy reguły i ich waga (krytyczne czy ostrzeżenie) odpowiadają potrzebom prawdziwego planisty (rozmowa z osobą, która układała taki grafik)? — Owner: user. Block: no.
 - **Risk:** To rdzeń hipotezy produktu i największe ryzyko poprawności: błędna interpretacja progu po cichu daje fałszywe poczucie zgodności z prawem (PRD: narzędzie ostrzega, nie gwarantuje), więc wejdzie wcześnie, z testami powtarzalności z F-02 i przypadkami z `work-time-rules.md`. Zmiany dłuższe niż 8 godzin (system równoważny) są poza MVP i mają dawać czytelny komunikat, nie fałszywą zgodność.
-- **Status:** proposed
+- **Status:** in-progress
 
 ### S-06: Obciążenie względem normy
 

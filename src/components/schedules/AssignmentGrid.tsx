@@ -31,7 +31,7 @@ const cellKey = (shiftId: string, dayOffset: number): string => `${shiftId}/${da
 
 // A shift that has staffing in the schedule but is no longer on the list: it keeps its buttons, so nobody is hidden.
 function unavailableShift(id: string): ShiftOption {
-  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "" };
+  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "", startMinute: 0, endMinute: 0 };
 }
 
 // The name and the hours, which tell apart two shifts that share a name. A shift that is gone has no hours to show.

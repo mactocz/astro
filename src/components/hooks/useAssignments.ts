@@ -125,5 +125,5 @@ export function useAssignments({
     }
   }
 
-  return { byEmployeeDay, coverage, busy, error, toggle };
+  return { list, byEmployeeDay, coverage, busy, error, toggle };
 }
