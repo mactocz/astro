@@ -1389,6 +1389,18 @@ const routeSchedule = () => routeState("", { A: 2, B: 1, C: 1 });
 const refusedRouteSchedule = () => routeState("-refused", { C: 1 });
 const trimmedRouteSchedule = () => routeState("-trimmed", { C: 1 });
 
+// The edit page of the route schedule in the state the steps leave it in when the pages are visited: saved by the confirmed
+// PUT (the label of `trimmedRouteSchedule`) and still holding the one assignment of cell C (the witness), so it is the page
+// of a schedule that has assignments. Its address needs the id, which only exists once the create step has run, so it is
+// built when the step runs.
+const visitRouteSchedulePage = (actor, status, expected) => [
+  `${actor.label}: GET /schedules/<id> of the schedule with an assignment${expected.describe ? ` shows ${expected.describe}` : ""}`,
+  () => request(actor, `/schedules/${routeScheduleId}`),
+  { status, ...expected },
+];
+const hasTrimmedRouteLabel = (html) =>
+  inputsOf(html).find((input) => input.id === "label")?.value === trimmedRouteSchedule().label;
+
 // The body of the assignment routes for a cell; the person is the one of the roster unless another is named.
 const routeAssignment = (cell, employeeId = apiEmployeeId) => {
   const [shiftId, dayOffset] = routeCellAt(cell);
@@ -2457,6 +2469,14 @@ const steps = [
   visitApiSchedulePage(planner, 200, {
     bodyCheck: editsApiSchedule,
     describe: "the date, label, cells and people of the API schedule as the form state",
+    cacheControl: "no-store",
+  }),
+  // The edit page of a schedule that has assignments: the page counts them for the form (the number lets the form tell the
+  // planner that a new date moves them) and must still render the form. The confirmation block and the date note are
+  // client state, so the browser review shows them, not this step.
+  visitRouteSchedulePage(planner, 200, {
+    bodyCheck: hasTrimmedRouteLabel,
+    describe: "the label of the route schedule, saved last by the confirmed PUT, in the label field",
     cacheControl: "no-store",
   }),
   visit(planner, `/schedules/${unknownScheduleId}`, 404, notFoundScheduleMessage),

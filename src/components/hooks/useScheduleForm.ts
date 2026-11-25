@@ -26,6 +26,15 @@ export interface ScheduleFormValues {
   employeeIds: string[];
 }
 
+/**
+ * A save that the server refused because it would delete assignments with a cell or a person: how many it would delete,
+ * and the already validated value to send again once the planner confirms.
+ */
+export interface PendingRemoval {
+  count: number;
+  value: ScheduleInput;
+}
+
 const SESSION_ERROR = "Sesja wygasła lub brak uprawnień. Zaloguj się ponownie.";
 const SAVE_ERROR = "Nie udało się zapisać. Spróbuj ponownie.";
 const NOT_FOUND_ERROR = "Nie znaleziono tego grafiku. Wróć do listy grafików i spróbuj ponownie.";
@@ -90,31 +99,44 @@ function focusFirstInvalid(errors: ScheduleFieldErrors) {
 interface ErrorBody {
   errors: ScheduleFieldErrors | null;
   unknownReference: boolean;
+  /** The number of assignments the save would delete, from a 409 `assignments_would_be_removed`; null for anything else. */
+  removed: number | null;
 }
 
-// The `errors` of a 422 answer, and whether it is the `unknown_reference` one; none of them when the body is not JSON.
+// The `errors` of a 422 answer, whether it is the `unknown_reference` one, and the `removed` of a 409 answer (a whole
+// number of 1 or more, or it is no confirmation to ask for); none of them when the body is not JSON.
 async function readErrorBody(response: Response): Promise<ErrorBody> {
   try {
-    const body = (await response.json()) as { errors?: unknown; error?: unknown } | null;
+    const body = (await response.json()) as { errors?: unknown; error?: unknown; removed?: unknown } | null;
     return {
       errors: typeof body?.errors === "object" && body.errors !== null ? body.errors : null,
       unknownReference: body?.error === "unknown_reference",
+      removed:
+        body?.error === "assignments_would_be_removed" &&
+        typeof body.removed === "number" &&
+        Number.isInteger(body.removed) &&
+        body.removed >= 1
+          ? body.removed
+          : null,
     };
   } catch {
-    return { errors: null, unknownReference: false };
+    return { errors: null, unknownReference: false, removed: null };
   }
 }
 
 /**
  * State and submit handler of the schedule form. The rules live in `validateScheduleInput`, the same function the API
- * routes call, so the form shows what the server would say; the server still validates again.
+ * routes call, so the form shows what the server would say; the server still validates again. `assignmentCount` is how
+ * many assignments the stored schedule has (0 for a new one).
  */
 export function useScheduleForm({
   schedule,
   employees,
+  assignmentCount,
 }: {
   schedule?: Schedule;
   employees: readonly EmployeeOption[];
+  assignmentCount: number;
 }) {
   const [values, setValues] = useState(() => initialValues(schedule, employees));
   const [fieldErrors, setFieldErrors] = useState<ScheduleFieldErrors>({});
@@ -122,6 +144,9 @@ export function useScheduleForm({
   const [pending, setPending] = useState(false);
   // The shift added last: the first cell of its row takes the keyboard focus when the row appears.
   const [focusShiftId, setFocusShiftId] = useState<string | null>(null);
+  // Set when the server refused a save that would delete assignments; the form then asks for a confirmation. Any change to
+  // a value clears it (the server asks again if the number differs for the new value).
+  const [removal, setRemoval] = useState<PendingRemoval | null>(null);
 
   function clearError(field: ScheduleField) {
     setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
@@ -129,6 +154,7 @@ export function useScheduleForm({
 
   function setStartDate(value: string) {
     setValues((prev) => ({ ...prev, startDate: value }));
+    setRemoval(null);
     clearError("startDate");
   }
 
@@ -136,6 +162,7 @@ export function useScheduleForm({
     // The limit counts characters (code points), like the server and the database; the `maxLength` attribute would count
     // UTF-16 units and stop a label with emoji too early.
     setValues((prev) => ({ ...prev, label: Array.from(value).slice(0, SCHEDULE_LABEL_MAX_LENGTH).join("") }));
+    setRemoval(null);
     clearError("label");
   }
 
@@ -143,6 +170,7 @@ export function useScheduleForm({
   function addShift(shiftId: string) {
     setValues((prev) => (prev.shiftIds.includes(shiftId) ? prev : { ...prev, shiftIds: [...prev.shiftIds, shiftId] }));
     setFocusShiftId(shiftId);
+    setRemoval(null);
     clearError("staffing");
   }
 
@@ -153,11 +181,13 @@ export function useScheduleForm({
       // The numbers of a removed row go with it, so adding the shift again starts from an empty row.
       counts: Object.fromEntries(Object.entries(prev.counts).filter(([key]) => !key.startsWith(`${shiftId}:`))),
     }));
+    setRemoval(null);
     clearError("staffing");
   }
 
   function setCount(shiftId: string, dayOffset: number, value: string) {
     setValues((prev) => ({ ...prev, counts: { ...prev.counts, [countKey(shiftId, dayOffset)]: value } }));
+    setRemoval(null);
     clearError("staffing");
   }
 
@@ -168,23 +198,30 @@ export function useScheduleForm({
         ? [...new Set([...prev.employeeIds, employeeId])]
         : prev.employeeIds.filter((id) => id !== employeeId),
     }));
+    setRemoval(null);
     clearError("employeeIds");
   }
 
   function setEmployeeIds(employeeIds: string[]) {
     setValues((prev) => ({ ...prev, employeeIds }));
+    setRemoval(null);
     clearError("employeeIds");
   }
 
-  async function save(value: ScheduleInput) {
+  // `confirmRemoval` is true only when the planner has confirmed a refused save: the body then carries `confirmRemoval:
+  // true`, and the server deletes the assignments of the cells and people the value leaves out.
+  async function save(value: ScheduleInput, confirmRemoval = false) {
     setFieldErrors({});
     setServerError(null);
     setPending(true);
+    // What to ask the planner to confirm once this save is over. A retry leaves the old question on screen while it runs
+    // and replaces it with the answer: the new count when the server refuses again, nothing for any other outcome.
+    let refused: PendingRemoval | null = null;
     try {
       const response = await fetch(schedule ? `/api/schedules/${schedule.id}` : "/api/schedules", {
         method: schedule ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(value),
+        body: JSON.stringify(confirmRemoval ? { ...value, confirmRemoval: true } : value),
       });
       if (response.status === 200 || response.status === 201) {
         // Stays pending until the page is gone, so a second click cannot save twice. `replace` keeps the saved form out
@@ -192,7 +229,16 @@ export function useScheduleForm({
         window.location.replace("/schedules");
         return;
       }
-      if (response.status === 422) {
+      if (response.status === 409) {
+        // Nothing was stored. A 409 that does not say how many assignments it is about is no question to put to the
+        // planner, so it is a failed save like any other.
+        const body = await readErrorBody(response);
+        if (body.removed === null) {
+          setServerError(SAVE_ERROR);
+        } else {
+          refused = { count: body.removed, value };
+        }
+      } else if (response.status === 422) {
         const body = await readErrorBody(response);
         if (body.errors) {
           setFieldErrors(body.errors);
@@ -208,6 +254,7 @@ export function useScheduleForm({
     } catch {
       setServerError(SAVE_ERROR);
     }
+    setRemoval(refused);
     setPending(false);
   }
 
@@ -231,6 +278,22 @@ export function useScheduleForm({
     await save(validation.value);
   }
 
+  // The planner confirmed: the value the server refused goes again, this time with the confirmation.
+  async function saveAndRemove() {
+    if (pending || !removal) {
+      return;
+    }
+    await save(removal.value, true);
+  }
+
+  function backToEditing() {
+    setRemoval(null);
+  }
+
+  // The assignments hang on the days of the grid (offsets from the start date), not on calendar dates, so another start
+  // date moves them to other dates. An empty date field counts as another date, too. The planner is told, not stopped.
+  const assignmentsMove = assignmentCount > 0 && schedule !== undefined && values.startDate !== schedule.startDate;
+
   // The sum under the grid counts only the cells that would pass validation, so a half-typed number is not added up.
   const total = totalRequired(
     staffingOf(values).filter(
@@ -245,6 +308,8 @@ export function useScheduleForm({
     pending,
     focusShiftId,
     total,
+    removal,
+    assignmentsMove,
     setStartDate,
     setLabel,
     addShift,
@@ -253,5 +318,7 @@ export function useScheduleForm({
     toggleEmployee,
     setEmployeeIds,
     submit,
+    saveAndRemove,
+    backToEditing,
   };
 }

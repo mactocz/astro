@@ -2,6 +2,7 @@
 import PlannerLayout from "@/layouts/PlannerLayout.astro";
 import ScheduleForm from "@/components/schedules/ScheduleForm";
 import ScheduleNotice from "@/components/schedules/ScheduleNotice.astro";
+import { countAssignments } from "@/lib/assignments";
 import { listEmployees } from "@/lib/employees";
 import { toEmployeeOptions, toShiftOptions } from "@/lib/schedule-options";
 import { getSchedule } from "@/lib/schedules";
@@ -20,11 +21,18 @@ const schedule = id === undefined ? null : await getSchedule(supabase, id);
 
 let shiftOptions: ShiftOption[] = [];
 let employeeOptions: EmployeeOption[] = [];
+let assignmentCount = 0;
 if (schedule) {
-  // The form offers the whole dictionary and the whole roster, so a shift or a person can be added to the schedule.
-  const [shifts, employees] = await Promise.all([listShifts(supabase), listEmployees(supabase)]);
+  // The form offers the whole dictionary and the whole roster, so a shift or a person can be added to the schedule. It
+  // also gets the number of assignments, to tell the planner that a new start date moves them.
+  const [shifts, employees, assignments] = await Promise.all([
+    listShifts(supabase),
+    listEmployees(supabase),
+    countAssignments(supabase, schedule.id),
+  ]);
   shiftOptions = toShiftOptions(shifts);
   employeeOptions = toEmployeeOptions(employees);
+  assignmentCount = assignments;
 } else {
   // The project has no 404 page, so a missing schedule gets its own message with this status.
   Astro.response.status = 404;
@@ -45,7 +53,13 @@ Astro.response.headers.set("Cache-Control", "no-store");
 
       {shiftOptions.length > 0 && employeeOptions.length > 0 ? (
         <div class="rounded-2xl border border-white/10 bg-white/10 p-6 backdrop-blur-xl sm:p-8">
-          <ScheduleForm schedule={schedule} shifts={shiftOptions} employees={employeeOptions} client:load />
+          <ScheduleForm
+            schedule={schedule}
+            shifts={shiftOptions}
+            employees={employeeOptions}
+            assignmentCount={assignmentCount}
+            client:load
+          />
         </div>
       ) : (
         <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
