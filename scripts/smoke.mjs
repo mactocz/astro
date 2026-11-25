@@ -9,16 +9,16 @@
 // first activation stays), that the employee, shift and schedule API routes keep to the role gate, the validation and
 // their status codes (the routes that add and remove one assignment of a schedule are idempotent, and the save of a
 // schedule answers 409 with the number of assignments it would remove until the body confirms the removal), that the
-// employee, shift and schedule pages open for the planner only (the schedule list and form
-// show what the database holds), that the invitation mails link to the set-password page, the whole invitation flow
-// (invite, invite again, password reset, a foreign account, the tokens from the admin API instead of the mails, the
-// new employee's session, the activation time that the first password set records and a reset keeps, and the locked
-// e-mail), what the pages of that flow show (the account column and invite button of the employee list, the locked
-// e-mail field of the edit page, the password form of the set-password page; read from the HTML the server renders),
-// and that public registration stays closed. Zero dependencies on purpose. It creates real accounts and removes its own
-// accounts, employee, shift and schedule rows with the service-role key, so it only runs against a LOCAL Supabase, and
-// the app under test must read the same stack (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation
-// route reads it from there. Values come from `supabase status -o env`.
+// employee, shift and schedule pages open for the planner only (the schedule list, form and assignment page show what
+// the database holds, down to which shift button of which person is on), that the invitation mails link to the
+// set-password page, the whole invitation flow (invite, invite again, password reset, a foreign account, the tokens
+// from the admin API instead of the mails, the new employee's session, the activation time that the first password set
+// records and a reset keeps, and the locked e-mail), what the pages of that flow show (the account column and invite
+// button of the employee list, the locked e-mail field of the edit page, the password form of the set-password page;
+// read from the HTML the server renders), and that public registration stays closed. Zero dependencies on purpose. It
+// creates real accounts and removes its own accounts, employee, shift and schedule rows with the service-role key, so
+// it only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars), including
+// SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from there. Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -1275,7 +1275,8 @@ const cellsOf = (row) =>
   [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(([, cell]) => cell.replace(/<[^>]*>/g, "").trim());
 
 // The list row of the schedule: the period, the label, the number of people (2), the sum of the grid (5 + 1 + 2), the day
-// of creation and the edit link, whose aria-label names the period and the label.
+// of creation and the two links of the actions cell (edit and assign), the edit one with an aria-label that names the
+// period and the label. The assign link has steps of its own (listsAssignLinkInRow and listsAssignLinkInCard).
 const listsApiSchedule = (html) => {
   const row = tableRowWith(html, apiScheduleLabel);
   if (row === undefined) return false;
@@ -1288,7 +1289,8 @@ const listsApiSchedule = (html) => {
     cells[2] === String(state.employeeIds.length) &&
     cells[3] === String(state.staffing.reduce((sum, cell) => sum + cell.requiredCount, 0)) &&
     /^\d{2}\.\d{2}\.\d{4}$/.test(cells[4]) &&
-    cells[5] === "Edytuj" &&
+    // The links are separate elements: removing their tags may leave a space or nothing between the two words.
+    /^Edytuj\s*Obsadź$/.test(cells[5]) &&
     row.includes(`href="/schedules/${apiScheduleId}"`) &&
     row.includes(`aria-label="Edytuj: ${apiSchedulePeriod}, ${apiScheduleLabel}"`)
   );
@@ -1732,6 +1734,211 @@ const hasPasswordFormIsland = (html) => {
   );
 };
 
+// The assignment page (/schedules/<id>/assign) is visited for two schedules: the API schedule (three cells with a
+// required count, two people, no assignment) and the route schedule (one cell, two people, one assignment: the
+// witness). Its island is rendered on the server, so the table of people and the coverage summary are in the HTML. A
+// person's row is found by the text of its row header, never by a name anywhere in the page: Astro also writes the
+// props of the island, names included, into the astro-island tag, and that proves nothing about a row. A shift button
+// counts only as the pair of its aria-label (person, day, shift with its hours) and its aria-pressed in one tag.
+const MINUS = "\u2212"; // U+2212, the minus sign of the shortage mark (not a hyphen)
+// What a screen reader gets in the coverage table on a day on which the shift does not run, in place of a counter.
+const noCellWords = "brak tej zmiany tego dnia";
+
+// The elements with a tag name that do not nest (rows, cells, list items, links, paragraphs), each cut out whole.
+const elementsOf = (html, name) =>
+  [...html.matchAll(new RegExp(`<${name}\\b${TAG_ATTRIBUTES}>[\\s\\S]*?</${name}>`, "g"))].map(([element]) => element);
+const textOf = (html) => html.replace(/<[^>]*>/g, "").trim();
+const textsOf = (html, name) => elementsOf(html, name).map(textOf);
+// The <a> elements of a piece of HTML, each as { href, label, text }: the address, the aria-label and the text.
+const linksOf = (html) =>
+  elementsOf(html, "a").map((link) => {
+    const [tag] = tagsOf(link, "a");
+    return { href: attributeOf(tag, "href"), label: attributeOf(tag, "aria-label"), text: textOf(link) };
+  });
+
+// The link from a row or a card of the schedule list to the assignment page of the API schedule: the address, an
+// aria-label that names the period and the label like the one of the edit link, and the text.
+const hasAssignLink = (part) =>
+  linksOf(part).some(
+    (link) =>
+      link.href === `/schedules/${apiScheduleId}/assign` &&
+      link.label === `Obsadź: ${apiSchedulePeriod}, ${apiScheduleLabel}` &&
+      link.text === "Obsadź",
+  );
+// The list has the schedule twice, as a table row (wide layout) and as a card (narrow layout), and each has the link.
+const listsAssignLinkInRow = (html) => {
+  const row = elementsOf(html, "tr").find((element) => element.includes(apiScheduleLabel));
+  return row !== undefined && hasAssignLink(row);
+};
+const listsAssignLinkInCard = (html) => {
+  const card = elementsOf(html, "li").find((element) => element.includes(apiScheduleLabel));
+  return card !== undefined && hasAssignLink(card);
+};
+// The edit page leads to the assignment page of its schedule.
+const linksToAssignPage = (html) =>
+  linksOf(html).some(
+    (link) => link.href === `/schedules/${apiScheduleId}/assign` && link.text === "Obsadź pracowników",
+  );
+
+// The page says what it is: the title and the only <h1>, then the period and the label of the schedule, each in a
+// paragraph of its own.
+const showsAssignHeading = (period, label) => (html) => {
+  const headings = textsOf(html, "h1");
+  const paragraphs = textsOf(html, "p");
+  return (
+    headings.length === 1 &&
+    headings[0] === "Obsadzanie grafiku" &&
+    textsOf(html, "title")[0] === "Obsadzanie grafiku" &&
+    paragraphs.includes(period) &&
+    paragraphs.includes(label)
+  );
+};
+const headingExcerpt = (html) =>
+  ["title", "h1", "p"].map((name) => `${name}: ${textsOf(html, name).slice(0, 3).join(" | ")}`).join("\n");
+// The way back: to the edit page of the API schedule and to the list.
+const linksBackFromAssignPage = (html) => {
+  const links = linksOf(html);
+  return (
+    links.some((link) => link.href === `/schedules/${apiScheduleId}` && link.text === "Edytuj grafik") &&
+    links.some((link) => link.href === "/schedules" && link.text === "Lista grafików")
+  );
+};
+
+// The island holds two tables: the people's table, then the section of the coverage summary, so the HTML is cut at
+// the section. The body rows of a table come back as { header, cells }: the text of the row header (<th scope="row">)
+// and each <td> element whole.
+const cutAtCoverage = (html) => {
+  const at = html.indexOf('aria-labelledby="coverage-heading"');
+  return at === -1 ? [html, ""] : [html.slice(0, at), html.slice(at)];
+};
+const bodyRowsOf = (html) =>
+  elementsOf(html, "tr").flatMap((row) => {
+    const header = elementsOf(row, "th").find((th) => attributeOf(tagsOf(th, "th")[0], "scope") === "row");
+    return header === undefined ? [] : [{ header: textOf(header), cells: elementsOf(row, "td") }];
+  });
+
+// The people's table, as one entry per person (in the order of their names, whatever the order of the rows) with a list
+// of buttons for each of the seven days; a day without a button (the dash of a day without a shift) has an empty list.
+// A button is "<aria-label> [aria-pressed=true|false]". `personRow` writes the same shape for what a person should
+// have: `byDay` maps a day offset to its buttons.
+const pressedButton = (label, pressed) => `${label} [aria-pressed=${pressed}]`;
+const buttonsOfCell = (cell) =>
+  tagsOf(cell, "button")
+    .filter((tag) => hasAttribute(tag, "aria-pressed"))
+    .map((tag) => pressedButton(attributeOf(tag, "aria-label"), attributeOf(tag, "aria-pressed")));
+const byPerson = (a, b) => a.person.localeCompare(b.person);
+const gridOf = (html) =>
+  bodyRowsOf(cutAtCoverage(html)[0])
+    .map(({ header, cells }) => ({ person: header, days: cells.map(buttonsOfCell) }))
+    .sort(byPerson);
+const personRow = (person, byDay) => ({ person, days: Array.from({ length: 7 }, (_unused, day) => byDay[day] ?? []) });
+const showsGrid = (expected) => (html) => JSON.stringify(gridOf(html)) === JSON.stringify([...expected].sort(byPerson));
+const gridExcerpt = (html) =>
+  gridOf(html)
+    .map(({ person, days }) => `${person}: ${JSON.stringify(days)}`)
+    .join("\n");
+
+// The coverage table has exactly one row for each of `expected`, a [hours, counters] pair: the row of a shift is the
+// one whose header starts with the shift name and holds its hours (the two API shifts share a name). `counters` maps a
+// day offset to the text of the cell, the counter with its mark for a shortage or an excess as the tags leave it; every
+// other day must say that the shift does not run.
+const coverageRowsOf = (html) =>
+  bodyRowsOf(cutAtCoverage(html)[1]).map(({ header, cells }) => ({ header, cells: cells.map(textOf) }));
+const showsCoverage = (expected) => (html) => {
+  const rows = coverageRowsOf(html);
+  return (
+    rows.length === expected.length &&
+    expected.every(([times, counters]) => {
+      const found = rows.filter((row) => row.header.startsWith(apiShiftName) && row.header.includes(times));
+      return (
+        found.length === 1 &&
+        found[0].cells.length === 7 &&
+        found[0].cells.every((text, day) => (day in counters ? text === counters[day] : text.endsWith(noCellWords)))
+      );
+    })
+  );
+};
+const coverageExcerpt = (html) => JSON.stringify(coverageRowsOf(html));
+
+// The page lists people as "Nazwisko Imię", and a button is named "<person>, <day>, <shift name> <hours>". The two API
+// shifts share a name, so the hours tell them apart: the first runs 22:00-07:00 (the shift steps moved its end from
+// 06:00), the second 06:00-14:00.
+const personName = (employee) => `${employee.lastName} ${employee.firstName}`;
+const apiEmployeeName = personName(apiEmployee);
+const secondApiEmployeeName = personName(secondApiEmployee);
+const apiShiftTitle = `${apiShiftName} 22:00–07:00`;
+const secondApiShiftTitle = `${apiShiftName} 06:00–14:00`;
+const buttonLabel = (person, day, shiftTitle) => `${person}, ${day}, ${shiftTitle}`;
+
+// The route schedule when the pages are visited: the period 11.11 (a Wednesday) to 17.11.2026, the label of the
+// confirmed PUT, and a single cell, the second API shift on day 0 with a count of 1. The first person holds the witness
+// assignment there (the button is on), the second does not (the button is off), and the coverage is 1 of 1 without a
+// mark.
+const routeSchedulePeriod = "11.11–17.11.2026";
+const routeGrid = [
+  personRow(apiEmployeeName, {
+    0: [pressedButton(buttonLabel(apiEmployeeName, "śr. 11.11", secondApiShiftTitle), "true")],
+  }),
+  personRow(secondApiEmployeeName, {
+    0: [pressedButton(buttonLabel(secondApiEmployeeName, "śr. 11.11", secondApiShiftTitle), "false")],
+  }),
+];
+const routeCoverage = [["06:00–14:00", { 0: "1 z 1" }]];
+// The same schedule with the second person on cell C as well: two people where one is needed, so both buttons are on
+// and the counter reads 2 z 1 with the excess mark +1 (U+002B) and the words for a screen reader, and no shortage mark.
+const routeGridWithSurplus = [
+  personRow(apiEmployeeName, {
+    0: [pressedButton(buttonLabel(apiEmployeeName, "śr. 11.11", secondApiShiftTitle), "true")],
+  }),
+  personRow(secondApiEmployeeName, {
+    0: [pressedButton(buttonLabel(secondApiEmployeeName, "śr. 11.11", secondApiShiftTitle), "true")],
+  }),
+];
+const routeCoverageWithSurplus = [["06:00–14:00", { 0: "2 z 1+1nadmiar 1" }]];
+
+// The API schedule when the pages are visited: the period 15.11 (a Sunday) to 21.11.2026 and no assignment. Its cells
+// are the first shift on day 0 (5 people), the second shift on day 3 (1 person) and on day 4 (2 people), so each person
+// has three buttons, all off, and every counter is short by the whole count.
+const apiGridOf = (person) =>
+  personRow(person, {
+    0: [pressedButton(buttonLabel(person, "niedz. 15.11", apiShiftTitle), "false")],
+    3: [pressedButton(buttonLabel(person, "śr. 18.11", secondApiShiftTitle), "false")],
+    4: [pressedButton(buttonLabel(person, "czw. 19.11", secondApiShiftTitle), "false")],
+  });
+const apiGrid = [apiGridOf(apiEmployeeName), apiGridOf(secondApiEmployeeName)];
+const apiCoverage = [
+  ["22:00–07:00", { 0: `0 z 5${MINUS}5brakuje 5` }],
+  ["06:00–14:00", { 3: `0 z 1${MINUS}1brakuje 1`, 4: `0 z 2${MINUS}2brakuje 2` }],
+];
+
+// The container that PlannerLayout puts around every planner page, as its class tokens: `max-w-7xl` for a page that
+// gets the `wide` prop (the assignment page), `max-w-4xl` for the others. The classes are read from this element and
+// not from anywhere in the page, because a stylesheet that is inlined into the page holds both of them.
+const layoutClassesOf = (html) =>
+  tagsOf(html, "div")
+    .map((tag) => (attributeOf(tag, "class") ?? "").split(/\s+/))
+    .find((classes) => classes.includes("mx-auto") && classes.includes("w-full"));
+const hasWideLayout = (html) => {
+  const classes = layoutClassesOf(html);
+  return classes !== undefined && classes.includes("max-w-7xl") && !classes.includes("max-w-4xl");
+};
+const hasNarrowLayout = (html) => {
+  const classes = layoutClassesOf(html);
+  return classes !== undefined && classes.includes("max-w-4xl") && !classes.includes("max-w-7xl");
+};
+const layoutExcerpt = (html) => `the layout container has the classes ${JSON.stringify(layoutClassesOf(html))}`;
+
+// The assignment page of a schedule the steps above saved; its address needs the id, which only exists once the create
+// step has run, so it is built when the step runs. `which` names the schedule in the step; the page is not cached.
+const visitAssignPage = (which, id, expected) => [
+  `${planner.label}: GET /schedules/<id>/assign of ${which} shows ${expected.describe}`,
+  () => request(planner, `/schedules/${id()}/assign`),
+  { status: 200, cacheControl: "no-store", ...expected },
+];
+const visitApiAssignPage = (expected) => visitAssignPage("the API schedule", () => apiScheduleId, expected);
+const visitRouteAssignPage = (expected) =>
+  visitAssignPage("the schedule with an assignment", () => routeScheduleId, expected);
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -1743,6 +1950,8 @@ const steps = [
   visit(anonymous, "/shifts/new", 401),
   visit(anonymous, "/schedules", 401),
   visit(anonymous, "/schedules/new", 401),
+  // The gate answers before the page runs, so the id may be one that no schedule has: a planner would get a 404 there.
+  visit(anonymous, `/schedules/${unknownScheduleId}/assign`, 401),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
@@ -1789,6 +1998,7 @@ const steps = [
   visit(noRole, "/planner", 403),
   visit(noRole, "/schedules", 403),
   visit(noRole, "/schedules/new", 403),
+  visit(noRole, `/schedules/${unknownScheduleId}/assign`, 403),
   [
     `${noRole.label}: POST /api/schedules`,
     () => request(noRole, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
@@ -1835,6 +2045,7 @@ const steps = [
   visit(employee, "/schedules", 403),
   visit(employee, "/schedules/new", 403),
   visit(employee, `/schedules/${unknownScheduleId}`, 403),
+  visit(employee, `/schedules/${unknownScheduleId}/assign`, 403),
   [
     `${employee.label}: POST /api/employees`,
     () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
@@ -2450,7 +2661,25 @@ const steps = [
     "/schedules",
     200,
     listsApiSchedule,
-    "the API schedule: period 15.11-21.11.2026, label, 2 people, total 8, a creation date and the edit link",
+    "the API schedule: period 15.11-21.11.2026, label, 2 people, total 8, a creation date, the edit link and an assign link",
+    "no-store",
+  ),
+  // The link "Obsadź" to the assignment page, in the table row and in the card of the narrow layout, each named by the
+  // period and the label like the edit link.
+  visitChecked(
+    planner,
+    "/schedules",
+    200,
+    listsAssignLinkInRow,
+    'in the table row of the API schedule, the link "Obsadź" to /schedules/<id>/assign with the aria-label "Obsadź: <period>, <label>"',
+    "no-store",
+  ),
+  visitChecked(
+    planner,
+    "/schedules",
+    200,
+    listsAssignLinkInCard,
+    'in the card of the API schedule, the link "Obsadź" to /schedules/<id>/assign with the aria-label "Obsadź: <period>, <label>"',
     "no-store",
   ),
   visitChecked(planner, "/schedules", 200, hasD6Notice, "the D6 notice", "no-store"),
@@ -2471,6 +2700,18 @@ const steps = [
     describe: "the date, label, cells and people of the API schedule as the form state",
     cacheControl: "no-store",
   }),
+  visitApiSchedulePage(planner, 200, {
+    bodyCheck: linksToAssignPage,
+    describe: 'the link "Obsadź pracowników" to /schedules/<id>/assign',
+    cacheControl: "no-store",
+  }),
+  // A page without the `wide` prop keeps the narrow container; only the assignment page gets the wide one (see below).
+  visitApiSchedulePage(planner, 200, {
+    bodyCheck: hasNarrowLayout,
+    describe: "the narrow layout container (max-w-4xl, not max-w-7xl), as every page without the wide prop",
+    excerpt: layoutExcerpt,
+    cacheControl: "no-store",
+  }),
   // The edit page of a schedule that has assignments: the page counts them for the form (the number lets the form tell the
   // planner that a new date moves them) and must still render the form. The confirmation block and the date note are
   // client state, so the browser review shows them, not this step.
@@ -2479,6 +2720,93 @@ const steps = [
     describe: "the label of the route schedule, saved last by the confirmed PUT, in the label field",
     cacheControl: "no-store",
   }),
+  // The assignment page of the API schedule, which has no assignment: every button is off and every counter of the
+  // coverage table is short by the whole required count. Each step proves one thing, so a failure names its cause.
+  visitApiAssignPage({
+    bodyCheck: showsAssignHeading(apiSchedulePeriod, apiScheduleLabel),
+    describe:
+      'the title and heading "Obsadzanie grafiku", the period 15.11–21.11.2026 and the label of the API schedule',
+    excerpt: headingExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: linksBackFromAssignPage,
+    describe: 'the links "Edytuj grafik" to the edit page of the schedule and "Lista grafików" to the list',
+    excerpt: (html) => JSON.stringify(linksOf(html)),
+  }),
+  visitApiAssignPage({ bodyCheck: hasD6Notice, describe: "the D6 notice" }),
+  visitApiAssignPage({
+    bodyCheck: showsGrid(apiGrid),
+    describe:
+      "a row for each of the two people with, on days 0, 3 and 4, the button of the shift that runs that day and nothing else, every aria-pressed false",
+    excerpt: gridExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: showsCoverage(apiCoverage),
+    describe: `the coverage table with 0 z 5 and the shortage mark ${MINUS}5 for the first shift on day 0, 0 z 1 and ${MINUS}1 on day 3 and 0 z 2 and ${MINUS}2 on day 4 for the second one, and no counter on the other days`,
+    excerpt: coverageExcerpt,
+  }),
+  // The table needs the room: the assignment page has the wide container, not the narrow one of the other pages.
+  visitApiAssignPage({
+    bodyCheck: hasWideLayout,
+    describe: "the wide layout container (max-w-7xl, not max-w-4xl)",
+    excerpt: layoutExcerpt,
+  }),
+  // The assignment page of the route schedule, which holds one assignment (the witness): the first person's button is
+  // on, the second person's button for the same cell is off, and the single counter is full. Its label is the one of
+  // the confirmed PUT; reading it from trimmedRouteSchedule needs no ids, so it can be taken before the steps have run.
+  visitRouteAssignPage({
+    bodyCheck: showsAssignHeading(routeSchedulePeriod, trimmedRouteSchedule().label),
+    describe:
+      'the title and heading "Obsadzanie grafiku", the period 11.11–17.11.2026 and the label of the route schedule',
+    excerpt: headingExcerpt,
+  }),
+  visitRouteAssignPage({ bodyCheck: hasD6Notice, describe: "the D6 notice" }),
+  visitRouteAssignPage({
+    bodyCheck: showsGrid(routeGrid),
+    describe:
+      "a row for each of the two people with only the button of the single cell on day 0: aria-pressed true for the person with the assignment and false for the other",
+    excerpt: gridExcerpt,
+  }),
+  visitRouteAssignPage({
+    bodyCheck: showsCoverage(routeCoverage),
+    describe: `the coverage table with a single row whose day 0 reads 1 z 1 without a shortage (${MINUS}) or excess (+) mark and no counter on the other days`,
+    excerpt: coverageExcerpt,
+  }),
+  // An excess: a second person on cell C, which needs one. No schedule above has more people than it needs, so this is
+  // the only place that shows the excess mark. The steps end with the witness alone again, the state that the rest of
+  // the run (and the cleanup) expects of this schedule.
+  plannerCallsAssignments(
+    "POST",
+    "adds the assignment of cell C for the second person, one more than the cell needs",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("C", secondApiEmployeeId) }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments(
+    "shows cell C for both people after the second POST",
+    routeAssignmentsAmong(["C", "first"], ["C", "second"]),
+    "exactly two assignments, cell C of the first and of the second person",
+  ),
+  visitRouteAssignPage({
+    bodyCheck: showsGrid(routeGridWithSurplus),
+    describe:
+      "two people on cell C: a row for each with only the button of the cell on day 0, both with aria-pressed true",
+    excerpt: gridExcerpt,
+  }),
+  visitRouteAssignPage({
+    bodyCheck: showsCoverage(routeCoverageWithSurplus),
+    describe: `two people on cell C: the coverage row whose day 0 reads 2 z 1 with the excess mark +1 and the words nadmiar 1, and no shortage mark (${MINUS}, brakuje)`,
+    excerpt: coverageExcerpt,
+  }),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell C of the second person takes the excess away",
+    routeAssignmentsUrl,
+    () => routeAssignment("C", secondApiEmployeeId),
+    routeWitness,
+    "the witness alone (cell C of the first person)",
+  ),
+  visit(planner, `/schedules/${unknownScheduleId}/assign`, 404, notFoundScheduleMessage, "no-store"),
+  visit(planner, "/schedules/not-a-uuid/assign", 404, notFoundScheduleMessage, "no-store"),
   visit(planner, `/schedules/${unknownScheduleId}`, 404, notFoundScheduleMessage),
   visit(planner, "/schedules/not-a-uuid", 404, notFoundScheduleMessage),
 

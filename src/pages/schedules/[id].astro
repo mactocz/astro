@@ -45,9 +45,18 @@ Astro.response.headers.set("Cache-Control", "no-store");
 <PlannerLayout title={schedule ? "Edytuj grafik" : "Nie znaleziono grafiku"}>
   {schedule ? (
     <>
-      <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
-        Edytuj grafik
-      </h1>
+      <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <h1 class="bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+          Edytuj grafik
+        </h1>
+        {/* An outline, not a fill: the way to the assignments must not compete with the purple Save button of the form. */}
+        <a
+          href={`/schedules/${schedule.id}/assign`}
+          class="rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-white/20"
+        >
+          Obsadź pracowników
+        </a>
+      </div>
 
       <ScheduleNotice />
 
