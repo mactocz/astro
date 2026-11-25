@@ -35,7 +35,11 @@ jobs:
           cache: npm
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned to the version of the "supabase" dev dependency (see package-lock.json), so CI runs the CLI a developer
+          # runs locally. "latest" asked the GitHub API for the newest release on every run, and two pull requests that
+          # started together hit its rate limit ("Failed to resolve latest Supabase CLI release"). Raise this together with
+          # the dev dependency.
+          version: 2.117.0
       - run: npm ci
       - name: Start local Supabase
         run: |
