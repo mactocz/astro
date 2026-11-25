@@ -358,5 +358,5 @@ S-10 (`employee-invitation`) jest planowane i może być implementowane równole
 
 - [x] 4.4 W przeglądarce na desktopie: lista, tworzenie i edycja grafiku, siatka z przewijaniem poziomym i przyklejoną kolumną, zmiana daty zmienia nagłówki dni, błędy przy polach i fokus na pierwszym błędnym polu, obsługa klawiaturą, informacja D6 — e7a1ee3
 - [x] 4.5 Na telefonie (lub emulacji): formularz da się wypełnić, pole daty działa, siatka przewija się poziomo bez rozjeżdżania strony — e7a1ee3
-- [ ] 4.6 Migracja jest zastosowana na hostowanym projekcie (`npx supabase db push`) przed wdrożeniem kodu
-- [ ] 4.7 Po wdrożeniu (`npm run build` i `npx wrangler deploy`) grafik da się utworzyć i edytować na produkcji; nie uruchamiać `npm run smoke` na produkcji
+- [x] 4.6 Migracja jest zastosowana na hostowanym projekcie (`npx supabase db push`) przed wdrożeniem kodu — 0425ce6
+- [x] 4.7 Po wdrożeniu (`npm run build` i `npx wrangler deploy`) grafik da się utworzyć i edytować na produkcji; nie uruchamiać `npm run smoke` na produkcji — b7e4360
