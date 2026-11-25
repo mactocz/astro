@@ -452,7 +452,7 @@ Stan na 2026-11-24: PR #9 (pin CLI) i #8 (S-03) są scalone do `master` merge co
 
 - [x] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — e1cf758
 - [x] 5.2 Smoke z krokami stron przechodzi lokalnie: `npm run smoke` — e1cf758
-- [ ] 5.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
+- [x] 5.3 CI na pull requeście jest zielone (job `ci` i job `smoke`) — edc01c3
 
 #### Manual
 
