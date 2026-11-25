@@ -1,10 +1,10 @@
 ---
 change_id: manual-shift-assignment
 title: Manual shift assignment
-status: implementing
+status: archived
 created: 2026-11-24
-updated: 2026-11-24
-archived_at: null
+updated: 2026-11-25
+archived_at: 2026-11-25T10:17:35Z
 ---
 
 ## Notes
