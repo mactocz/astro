@@ -350,13 +350,13 @@ Równolegle jest planowany S-06 (`workload-vs-norm`, plan w `context/changes/wor
 
 #### Automated
 
-- [x] 1.1 Testy fundamentów i opcji wyspy przechodzą w workerd: `npm test`
-- [x] 1.2 Linting przechodzi: `npm run lint`
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy fundamentów i opcji wyspy przechodzą w workerd: `npm test` — 85ef16d
+- [x] 1.2 Linting przechodzi: `npm run lint` — 85ef16d
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 85ef16d
 
 #### Manual
 
-- [x] 1.4 Lista świąt (w tym ruchomych i Wigilia od 2025), wektory normy (176, 168, 176 h oraz 40, 32, 30 h) i definicja normy tygodniowej (40 h × etat − 8 h × etat za święto w dzień inny niż niedziela) zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Lista świąt (w tym ruchomych i Wigilia od 2025), wektory normy (176, 168, 176 h oraz 40, 32, 30 h) i definicja normy tygodniowej (40 h × etat − 8 h × etat za święto w dzień inny niż niedziela) zostały przejrzane i zatwierdzone przez autora — 85ef16d
 
 ### Phase 2: Reguły odpoczynku i godzin
 
