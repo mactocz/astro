@@ -437,14 +437,14 @@ Stan na 2026-11-24: PR #9 (pin CLI) i #8 (S-03) są scalone do `master` merge co
 
 #### Automated
 
-- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 4.2 Smoke z krokami stron przechodzi lokalnie: `npm run smoke`
+- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 376cfd2
+- [x] 4.2 Smoke z krokami stron przechodzi lokalnie: `npm run smoke` — 376cfd2
 
 #### Manual
 
-- [x] 4.3 W przeglądarce, na grafiku z przypisaniami: usunięcie komórki lub odznaczenie osoby i zapis pokazuje blok z liczbą przypisań; "Wróć do edycji" zostawia dane bez zmian, "Zapisz i usuń przypisania" zapisuje i usuwa dokładnie te przypisania
-- [x] 4.4 Zmiana samej etykiety, liczby osób w komórce i dodanie osoby lub komórki zapisują się bez bloku i zachowują przypisania
-- [x] 4.5 Zmiana daty początkowej grafiku z przypisaniami pokazuje informację bez blokowania zapisu; bez przypisań informacji nie ma
+- [x] 4.3 W przeglądarce, na grafiku z przypisaniami: usunięcie komórki lub odznaczenie osoby i zapis pokazuje blok z liczbą przypisań; "Wróć do edycji" zostawia dane bez zmian, "Zapisz i usuń przypisania" zapisuje i usuwa dokładnie te przypisania — 376cfd2
+- [x] 4.4 Zmiana samej etykiety, liczby osób w komórce i dodanie osoby lub komórki zapisują się bez bloku i zachowują przypisania — 376cfd2
+- [x] 4.5 Zmiana daty początkowej grafiku z przypisaniami pokazuje informację bez blokowania zapisu; bez przypisań informacji nie ma — 376cfd2
 
 ### Phase 5: Widok obsadzania
 
