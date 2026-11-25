@@ -1,7 +1,7 @@
 ---
 change_id: weekly-schedule-draft
 title: Weekly schedule draft
-status: implemented
+status: impl_reviewed
 created: 2026-11-05
 updated: 2026-11-25
 archived_at: null
