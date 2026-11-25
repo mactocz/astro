@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { MockInstance } from "vitest";
 import {
+  EMPLOYEE_IDS_MAX,
   PERIOD_DAYS,
   SCHEDULE_LABEL_MAX_LENGTH,
   SCHEDULE_MAX_DATE,
@@ -7,6 +9,9 @@ import {
   STAFFING_MAX,
   STAFFING_MAX_CELLS,
   addDays,
+  classifySaveFailure,
+  compareCells,
+  compareText,
   dayColumns,
   formatPeriod,
   parseIsoDate,
@@ -85,6 +90,60 @@ function gridOf(count: number): { shiftId: string; dayOffset: number; requiredCo
   }));
 }
 
+// `count` different employee ids.
+function employeeIdsOf(count: number): string[] {
+  return Array.from({ length: count }, (_unused, index) => {
+    const serial = String(index + 1).padStart(12, "0");
+    return `00000000-0000-4000-8000-${serial}`;
+  });
+}
+
+// The methods of Date that read or write the local time of the machine, or write it out. The dates of a schedule are
+// calendar dates, so none of them has any business in the date helpers.
+const LOCAL_TIME_METHODS = [
+  "getFullYear",
+  "getMonth",
+  "getDate",
+  "getDay",
+  "getHours",
+  "getMinutes",
+  "getSeconds",
+  "getMilliseconds",
+  "getTimezoneOffset",
+  "setFullYear",
+  "setMonth",
+  "setDate",
+  "setHours",
+  "setMinutes",
+  "setSeconds",
+  "setMilliseconds",
+  "toString",
+  "toDateString",
+  "toTimeString",
+  "toLocaleString",
+  "toLocaleDateString",
+  "toLocaleTimeString",
+] as const;
+
+// Runs `run` and fails when it touched any local-time method of Date; returns what `run` returned. The workerd runtime
+// always has the zone UTC, so the clock-change dates alone cannot show an implementation built on `getDate()` or
+// `setDate()` (right in UTC, wrong in Warsaw); watching the calls can.
+function withoutLocalTime<T>(run: () => T): T {
+  const spies = LOCAL_TIME_METHODS.map((name) => vi.spyOn(Date.prototype, name) as MockInstance);
+  let result: T;
+  let called: string[];
+  try {
+    result = run();
+  } finally {
+    called = LOCAL_TIME_METHODS.filter((_name, index) => spies[index].mock.calls.length > 0);
+    for (const spy of spies) {
+      spy.mockRestore();
+    }
+  }
+  expect(called, "the date helpers read the local time of the machine").toStrictEqual([]);
+  return result;
+}
+
 describe("schedule limits", () => {
   it("keeps the documented bounds", () => {
     expect([
@@ -94,7 +153,34 @@ describe("schedule limits", () => {
       SCHEDULE_MIN_DATE,
       SCHEDULE_MAX_DATE,
       STAFFING_MAX_CELLS,
-    ]).toStrictEqual([60, 99, 7, "2020-01-01", "2099-12-31", 350]);
+      EMPLOYEE_IDS_MAX,
+    ]).toStrictEqual([60, 99, 7, "2020-01-01", "2099-12-31", 350, 1000]);
+  });
+});
+
+describe("the guard against local time", () => {
+  it("fails for code that reads a local-time method of Date", () => {
+    expect(() => withoutLocalTime(() => new Date(0).getDate())).toThrow();
+    expect(() => withoutLocalTime(() => new Date(0).setDate(5))).toThrow();
+    expect(() => withoutLocalTime(() => new Date(0).getTimezoneOffset())).toThrow();
+  });
+
+  it("lets code that only reads UTC pass, and gives back what it returned", () => {
+    expect(withoutLocalTime(() => new Date(Date.UTC(2026, 2, 29)).getUTCDate())).toBe(29);
+  });
+
+  it("puts every method back, also after a failure", () => {
+    expect(() => withoutLocalTime(() => new Date(0).getDate())).toThrow();
+    expect(() =>
+      withoutLocalTime(() => {
+        throw new Error("boom");
+      }),
+    ).toThrow("boom");
+
+    for (const name of LOCAL_TIME_METHODS) {
+      const method: unknown = Reflect.get(Date.prototype, name);
+      expect(vi.isMockFunction(method), name).toBe(false);
+    }
   });
 });
 
@@ -154,7 +240,8 @@ describe("addDays and periodEnd", () => {
     ["a result after the accepted range", "2099-12-31", 6, "2100-01-06"],
     ["a result before the accepted range", "2020-01-01", -1, "2019-12-31"],
   ])("%s: %s plus %d days is %s", (_label, start, days, expected) => {
-    expect(addDays(start, days)).toBe(expected);
+    // Also proves that no local-time method of Date is used: workerd runs in UTC, so a clock change cannot show it.
+    expect(withoutLocalTime(() => addDays(start, days))).toBe(expected);
   });
 
   it("ends the period six days after the start", () => {
@@ -320,6 +407,43 @@ describe("formatPeriod", () => {
   });
 });
 
+describe("the date helpers around clock changes", () => {
+  // The days either side of the clock changes of Europe (2026-03-29, 2026-10-25) and of the United States (2026-03-08,
+  // 2026-11-01).
+  it.each<[string, string, string, string]>([
+    ["the spring clock change in Europe", "2026-03-28", "sob. 28.03", "28.03–03.04.2026"],
+    ["the day of the spring clock change in Europe", "2026-03-29", "niedz. 29.03", "29.03–04.04.2026"],
+    ["the autumn clock change in Europe", "2026-10-24", "sob. 24.10", "24.10–30.10.2026"],
+    ["the day of the autumn clock change in Europe", "2026-10-25", "niedz. 25.10", "25.10–31.10.2026"],
+    ["the spring clock change in the United States", "2026-03-08", "niedz. 08.03", "08.03–14.03.2026"],
+    ["the autumn clock change in the United States", "2026-11-01", "niedz. 01.11", "01.11–07.11.2026"],
+  ])("reads no local time and counts calendar days around %s (%s)", (_label, start, firstLabel, period) => {
+    const results = withoutLocalTime(() => ({
+      parsed: parseIsoDate(start),
+      columns: dayColumns(start),
+      period: formatPeriod(start),
+      end: periodEnd(start),
+      before: addDays(start, -1),
+      validated: validateScheduleInput({ ...validInput, startDate: start }),
+    }));
+
+    expect(results.parsed).toBeDefined();
+    expect(results.columns).toHaveLength(PERIOD_DAYS);
+    expect(results.columns[0].label).toBe(firstLabel);
+    // Seven calendar days one after the other, whatever the length of the days in between. toISOString is independent of
+    // the code under test and always UTC.
+    const expectedDates = results.columns.map((_column, offset) => {
+      const time = Date.parse(`${start}T00:00:00Z`) + offset * 86_400_000;
+      return new Date(time).toISOString().slice(0, 10);
+    });
+    expect(results.columns.map((column) => column.date)).toStrictEqual(expectedDates);
+    expect(results.period).toBe(period);
+    expect(results.end).toBe(results.columns[PERIOD_DAYS - 1].date);
+    expect(addDays(results.before, 1)).toBe(start);
+    expect(results.validated.ok).toBe(true);
+  });
+});
+
 describe("validateScheduleInput", () => {
   it("normalises the cells and the employees to a canonical order", () => {
     expect(validValue()).toStrictEqual(validValueSorted);
@@ -370,19 +494,25 @@ describe("validateScheduleInput label", () => {
     ["null", null, null],
     ["an empty string", "", null],
     ["spaces only", "   ", null],
-    ["a no-break space only", " ", null],
+    ["a no-break space only", "\u00A0", null],
     ["a plain label", "Tydzień 46", "Tydzień 46"],
     ["a Polish letter", "Łąka", "Łąka"],
     ["outer spaces", "  Tydzień 46  ", "Tydzień 46"],
     ["a double space", "Tydzień  46", "Tydzień 46"],
-    ["a no-break space inside", "Tydzień 46", "Tydzień 46"],
+    ["a no-break space inside", "Tydzień\u00A046", "Tydzień 46"],
     ["the maximum length", "a".repeat(SCHEDULE_LABEL_MAX_LENGTH), "a".repeat(SCHEDULE_LABEL_MAX_LENGTH)],
     ["the maximum length in emoji", "😀".repeat(SCHEDULE_LABEL_MAX_LENGTH), "😀".repeat(SCHEDULE_LABEL_MAX_LENGTH)],
-    ["an invisible character next to a letter", "Gru​dzień", "Gru​dzień"],
+    ["an invisible character next to a letter", "Gru\u200Bdzień", "Gru\u200Bdzień"],
+    ["an emoji with a variation selector", "\u2764\uFE0F", "\u2764\uFE0F"],
+    ["a variation selector after a letter", "a\uFE0F", "a\uFE0F"],
+    // Decomposed (NFD) Polish text, as some keyboards and systems type it: its combining marks belong to letters.
+    ["a decomposed Polish letter with an ogonek", "\u0141a\u0328ka", "\u0141a\u0328ka"],
+    ["a decomposed Polish word", "Z\u0307o\u0301\u0142c\u0301", "Z\u0307o\u0301\u0142c\u0301"],
+    ["decomposed Polish text with a double space", "Za\u0328  s\u0301", "Za\u0328 s\u0301"],
     [
       "an emoji sequence joined with zero-width joiners",
-      "\u{1F468}‍\u{1F469}‍\u{1F467}",
-      "\u{1F468}‍\u{1F469}‍\u{1F467}",
+      "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}",
+      "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}",
     ],
   ])("accepts %s", (_name, label, expected) => {
     expect(validValue({ label }).label).toBe(expected);
@@ -409,14 +539,49 @@ describe("validateScheduleInput label", () => {
     ["a leading tab", "\tTydzień 46"],
     ["a delete character", "Tydzień\u007f"],
     ["a C1 control character", "Tydzień\u0085"],
-    ["only a zero-width space", "​"],
-    ["only a Hangul filler", "ㅤ"],
-    ["only a braille blank", "⠀"],
-    ["only spaces and zero-width spaces", " ​ ​ "],
+    ["only a zero-width space", "\u200B"],
+    ["only a Hangul filler", "\u3164"],
+    ["only a braille blank", "\u2800"],
+    ["only spaces and zero-width spaces", " \u200B \u200B "],
+    ["only the Hangul choseong and jungseong fillers", "\u115F\u1160"],
+    ["only a halfwidth Hangul filler", "\uFFA0"],
+    ["only a combining grapheme joiner", "\u034F"],
+    ["only a variation selector", "\uFE0F"],
+    ["only a Mongolian variation selector", "\u180B"],
+    ["only a variation selector of the supplement", "\u{E0100}"],
+    ["only the Khmer inherent vowels", "\u17B4\u17B5"],
+    ["only spaces and invisible marks of every kind", " \u034F \uFE0F \u200D \u180C "],
     ["a lone high surrogate", "Tydz\uD800"],
     ["a lone low surrogate", "\uDC00Tydz"],
   ])("rejects %s", (_name, label) => {
     expectOnlyError({ label }, "label");
+  });
+
+  // The bidirectional controls reorder the text around them, so they are refused anywhere in a label, not only as the
+  // only thing in it.
+  it.each<[string, number]>([
+    ["the Arabic letter mark (U+061C)", 0x061c],
+    ["the left-to-right mark (U+200E)", 0x200e],
+    ["the right-to-left mark (U+200F)", 0x200f],
+    ["the left-to-right embedding (U+202A)", 0x202a],
+    ["the right-to-left embedding (U+202B)", 0x202b],
+    ["the pop directional formatting (U+202C)", 0x202c],
+    ["the left-to-right override (U+202D)", 0x202d],
+    ["the right-to-left override (U+202E)", 0x202e],
+    ["the left-to-right isolate (U+2066)", 0x2066],
+    ["the right-to-left isolate (U+2067)", 0x2067],
+    ["the first strong isolate (U+2068)", 0x2068],
+    ["the pop directional isolate (U+2069)", 0x2069],
+  ])("rejects %s in a label, alone or next to text", (_name, codePoint) => {
+    const control = String.fromCodePoint(codePoint);
+
+    expectOnlyError({ label: control }, "label");
+    expectOnlyError({ label: `Tydzień${control}46` }, "label");
+    expectOnlyError({ label: `${control}Tydzień 46` }, "label");
+  });
+
+  it("uses the same message for a bidirectional control as for a control character", () => {
+    expect(errorsOf({ label: "Tydzień\u202E46" }).label).toBe(errorsOf({ label: "Tydzień\t46" }).label);
   });
 
   it("counts the length in code points after collapsing spaces", () => {
@@ -646,6 +811,113 @@ describe("validateScheduleInput employees", () => {
   it("words an empty list differently from a bad id", () => {
     expect(errorsOf({ employeeIds: [] }).employeeIds).not.toBe(errorsOf({ employeeIds: ["x"] }).employeeIds);
   });
+
+  it("accepts exactly the largest number of employees and rejects one more", () => {
+    expect(validValue({ employeeIds: employeeIdsOf(EMPLOYEE_IDS_MAX) }).employeeIds).toStrictEqual(
+      employeeIdsOf(EMPLOYEE_IDS_MAX),
+    );
+    expectOnlyError({ employeeIds: employeeIdsOf(EMPLOYEE_IDS_MAX + 1) }, "employeeIds");
+  });
+
+  it("counts a repeated id as an entry, so a list of repeats is refused at the same size", () => {
+    const repeats = (count: number) => Array.from({ length: count }, () => ANNA);
+
+    expect(validValue({ employeeIds: repeats(EMPLOYEE_IDS_MAX) }).employeeIds).toStrictEqual([ANNA]);
+    expectOnlyError({ employeeIds: repeats(EMPLOYEE_IDS_MAX + 1) }, "employeeIds");
+  });
+
+  it("gives a list that is too long its own message, naming the limit", () => {
+    const tooMany = errorsOf({ employeeIds: employeeIdsOf(EMPLOYEE_IDS_MAX + 1) }).employeeIds;
+
+    expect(tooMany).toContain(String(EMPLOYEE_IDS_MAX));
+    expect(tooMany).not.toBe(errorsOf({ employeeIds: [] }).employeeIds);
+    expect(tooMany).not.toBe(errorsOf({ employeeIds: ["x"] }).employeeIds);
+  });
+
+  it("checks the size before it reads any id, so a huge list is answered with the size message", () => {
+    // Every entry is a bad id, which would give the other message if the entries were read first.
+    const huge = Array.from({ length: 100_000 }, () => "not-a-uuid");
+
+    expect(errorsOf({ employeeIds: huge }).employeeIds).toBe(
+      errorsOf({ employeeIds: employeeIdsOf(EMPLOYEE_IDS_MAX + 1) }).employeeIds,
+    );
+  });
+});
+
+describe("compareText", () => {
+  it.each<[string, string, string, number]>([
+    ["an earlier text", "a", "b", -1],
+    ["a later text", "b", "a", 1],
+    ["equal texts", "abc", "abc", 0],
+    ["two empty texts", "", "", 0],
+    ["an empty text before any other", "", "a", -1],
+    ["a prefix before the longer text", "a", "aa", -1],
+    ["an upper-case letter before a lower-case one (code units, not a collator)", "Z", "a", -1],
+    ["a Polish letter after z (code units, not a collator)", "ą", "z", 1],
+  ])("puts %s: %j and %j give %d", (_label, a, b, expected) => {
+    expect(compareText(a, b)).toBe(expected);
+  });
+
+  it("sorts ids in plain code-unit order", () => {
+    expect(["b", "B", "a", "A", "ą"].sort(compareText)).toStrictEqual(["A", "B", "a", "b", "ą"]);
+  });
+});
+
+describe("compareCells", () => {
+  const cell = (shiftId: string, dayOffset: number) => ({ shiftId, dayOffset });
+
+  it.each<[string, { shiftId: string; dayOffset: number }, { shiftId: string; dayOffset: number }, number]>([
+    ["an earlier shift id", cell(NIGHT, 3), cell(MORNING, 3), -1],
+    ["a later shift id", cell(MORNING, 3), cell(NIGHT, 3), 1],
+    ["an earlier shift id even when its day is later", cell(NIGHT, 6), cell(MORNING, 0), -1],
+    ["the same shift on an earlier day", cell(MORNING, 1), cell(MORNING, 4), -1],
+    ["the same shift on a later day", cell(MORNING, 4), cell(MORNING, 1), 1],
+    ["the same cell", cell(MORNING, 2), cell(MORNING, 2), 0],
+  ])("orders %s", (_label, a, b, expected) => {
+    expect(Math.sign(compareCells(a, b))).toBe(expected);
+  });
+
+  it("takes any object with the two keys, so a staffing cell and an assignment fit", () => {
+    const staffingCell = { shiftId: MORNING, dayOffset: 1, requiredCount: 2 };
+    const assignment = { shiftId: MORNING, dayOffset: 1, employeeId: ANNA };
+
+    expect(compareCells(staffingCell, assignment)).toBe(0);
+    expect(compareCells(staffingCell, { ...assignment, dayOffset: 2 })).toBeLessThan(0);
+  });
+
+  it("sorts cells by shift id, then day, whatever the input order", () => {
+    const cells = [cell(MORNING, 1), cell(NIGHT, 6), cell(MORNING, 0), cell(NOON, 0), cell(NIGHT, 0)];
+    const sorted = [cell(NIGHT, 0), cell(NIGHT, 6), cell(MORNING, 0), cell(MORNING, 1), cell(NOON, 0)];
+
+    for (const seed of [1, 2, 3, 4]) {
+      expect(seededShuffle(cells, seed).sort(compareCells)).toStrictEqual(sorted);
+    }
+  });
+});
+
+describe("classifySaveFailure", () => {
+  it.each<[string, string | undefined, string | null | undefined, ReturnType<typeof classifySaveFailure>]>([
+    ["a schedule that is not there", "PT404", null, { kind: "not_found" }],
+    ["a schedule that is not there, whatever the details", "PT404", "3", { kind: "not_found" }],
+    ["a shift or an employee that does not exist", "23503", "Key is not present", { kind: "unknown_reference" }],
+    ["a foreign key violation without details", "23503", undefined, { kind: "unknown_reference" }],
+    ["a removal that needs a confirmation", "PT409", "3", { kind: "removal_unconfirmed", removed: 3 }],
+    ["the smallest removal", "PT409", "1", { kind: "removal_unconfirmed", removed: 1 }],
+    ["a removal of many", "PT409", "120", { kind: "removal_unconfirmed", removed: 120 }],
+    ["a removal without details", "PT409", undefined, { kind: "failed" }],
+    ["a removal with null details", "PT409", null, { kind: "failed" }],
+    ["a removal with empty details", "PT409", "", { kind: "failed" }],
+    ["a removal of zero", "PT409", "0", { kind: "failed" }],
+    ["a removal of a negative count", "PT409", "-2", { kind: "failed" }],
+    ["a removal with details that are not a number", "PT409", "many", { kind: "failed" }],
+    ["an unknown code", "42501", "3", { kind: "failed" }],
+    ["a code of PostgREST itself", "PGRST301", null, { kind: "failed" }],
+    ["no code at all", undefined, undefined, { kind: "failed" }],
+    ["an empty code", "", "3", { kind: "failed" }],
+  ])("reads %s as its own kind (%s, %j)", (_label, code, details, expected) => {
+    // toStrictEqual also tells the number 3 from the text "3".
+    expect(classifySaveFailure(code, details)).toStrictEqual(expected);
+  });
 });
 
 describe("validateScheduleInput errors", () => {
@@ -760,6 +1032,50 @@ describe("validateScheduleInput repeatability", () => {
     validateScheduleInput(input);
 
     expect(input).toStrictEqual(before);
+  });
+
+  // Normalising what is already normalised changes nothing: the value that comes out is a valid input that gives itself
+  // back, so a stored schedule that is saved again is not altered by the second pass.
+  it.each<[string, Record<string, unknown>]>([
+    ["the plain input", {}],
+    ["a label with runs of spaces, a no-break space and outer spaces", { label: "  Tydzień \u00A0\u00A0  46   " }],
+    ["a label that is only spaces", { label: "   " }],
+    ["no label", { label: undefined }],
+    [
+      "a label of the largest length once its spaces are collapsed",
+      { label: `${"a".repeat(30)}    ${"b".repeat(29)}` },
+    ],
+    [
+      "a label with an emoji, decomposed Polish letters and invisible characters",
+      { label: "😀 Za\u0328\u200B\uFE0F  s\u0301" },
+    ],
+    [
+      "employees unsorted, repeated and in capitals",
+      { employeeIds: [BARTEK.toUpperCase(), ANNA, CEZARY, ANNA.toUpperCase(), BARTEK] },
+    ],
+    [
+      "cells in capitals and out of order, with a negative zero as the day offset",
+      {
+        staffing: [
+          { shiftId: NOON.toUpperCase(), dayOffset: 6, requiredCount: 99 },
+          { shiftId: MORNING, dayOffset: -0, requiredCount: 1 },
+          { shiftId: NIGHT.toUpperCase(), dayOffset: 3, requiredCount: 50 },
+        ],
+      },
+    ],
+    ["the first accepted date", { startDate: SCHEDULE_MIN_DATE }],
+    ["the last accepted date, whose week ends in the next century", { startDate: SCHEDULE_MAX_DATE }],
+    ["a leap day", { startDate: "2024-02-29" }],
+    ["a clock change", { startDate: "2026-03-29" }],
+    [
+      "a full grid and the largest team",
+      { staffing: gridOf(STAFFING_MAX_CELLS), employeeIds: employeeIdsOf(EMPLOYEE_IDS_MAX) },
+    ],
+  ])("gives the same value when its own result is validated again: %s", (_name, overrides) => {
+    const value = validValue(overrides);
+
+    expect(validateScheduleInput(value)).toStrictEqual({ ok: true, value });
+    expect(validateScheduleInput(structuredClone(value))).toStrictEqual({ ok: true, value });
   });
 });
 

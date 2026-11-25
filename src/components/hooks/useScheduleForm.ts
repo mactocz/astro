@@ -1,11 +1,6 @@
 import { useState, type SubmitEvent } from "react";
-import {
-  PERIOD_DAYS,
-  SCHEDULE_LABEL_MAX_LENGTH,
-  STAFFING_MAX,
-  totalRequired,
-  validateScheduleInput,
-} from "@/lib/services/schedule";
+import { PERIOD_DAYS, STAFFING_MAX, totalRequired, validateScheduleInput } from "@/lib/services/schedule";
+import { capLabelInput, parseCount } from "@/lib/services/schedule-form";
 import type {
   EmployeeOption,
   Schedule,
@@ -40,6 +35,9 @@ const SAVE_ERROR = "Nie udało się zapisać. Spróbuj ponownie.";
 const NOT_FOUND_ERROR = "Nie znaleziono tego grafiku. Wróć do listy grafików i spróbuj ponownie.";
 const UNKNOWN_REFERENCE_ERROR =
   "Zmiana lub pracownik z formularza już nie istnieje. Odśwież stronę i spróbuj ponownie.";
+// The grid is the one field whose text is read in the form before the validation (a cell is a number, not text): a cell
+// that holds something else than digits has no number to hand to `validateScheduleInput`, so the form words it itself.
+const COUNT_FORMAT_ERROR = `Liczba osób na zmianie musi składać się z samych cyfr (od 1 do ${STAFFING_MAX}); puste pole lub 0 oznacza, że tego dnia nie ma takiej zmiany.`;
 
 /** The key of one cell of the grid in `ScheduleFormValues.counts`. */
 export function countKey(shiftId: string, dayOffset: number): string {
@@ -69,20 +67,24 @@ function initialValues(schedule: Schedule | undefined, employees: readonly Emplo
   };
 }
 
-// What the grid sends. A cell that is empty or 0 means no shift that day and is left out; any other text goes as the
-// number it says, even one that validateScheduleInput refuses (100, 1.5, or NaN for rubbish), so the form and the server
-// give the same answer.
-function staffingOf(values: ScheduleFormValues): StaffingCell[] {
+// What the grid sends. A cell that is empty or 0 means no shift that day and is left out; a text of digits goes as the
+// number it says, even one that validateScheduleInput refuses (100), so the form and the server give the same answer.
+// A cell with anything else in it (see `parseCount`) is not left out as if it were empty: it sets `unreadable`, and the
+// form reports it.
+function staffingOf(values: ScheduleFormValues): { cells: StaffingCell[]; unreadable: boolean } {
   const cells: StaffingCell[] = [];
+  let unreadable = false;
   for (const shiftId of values.shiftIds) {
     for (let dayOffset = 0; dayOffset < PERIOD_DAYS; dayOffset++) {
-      const requiredCount = Number((values.counts[countKey(shiftId, dayOffset)] ?? "").trim());
-      if (requiredCount !== 0) {
+      const requiredCount = parseCount(values.counts[countKey(shiftId, dayOffset)] ?? "");
+      if (requiredCount === undefined) {
+        unreadable = true;
+      } else if (requiredCount !== 0) {
         cells.push({ shiftId, dayOffset, requiredCount });
       }
     }
   }
-  return cells;
+  return { cells, unreadable };
 }
 
 const FIELD_ORDER: readonly ScheduleField[] = ["startDate", "label", "staffing", "employeeIds"];
@@ -147,6 +149,10 @@ export function useScheduleForm({
   // Set when the server refused a save that would delete assignments; the form then asks for a confirmation. Any change to
   // a value clears it (the server asks again if the number differs for the new value).
   const [removal, setRemoval] = useState<PendingRemoval | null>(null);
+  // Set when the request to create a schedule threw: no answer came back, so it is not known whether the schedule was
+  // stored. A new POST could add it a second time (a period is not unique, on purpose), so saving stays blocked until the
+  // planner has looked at the list; the form does not unblock itself.
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
 
   function clearError(field: ScheduleField) {
     setFieldErrors((prev) => ({ ...prev, [field]: undefined }));
@@ -159,9 +165,10 @@ export function useScheduleForm({
   }
 
   function setLabel(value: string) {
-    // The limit counts characters (code points), like the server and the database; the `maxLength` attribute would count
-    // UTF-16 units and stop a label with emoji too early.
-    setValues((prev) => ({ ...prev, label: Array.from(value).slice(0, SCHEDULE_LABEL_MAX_LENGTH).join("") }));
+    // The limit of the label is checked by the validation, after the whitespace is collapsed, like the server does; here
+    // only a huge paste is cut (see `capLabelInput`). It counts code points, as the `maxLength` attribute (UTF-16 units)
+    // would stop a label with emoji too early.
+    setValues((prev) => ({ ...prev, label: capLabelInput(value) }));
     setRemoval(null);
     clearError("label");
   }
@@ -252,7 +259,12 @@ export function useScheduleForm({
         setServerError(response.status === 401 || response.status === 403 ? SESSION_ERROR : SAVE_ERROR);
       }
     } catch {
-      setServerError(SAVE_ERROR);
+      if (schedule) {
+        // Saving a stored schedule again writes the same thing, so the planner may simply try once more.
+        setServerError(SAVE_ERROR);
+      } else {
+        setOutcomeUnknown(true);
+      }
     }
     setRemoval(refused);
     setPending(false);
@@ -260,15 +272,30 @@ export function useScheduleForm({
 
   async function submit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (pending) {
+    if (pending || outcomeUnknown) {
       return;
     }
-    const validation = validateScheduleInput({
-      startDate: values.startDate,
-      label: values.label,
-      staffing: staffingOf(values),
-      employeeIds: values.employeeIds,
-    });
+    let validation: ReturnType<typeof validateScheduleInput>;
+    // The validation can throw: `isWellFormed`, which it calls on the label, is missing in Chrome before 111, Safari before
+    // 16.4 and Firefox before 119. The form must not go silent then, so it says the save failed, as for a request that fails.
+    try {
+      const staffing = staffingOf(values);
+      validation = validateScheduleInput({
+        startDate: values.startDate,
+        label: values.label,
+        staffing: staffing.cells,
+        employeeIds: values.employeeIds,
+      });
+      if (staffing.unreadable) {
+        // The other fields are still reported, all at once; the grid gets the message about its unreadable cells.
+        const errors: ScheduleFieldErrors = validation.ok ? {} : validation.errors;
+        validation = { ok: false, errors: { ...errors, staffing: COUNT_FORMAT_ERROR } };
+      }
+    } catch {
+      setFieldErrors({});
+      setServerError(SAVE_ERROR);
+      return;
+    }
     if (!validation.ok) {
       setFieldErrors(validation.errors);
       focusFirstInvalid(validation.errors);
@@ -296,7 +323,7 @@ export function useScheduleForm({
 
   // The sum under the grid counts only the cells that would pass validation, so a half-typed number is not added up.
   const total = totalRequired(
-    staffingOf(values).filter(
+    staffingOf(values).cells.filter(
       (cell) => Number.isInteger(cell.requiredCount) && cell.requiredCount >= 1 && cell.requiredCount <= STAFFING_MAX,
     ),
   );
@@ -309,6 +336,7 @@ export function useScheduleForm({
     focusShiftId,
     total,
     removal,
+    outcomeUnknown,
     assignmentsMove,
     setStartDate,
     setLabel,

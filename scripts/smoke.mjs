@@ -1,24 +1,28 @@
 // Smoke test: proves the built app, the Cloudflare adapter, the Supabase auth flow and the role gate still work together,
 // that the database role helpers read the role from the token, that only planners can read and write the employees,
 // shifts and schedules tables through PostgREST (an employee with a linked account reads only their own employee row,
-// and no session writes the user_id, invited_at and activated_at columns), that a schedule is saved atomically through
-// the save_schedule function (a save changes only the difference, so it keeps the assignments of what stays and refuses
-// to drop those of a removed cell or person without a confirmation), that an assignment keeps to its foreign keys and
-// constraints and only a planner reads and changes it, that the function mark_account_active records the activation of
-// the caller's own row only (an account without a role, an anonymous caller and another employee change nothing, the
-// first activation stays), that the employee, shift and schedule API routes keep to the role gate, the validation and
-// their status codes (the routes that add and remove one assignment of a schedule are idempotent, and the save of a
-// schedule answers 409 with the number of assignments it would remove until the body confirms the removal), that the
-// employee, shift and schedule pages open for the planner only (the schedule list, form and assignment page show what
-// the database holds, down to which shift button of which person is on), that the invitation mails link to the
-// set-password page, the whole invitation flow (invite, invite again, password reset, a foreign account, the tokens
-// from the admin API instead of the mails, the new employee's session, the activation time that the first password set
-// records and a reset keeps, and the locked e-mail), what the pages of that flow show (the account column and invite
-// button of the employee list, the locked e-mail field of the edit page, the password form of the set-password page;
-// read from the HTML the server renders), and that public registration stays closed. Zero dependencies on purpose. It
-// creates real accounts and removes its own accounts, employee, shift and schedule rows with the service-role key, so
-// it only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars), including
-// SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from there. Values come from `supabase status -o env`.
+// and no session writes the user_id, invited_at and activated_at columns; the refusals of the database name their cause,
+// the status with the SQLSTATE and the message, so a missing table or a mistyped argument does not pass for one), that a
+// schedule is saved atomically through the save_schedule function (a save changes only the difference, so it keeps the
+// assignments of what stays and refuses to drop those of a removed cell or person without a confirmation), that an
+// assignment keeps to its foreign keys and constraints and only a planner reads and changes it, that the function
+// mark_account_active records the activation of the caller's own row only (an account without a role, an anonymous
+// caller and another employee change nothing, the first activation stays), that the employee, shift and schedule API
+// routes keep to the role gate, the validation and their status codes (the routes that add and remove one assignment of
+// a schedule are idempotent, and the save of a schedule answers 409 with the number of assignments it would remove until
+// the body confirms the removal), that the view behind the schedule list counts the people and the required staffing of
+// each schedule, hides them from everyone but a planner and takes no write, that the employee, shift and schedule pages
+// open for the planner only (the schedule list, form and assignment page show what the database holds, down to which
+// shift button of which person is on, and the pages that list employees for the schedule form and the assignment grid
+// carry no e-mail address), that the invitation mails link to the set-password page, the whole invitation flow (invite,
+// invite again, password reset, a foreign account, the tokens from the admin API instead of the mails, the new
+// employee's session, the activation time that the first password set records and a reset keeps, and the locked
+// e-mail), what the pages of that flow show (the account column and invite button of the employee list, the locked
+// e-mail field of the edit page, the password form of the set-password page; read from the HTML the server renders),
+// and that public registration stays closed. Zero dependencies on purpose. It creates real accounts and removes its own
+// accounts, employee, shift and schedule rows with the service-role key, so it only runs against a LOCAL Supabase, and
+// the app under test must read the same stack (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation
+// route reads it from there. Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -268,6 +272,11 @@ function assignmentsTable(method, options) {
   return restTable("schedule_assignments", method, options);
 }
 
+// The view the schedule list reads: one flat row per schedule with its two counts.
+function scheduleSummariesTable(method, options) {
+  return restTable("schedule_summaries", method, options);
+}
+
 // Every signed-in user may edit their own user_metadata, so Supabase is expected to accept this; the role must still
 // come only from app_metadata.
 async function forgeRole(actor, role) {
@@ -370,14 +379,79 @@ const isSmokeEmployee = (changes) => (rows) =>
 // The error body names the violated constraint, so a rejection for any other reason does not pass.
 const violates = (constraint) => (error) => typeof error?.message === "string" && error.message.includes(constraint);
 
+// What a refusal by the database says about its cause. A status class proves little: a typo in an argument name or a stale
+// schema cache answers 404 (PGRST202, PGRST205), which `statusNotClass` accepts as a refusal as well. So the refusals of the
+// accounts without planner rights name the status, the SQLSTATE and the message that PostgREST gives for their cause (read
+// from the local stack):
+// - 42501 is a missing privilege, 403 for a signed-in caller and 401 for the anonymous one. A policy turns down the row of
+//   an insert (`new row violates row-level security policy for table "<table>"`); a grant is missing (`permission denied
+//   for table <table>`: nobody has delete on these tables, anon has nothing; `permission denied for function <name>`).
+// - The policies hide the rows of an update or a delete from the caller. Nothing is refused, and no row is touched; the
+//   request asks for the changed rows back (`Prefer: return=representation`), so the empty list that answers is the proof
+//   of that (a bare 204 is also the answer of an update that worked).
+// - PT404 (404) is a save of a schedule that the caller cannot see, which is the same as one that does not exist.
+// The planner passes every policy of a table, so a refusal of the planner with 42501 can only come from the grants.
+const isPermissionDenied = (error) => error?.code === "42501";
+const messageIncludes = (error, text) => typeof error?.message === "string" && error.message.includes(text);
+const isPolicyRefusal = (table) => (error) =>
+  isPermissionDenied(error) && messageIncludes(error, `row-level security policy for table "${table}"`);
+const isTableDenied = (table) => (error) =>
+  isPermissionDenied(error) && messageIncludes(error, `permission denied for table ${table}`);
+// Without execute the error names the function, while a caller that may execute it is stopped one step later, at the table
+// (`permission denied for table schedules`). Only the first proves the revoke.
+const isFunctionDeniedFor = (name) => (error) =>
+  isPermissionDenied(error) && messageIncludes(error, `function ${name}`);
+const isFunctionDenied = isFunctionDeniedFor("save_schedule");
+// A view nobody may write (select is granted to signed-in users only). PostgreSQL words the error for a view as `permission
+// denied for view <name>` and for a table as `permission denied for table <name>`, so either is accepted, as long as it
+// names the view: a write refused one level down, at the table under the view, names that table instead.
+const isViewDenied = (view) => (error) =>
+  isPermissionDenied(error) && new RegExp(`permission denied for (?:view|table) ${view}\\b`).test(error?.message ?? "");
+const isScheduleNotFound = (error) => error?.code === "PT404" && error?.message === "Schedule not found";
+
+const policyTurnsDown = (table) => ({
+  status: 403,
+  check: isPolicyRefusal(table),
+  describe: `a permission error (42501) from the row-level security policy of ${table}`,
+});
+const tableDenied = (table, status = 403) => ({
+  status,
+  check: isTableDenied(table),
+  describe: `a permission error (42501) for the table ${table}`,
+});
+const anonymousTableDenied = (table) => tableDenied(table, 401);
+const viewDenied = (view, status = 403) => ({
+  status,
+  check: isViewDenied(view),
+  describe: `a permission error (42501) for the view ${view}`,
+});
+const anonymousViewDenied = (view) => viewDenied(view, 401);
+const anonymousFunctionDenied = (name) => ({
+  status: 401,
+  check: isFunctionDeniedFor(name),
+  describe: `a permission error (42501) for the function ${name}`,
+});
+const rowsHidden = {
+  status: 200,
+  check: isEmptyList,
+  describe: "an empty list: the policies hide every row, so none is touched",
+};
+const scheduleHidden = {
+  status: 404,
+  check: isScheduleNotFound,
+  describe: "an error with the code PT404 and the message Schedule not found",
+};
+const asksForChangedRows = "return=representation";
+
 const plannerReadsEmployee = (name, changes, describe) => [
   `${planner.label}: ${name}`,
   async () => employeesTable("GET", { token: await accessToken(planner), query: smokeRow() }),
   { status: 200, check: isSmokeEmployee(changes), describe },
 ];
 
-// A signed-in account without planner rights: the table looks empty and writes are refused or hidden. The planner's read
-// afterwards is the proof that the row did not change, whatever status PostgREST used to answer.
+// A signed-in account without planner rights: the table looks empty, the policy turns down an insert, an update hides the
+// row (nothing is touched) and nobody has the grant to delete. Each answer names its cause (see `policyTurnsDown`); the
+// planner's read afterwards is the proof that the row did not change.
 const notPlannerEmployeeSteps = (actor) => [
   [
     `${actor.label}: employees read returns an empty list`,
@@ -391,22 +465,23 @@ const notPlannerEmployeeSteps = (actor) => [
         token: await accessToken(actor),
         body: { ...smokeEmployee, email: `smoke-${runId}-${actor.label}@example.com` },
       }),
-    { statusNotClass: 2 },
+    policyTurnsDown("employees"),
   ],
   [
-    `${actor.label}: employees update is refused or hidden`,
+    `${actor.label}: employees update changes no row`,
     async () =>
       employeesTable("PATCH", {
         token: await accessToken(actor),
         query: smokeRow(),
         body: { fte_numerator: 1, fte_denominator: 1 },
+        prefer: asksForChangedRows,
       }),
-    { statusNotClass: 5 },
+    rowsHidden,
   ],
   [
     `${actor.label}: employees delete is rejected`,
     async () => employeesTable("DELETE", { token: await accessToken(actor), query: smokeRow() }),
-    { statusNotClass: 2 },
+    tableDenied("employees"),
   ],
   plannerReadsEmployee(
     `employees row is unchanged after ${actor.label} write attempts`,
@@ -459,8 +534,9 @@ const plannerRejectsShift = (description, body, constraint) => [
   { statusNotClass: 2, check: violates(constraint), describe: `an error naming ${constraint}` },
 ];
 
-// A signed-in account without planner rights: the table looks empty and writes are refused or hidden. The planner's
-// read afterwards is the proof that the rows did not change, whatever status PostgREST used to answer.
+// A signed-in account without planner rights: the table looks empty, the policy turns down an insert, an update hides the
+// rows (nothing is touched) and nobody has the grant to delete. Each answer names its cause (see `policyTurnsDown`); the
+// planner's read afterwards is the proof that the rows did not change.
 const notPlannerShiftSteps = (actor) => [
   [
     `${actor.label}: shifts read returns an empty list`,
@@ -474,18 +550,23 @@ const notPlannerShiftSteps = (actor) => [
         token: await accessToken(actor),
         body: { ...smokeShift, name: `Smoke-${runId}-${actor.label}` },
       }),
-    { statusNotClass: 2 },
+    policyTurnsDown("shifts"),
   ],
   [
-    `${actor.label}: shifts update is refused or hidden`,
+    `${actor.label}: shifts update changes no row`,
     async () =>
-      shiftsTable("PATCH", { token: await accessToken(actor), query: smokeShiftRow(), body: { end_minute: 600 } }),
-    { statusNotClass: 5 },
+      shiftsTable("PATCH", {
+        token: await accessToken(actor),
+        query: smokeShiftRow(),
+        body: { end_minute: 600 },
+        prefer: asksForChangedRows,
+      }),
+    rowsHidden,
   ],
   [
     `${actor.label}: shifts delete is rejected`,
     async () => shiftsTable("DELETE", { token: await accessToken(actor), query: smokeShiftRow() }),
-    { statusNotClass: 2 },
+    tableDenied("shifts"),
   ],
   plannerReadsShifts(
     `shifts rows are unchanged after ${actor.label} write attempts`,
@@ -537,13 +618,6 @@ const isLinkedToNoRoleAccount = (rows) =>
   rows.length === 1 &&
   typeof noRoleEmployeeId === "string" &&
   hasColumns(rows[0], { id: noRoleEmployeeId, user_id: noRole.id });
-// A missing column privilege is SQLSTATE 42501 (403 for a signed-in caller). The planner passes every policy of the
-// table, so a refusal with this code can only come from the column grants.
-const isPermissionDenied = (error) => error?.code === "42501";
-// The same code for the function itself: without execute the error names the function, while a caller that may execute it
-// is stopped one step later, at the table (`permission denied for table schedules`). Only the first proves the revoke.
-const isFunctionDenied = (error) =>
-  isPermissionDenied(error) && typeof error?.message === "string" && error.message.includes("function save_schedule");
 
 const plannerReadsOwnRow = (name, changes, describe) => [
   `${planner.label}: ${name}`,
@@ -551,8 +625,9 @@ const plannerReadsOwnRow = (name, changes, describe) => [
   { status: 200, check: isOwnRow(changes), describe },
 ];
 
-// The planner writes a column only the service role may write: refused with a permission error, whatever the value.
-// `build` returns the query and body when the step runs, because the row id is only known by then.
+// The planner writes a column only the service role may write: refused with a permission error, whatever the value. The
+// planner passes every policy of the table, so a refusal with this code can only come from the column grants. `build`
+// returns the query and body when the step runs, because the row id is only known by then.
 const plannerWriteIsDenied = (description, method, build) => [
   `${planner.label}: employees ${description} is refused`,
   async () => employeesTable(method, { token: await accessToken(planner), ...build() }),
@@ -824,9 +899,11 @@ const plannerRejectsScheduleRow = (table, description, body, constraint) => [
   { statusNotClass: 2, check: violates(constraint), describe: `an error naming ${constraint}` },
 ];
 
-// A signed-in account without planner rights: the tables look empty, a save and the inserts are refused, and updates and
-// deletes of the child rows are refused or hidden. The planner's reads afterwards are the proof that nothing changed,
-// whatever status PostgREST used to answer. The children have no id column, hence select=schedule_id.
+// A signed-in account without planner rights: the tables look empty, a save and the inserts are refused (the policy turns
+// down a new schedule, and a save of the existing one finds no schedule), the updates and the deletes of the child rows
+// touch no row (the policies hide them), and nobody has the grant to delete a schedule. Each answer names its cause (see
+// `policyTurnsDown`). The planner's reads afterwards are the proof that nothing changed, and one of them that the refused
+// saves left no schedule behind under their labels. The children have no id column, hence select=schedule_id.
 const notPlannerScheduleSteps = (actor) => [
   [
     `${actor.label}: schedules read returns an empty list`,
@@ -843,6 +920,17 @@ const notPlannerScheduleSteps = (actor) => [
     async () => scheduleEmployeesTable("GET", { token: await accessToken(actor), query: "?select=schedule_id" }),
     { status: 200, check: isEmptyList, describe: "an empty list" },
   ],
+  // The view is granted to every signed-in user and reads the three tables with the rights of the caller, so what keeps
+  // the schedules from this caller is their policies: an empty list (200), not a permission error and not the rows.
+  [
+    `${actor.label}: schedule_summaries read returns an empty list`,
+    async () => scheduleSummariesTable("GET", { token: await accessToken(actor), query: "?select=id" }),
+    {
+      status: 200,
+      check: isEmptyList,
+      describe: "an empty list: the policies of the tables under the view hide every schedule",
+    },
+  ],
   [
     `${actor.label}: rpc save_schedule creating a schedule is rejected`,
     async () =>
@@ -851,7 +939,7 @@ const notPlannerScheduleSteps = (actor) => [
         await accessToken(actor),
         saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-${actor.label}-rpc-create` }),
       ),
-    { statusNotClass: 2 },
+    policyTurnsDown("schedules"),
   ],
   [
     `${actor.label}: rpc save_schedule replacing the schedule is rejected`,
@@ -861,7 +949,17 @@ const notPlannerScheduleSteps = (actor) => [
         await accessToken(actor),
         saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-${actor.label}-rpc-replace` }, smokeScheduleId),
       ),
-    { statusNotClass: 2 },
+    scheduleHidden,
+  ],
+  // Both refused saves carry a label of this pattern: a refusal that stored a schedule anyway would show up here.
+  [
+    `${planner.label}: schedules read finds no schedule left by the rpc calls of ${actor.label}`,
+    async () =>
+      schedulesTable("GET", {
+        token: await accessToken(planner),
+        query: `?label=like.Smoke-${runId}-${actor.label}-rpc*`,
+      }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
   ],
   [
     `${actor.label}: schedules insert is rejected`,
@@ -870,7 +968,7 @@ const notPlannerScheduleSteps = (actor) => [
         token: await accessToken(actor),
         body: { start_date: "2026-11-11", label: `Smoke-${runId}-${actor.label}-insert` },
       }),
-    { statusNotClass: 2 },
+    policyTurnsDown("schedules"),
   ],
   [
     `${actor.label}: schedule_staffing insert is rejected`,
@@ -879,7 +977,7 @@ const notPlannerScheduleSteps = (actor) => [
         token: await accessToken(actor),
         body: { schedule_id: smokeScheduleId, shift_id: sameNameShiftId, day_offset: 3, required_count: 1 },
       }),
-    { statusNotClass: 2 },
+    policyTurnsDown("schedule_staffing"),
   ],
   [
     `${actor.label}: schedule_employees insert is rejected`,
@@ -888,38 +986,99 @@ const notPlannerScheduleSteps = (actor) => [
         token: await accessToken(actor),
         body: { schedule_id: smokeScheduleId, employee_id: apiEmployeeId },
       }),
-    { statusNotClass: 2 },
+    policyTurnsDown("schedule_employees"),
   ],
   [
-    `${actor.label}: schedules update is refused or hidden`,
+    `${actor.label}: schedules update changes no row`,
     async () =>
       schedulesTable("PATCH", {
         token: await accessToken(actor),
         query: smokeScheduleRow(),
         body: { start_date: "2026-12-01" },
+        prefer: asksForChangedRows,
       }),
-    { statusNotClass: 5 },
+    rowsHidden,
   ],
   [
     `${actor.label}: schedules delete is rejected`,
     async () => schedulesTable("DELETE", { token: await accessToken(actor), query: smokeScheduleRow() }),
-    { statusNotClass: 2 },
+    tableDenied("schedules"),
   ],
   [
-    `${actor.label}: schedule_staffing delete is refused or hidden`,
-    async () => scheduleStaffingTable("DELETE", { token: await accessToken(actor), query: smokeScheduleChildren() }),
-    { statusNotClass: 5 },
+    `${actor.label}: schedule_staffing delete removes no row`,
+    async () =>
+      scheduleStaffingTable("DELETE", {
+        token: await accessToken(actor),
+        query: smokeScheduleChildren(),
+        prefer: asksForChangedRows,
+      }),
+    rowsHidden,
   ],
   [
-    `${actor.label}: schedule_employees delete is refused or hidden`,
-    async () => scheduleEmployeesTable("DELETE", { token: await accessToken(actor), query: smokeScheduleChildren() }),
-    { statusNotClass: 5 },
+    `${actor.label}: schedule_employees delete removes no row`,
+    async () =>
+      scheduleEmployeesTable("DELETE", {
+        token: await accessToken(actor),
+        query: smokeScheduleChildren(),
+        prefer: asksForChangedRows,
+      }),
+    rowsHidden,
   ],
   ...plannerReadsSchedule(
     `is unchanged after ${actor.label} write attempts`,
     replacedSchedule,
     "the replaced schedule, unchanged",
   ),
+];
+
+// The view schedule_summaries (what the schedule list reads): one flat row per schedule with the number of people on its
+// roster and the sum of its required counts, worked out by the database. The steps read it for four schedules of this run
+// whose numbers all differ, so a swapped, repeated or joined (cells x people) aggregate cannot pass: the schedule of the
+// database steps (1 person, 6 = 2 + 4), the one of the API steps (2 people, 8 = 5 + 1 + 2), the one of the assignment routes
+// (2 people, 1) and a schedule without cells and people, which the planner inserts into the table directly (the app never
+// saves one, but the table allows it) and which the view must still list, with zeros. The last one is also the row the
+// refused writes to the view aim at. Its id is only known once its insert step has run.
+const emptyScheduleLabel = `Smoke-${runId}-empty`;
+const emptyScheduleStartDate = "2026-11-09";
+let emptyScheduleId;
+// The labels that the refused writes to the view carry: a write that went through would leave a schedule under them.
+const summaryWriteLabel = `Smoke-${runId}-view`;
+const SUMMARY_COLUMNS = ["created_at", "employee_count", "id", "label", "start_date", "total_required"];
+// Exactly one row for the schedule, with exactly the six columns of the view; the counts are numbers, compared strictly.
+const isScheduleSummary = (id, expected) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  sameItems(Object.keys(rows[0]), SUMMARY_COLUMNS) &&
+  rows[0].id === id() &&
+  typeof rows[0].created_at === "string" &&
+  rows[0].start_date === expected().startDate &&
+  rows[0].label === expected().label &&
+  rows[0].employee_count === expected().employeeCount &&
+  rows[0].total_required === expected().totalRequired;
+// The rows of a read ordered newest first (start date, then creation time, both descending), cut at `limit`: exactly that
+// many rows (the steps that use it know that more schedules exist), each not newer than the one before it.
+const isNewestFirst = (limit) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === limit &&
+  rows.every(
+    (row, at) =>
+      at === 0 ||
+      rows[at - 1].start_date > row.start_date ||
+      (rows[at - 1].start_date === row.start_date && Date.parse(rows[at - 1].created_at) >= Date.parse(row.created_at)),
+  );
+// The schedules of this run in that order (the label pattern keeps the schedules of other data out): the ids that must
+// come back, newest first.
+const hasScheduleIds = (ids) => (rows) =>
+  Array.isArray(rows) && JSON.stringify(rows.map((row) => row.id)) === JSON.stringify(ids());
+
+const plannerReadsSummary = (name, id, expected, what) => [
+  `${planner.label}: schedule_summaries read ${name}`,
+  async () => scheduleSummariesTable("GET", { token: await accessToken(planner), query: `?id=eq.${id()}` }),
+  {
+    status: 200,
+    check: isScheduleSummary(id, expected),
+    describe: `one row with the six columns of the view, for ${what}`,
+  },
 ];
 
 // The assignment steps share a schedule of their own, so that they leave the one above alone. Its cells are named A to E:
@@ -1057,10 +1216,10 @@ const refusesRemovalOf = (count) => ({
 });
 
 // A signed-in account without planner rights, at a time when the assignment schedule holds all six assignments: the table
-// looks empty, an insert is refused, a delete and an update of a required count are refused or hidden, and so is a save
-// that would take assignments along with a removed cell, even though it carries the confirmation (so that only the
-// policies stand in the way). The planner's reads afterwards are the proof that nothing changed, whatever status
-// PostgREST used to answer.
+// looks empty, the policy turns down an insert, a delete and an update of a required count touch no row (the policies hide
+// them), and a save that would take assignments along with a removed cell finds no schedule, even though it carries the
+// confirmation (so that only the policies stand in the way). Each answer names its cause (see `policyTurnsDown`). The
+// planner's reads afterwards are the proof that nothing changed.
 const notPlannerAssignmentSteps = (actor) => [
   [
     `${actor.label}: schedule_assignments read returns an empty list`,
@@ -1074,22 +1233,28 @@ const notPlannerAssignmentSteps = (actor) => [
         token: await accessToken(actor),
         body: assignmentRow(assignmentIn("C", smokeEmployeeId)),
       }),
-    { statusNotClass: 2 },
+    policyTurnsDown("schedule_assignments"),
   ],
   [
-    `${actor.label}: schedule_assignments delete is refused or hidden`,
-    async () => assignmentsTable("DELETE", { token: await accessToken(actor), query: assignScheduleChildren() }),
-    { statusNotClass: 5 },
+    `${actor.label}: schedule_assignments delete removes no row`,
+    async () =>
+      assignmentsTable("DELETE", {
+        token: await accessToken(actor),
+        query: assignScheduleChildren(),
+        prefer: asksForChangedRows,
+      }),
+    rowsHidden,
   ],
   [
-    `${actor.label}: schedule_staffing update of the required count is refused or hidden`,
+    `${actor.label}: schedule_staffing update of the required count changes no row`,
     async () =>
       scheduleStaffingTable("PATCH", {
         token: await accessToken(actor),
         query: cellFilter("A"),
         body: { required_count: 9 },
+        prefer: asksForChangedRows,
       }),
-    { statusNotClass: 5 },
+    rowsHidden,
   ],
   [
     `${actor.label}: rpc save_schedule dropping a cell with assignments and a confirmation is rejected`,
@@ -1099,7 +1264,7 @@ const notPlannerAssignmentSteps = (actor) => [
         await accessToken(actor),
         saveScheduleArgs(assignState(`-${actor.label}-rpc`, { B: 3, C: 1, D: 2 }), assignScheduleId, true),
       ),
-    { statusNotClass: 2 },
+    scheduleHidden,
   ],
   ...plannerReadsAssignSchedule(
     `is unchanged after ${actor.label} write attempts`,
@@ -1111,21 +1276,25 @@ const notPlannerAssignmentSteps = (actor) => [
 
 // The same for a caller that never signed in, which the database does not let near the table or the function at all.
 const anonymousAssignmentSteps = [
-  [`${anonymous.label}: schedule_assignments read is rejected`, () => assignmentsTable("GET"), { statusNotClass: 2 }],
+  [
+    `${anonymous.label}: schedule_assignments read is rejected`,
+    () => assignmentsTable("GET"),
+    anonymousTableDenied("schedule_assignments"),
+  ],
   [
     `${anonymous.label}: schedule_assignments insert is rejected`,
     () => assignmentsTable("POST", { body: assignmentRow(assignmentIn("C", smokeEmployeeId)) }),
-    { statusNotClass: 2 },
+    anonymousTableDenied("schedule_assignments"),
   ],
   [
     `${anonymous.label}: schedule_assignments delete is rejected`,
     () => assignmentsTable("DELETE", { query: assignScheduleChildren() }),
-    { statusNotClass: 2 },
+    anonymousTableDenied("schedule_assignments"),
   ],
   [
     `${anonymous.label}: schedule_staffing update of the required count is rejected`,
     () => scheduleStaffingTable("PATCH", { query: cellFilter("A"), body: { required_count: 9 } }),
-    { statusNotClass: 2 },
+    anonymousTableDenied("schedule_staffing"),
   ],
   [
     `${anonymous.label}: rpc save_schedule dropping a cell with assignments and a confirmation is rejected`,
@@ -1939,6 +2108,22 @@ const visitApiAssignPage = (expected) => visitAssignPage("the API schedule", () 
 const visitRouteAssignPage = (expected) =>
   visitAssignPage("the schedule with an assignment", () => routeScheduleId, expected);
 
+// The planner pages that hand the employees to an island (the new and the edit form of a schedule, and the assignment
+// page) list people by name and id only (toEmployeeOptions), so an e-mail address never travels into the page, where the
+// props of the island are written as text. One step for each of the two employees of the API steps, who are on all three
+// pages, asks for the page with the person's name on it (so that a page that lists nobody cannot pass) and without the
+// address the app stored for them (in lower case). `path` is a function because the id of the API schedule is only known
+// once its create step has run.
+const plannerPageHidesEmails = (pattern, path) =>
+  [
+    ["first", apiEmployee],
+    ["second", secondApiEmployee],
+  ].map(([which, person]) => [
+    `${planner.label}: GET ${pattern} lists the ${which} API employee without the e-mail address`,
+    () => request(planner, path()),
+    { status: 200, bodyIncludes: personName(person), bodyExcludes: person.email.toLowerCase() },
+  ]);
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -2656,6 +2841,14 @@ const steps = [
   // The schedule pages: the list shows the schedule saved through the API above with its period, people and total, the form
   // page shows its cells and people, and every one of them carries the D6 notice and is not cached.
   visit(planner, "/schedules", 200, 'href="/schedules/new"', "no-store"),
+  // The list holds the few schedules of this run, far below its limit of 100, so it has rows and no note that older
+  // schedules were left out ("Pokazano 100 najnowszych grafików."). Only the absent case is covered here: the note itself
+  // needs more than 100 schedules, which is too slow to create in a smoke test.
+  [
+    `${planner.label}: GET /schedules lists the API schedule without the note about older schedules left out`,
+    () => request(planner, "/schedules"),
+    { status: 200, bodyIncludes: apiScheduleLabel, bodyExcludes: "Pokazano", cacheControl: "no-store" },
+  ],
   visitChecked(
     planner,
     "/schedules",
@@ -2693,6 +2886,7 @@ const steps = [
     "a date input from 2020-01-01 to 2099-12-31, every employee ticked and no grid row",
     "no-store",
   ),
+  ...plannerPageHidesEmails("/schedules/new", () => "/schedules/new"),
   visitApiSchedulePage(planner, 200, { bodyIncludes: apiScheduleLabel, cacheControl: "no-store" }),
   visitApiSchedulePage(planner, 200, { bodyCheck: hasD6Notice, describe: "the D6 notice", cacheControl: "no-store" }),
   visitApiSchedulePage(planner, 200, {
@@ -2712,6 +2906,7 @@ const steps = [
     excerpt: layoutExcerpt,
     cacheControl: "no-store",
   }),
+  ...plannerPageHidesEmails("/schedules/<id>", () => `/schedules/${apiScheduleId}`),
   // The edit page of a schedule that has assignments: the page counts them for the form (the number lets the form tell the
   // planner that a new date moves them) and must still render the form. The confirmation block and the date note are
   // client state, so the browser review shows them, not this step.
@@ -2751,6 +2946,7 @@ const steps = [
     describe: "the wide layout container (max-w-7xl, not max-w-4xl)",
     excerpt: layoutExcerpt,
   }),
+  ...plannerPageHidesEmails("/schedules/<id>/assign", () => `/schedules/${apiScheduleId}/assign`),
   // The assignment page of the route schedule, which holds one assignment (the witness): the first person's button is
   // on, the second person's button for the same cell is off, and the single counter is full. Its label is the one of
   // the confirmed PUT; reading it from trimmedRouteSchedule needs no ids, so it can be taken before the steps have run.
@@ -3202,8 +3398,12 @@ const steps = [
   rpcStep(employee, "current_app_role", "employee"),
   rpcStep(noRole, "is_planner", false),
   rpcStep(noRole, "current_app_role", null),
-  [`${anonymous.label}: rpc is_planner is rejected`, () => rpc("is_planner"), { statusNotClass: 2 }],
-  [`${anonymous.label}: rpc current_app_role is rejected`, () => rpc("current_app_role"), { statusNotClass: 2 }],
+  [`${anonymous.label}: rpc is_planner is rejected`, () => rpc("is_planner"), anonymousFunctionDenied("is_planner")],
+  [
+    `${anonymous.label}: rpc current_app_role is rejected`,
+    () => rpc("current_app_role"),
+    anonymousFunctionDenied("current_app_role"),
+  ],
 
   // Employees table: only the planner reads, adds and edits rows, nobody deletes them, and the constraints hold even for
   // the planner. These steps send bearer tokens straight to PostgREST, without the app.
@@ -3253,7 +3453,7 @@ const steps = [
   [
     `${planner.label}: employees delete is rejected`,
     async () => employeesTable("DELETE", { token: await accessToken(planner), query: smokeRow() }),
-    { statusNotClass: 2 },
+    tableDenied("employees"),
   ],
   plannerReadsEmployee(
     "employees row still exists after the delete attempt",
@@ -3262,7 +3462,7 @@ const steps = [
   ),
   ...notPlannerEmployeeSteps(employee),
   ...notPlannerEmployeeSteps(noRole),
-  [`${anonymous.label}: employees read is rejected`, () => employeesTable("GET"), { statusNotClass: 2 }],
+  [`${anonymous.label}: employees read is rejected`, () => employeesTable("GET"), anonymousTableDenied("employees")],
 
   // Employee accounts: user_id links a row to an Auth account and invited_at records the latest invitation. An employee
   // reads only their own row and changes nothing, an account without a role reads nothing even when linked, one account
@@ -3301,14 +3501,15 @@ const steps = [
     { status: 200, check: isEmptyList, describe: "an empty list" },
   ],
   [
-    `${employee.label}: employees update of its own row is refused or hidden`,
+    `${employee.label}: employees update of its own row changes no row`,
     async () =>
       employeesTable("PATCH", {
         token: await accessToken(employee),
         query: ownRow(),
         body: { first_name: "Smoke-Changed" },
+        prefer: asksForChangedRows,
       }),
-    { statusNotClass: 5 },
+    rowsHidden,
   ],
   [
     `${employee.label}: employees insert is rejected although its account is linked`,
@@ -3317,7 +3518,7 @@ const steps = [
         token: await accessToken(employee),
         body: { ...ownEmployee, email: `smoke-${runId}-employee-insert@example.com` },
       }),
-    { statusNotClass: 2 },
+    policyTurnsDown("employees"),
   ],
   plannerReadsOwnRow(
     "employees row of the account is unchanged after employee write attempts",
@@ -3395,13 +3596,19 @@ const steps = [
       describe: "its own row with an activated_at of null",
     },
   ],
-  // Refused or a no-op: the control read below decides, whatever status PostgREST answers with.
+  // A no-op for the account without a role: the function exists and may be executed, finds no employee row of that account
+  // to change and returns nothing (204, the answer of a void function). A missing function would answer 404 and a refused
+  // one 403, which the exact status tells apart; that the call changed nothing is proven by the control read below.
   [
-    `${noRole.label}: rpc mark_account_active is refused or changes nothing`,
+    `${noRole.label}: rpc mark_account_active changes nothing`,
     async () => rpc("mark_account_active", await accessToken(noRole)),
-    { statusNotClass: 5 },
+    { status: 204 },
   ],
-  [`${anonymous.label}: rpc mark_account_active is rejected`, () => rpc("mark_account_active"), { statusNotClass: 2 }],
+  [
+    `${anonymous.label}: rpc mark_account_active is rejected`,
+    () => rpc("mark_account_active"),
+    anonymousFunctionDenied("mark_account_active"),
+  ],
   [
     "service role: both linked rows are still not active after the calls of the account without a role and of the anonymous caller",
     () =>
@@ -3525,7 +3732,7 @@ const steps = [
   [
     `${planner.label}: shifts delete is rejected`,
     async () => shiftsTable("DELETE", { token: await accessToken(planner), query: smokeShiftRow() }),
-    { statusNotClass: 2 },
+    tableDenied("shifts"),
   ],
   plannerReadsShifts(
     "shifts rows still exist after the delete attempt",
@@ -3534,7 +3741,7 @@ const steps = [
   ),
   ...notPlannerShiftSteps(employee),
   ...notPlannerShiftSteps(noRole),
-  [`${anonymous.label}: shifts read is rejected`, () => shiftsTable("GET"), { statusNotClass: 2 }],
+  [`${anonymous.label}: shifts read is rejected`, () => shiftsTable("GET"), anonymousTableDenied("shifts")],
 
   // Schedules tables and the save_schedule function: only the planner reads and saves, a save is atomic, the constraints
   // and foreign keys hold even for the planner, and nobody deletes a schedule. These steps send bearer tokens straight
@@ -3629,7 +3836,7 @@ const steps = [
   [
     `${planner.label}: schedules delete is rejected`,
     async () => schedulesTable("DELETE", { token: await accessToken(planner), query: smokeScheduleRow() }),
-    { statusNotClass: 2 },
+    tableDenied("schedules"),
   ],
   ...plannerReadsSchedule(
     "still exists after the delete attempt",
@@ -3637,17 +3844,29 @@ const steps = [
     "the replaced schedule, unchanged",
   ),
   // Anonymous: no table, no function. The planner's reads after the signed-in accounts below cover these attempts too.
-  [`${anonymous.label}: schedules read is rejected`, () => schedulesTable("GET"), { statusNotClass: 2 }],
-  [`${anonymous.label}: schedule_staffing read is rejected`, () => scheduleStaffingTable("GET"), { statusNotClass: 2 }],
+  // Every answer is a 401 with 42501 and the name of the table or of the function, so a missing table or function (404)
+  // or a call that got further than the privileges does not pass for a refusal.
+  [`${anonymous.label}: schedules read is rejected`, () => schedulesTable("GET"), anonymousTableDenied("schedules")],
+  [
+    `${anonymous.label}: schedule_staffing read is rejected`,
+    () => scheduleStaffingTable("GET"),
+    anonymousTableDenied("schedule_staffing"),
+  ],
   [
     `${anonymous.label}: schedule_employees read is rejected`,
     () => scheduleEmployeesTable("GET"),
-    { statusNotClass: 2 },
+    anonymousTableDenied("schedule_employees"),
+  ],
+  // The view has no grant for anon at all, so the privilege itself is what stops the read (not the policies below it).
+  [
+    `${anonymous.label}: schedule_summaries read is rejected`,
+    () => scheduleSummariesTable("GET"),
+    anonymousViewDenied("schedule_summaries"),
   ],
   [
     `${anonymous.label}: schedules insert is rejected`,
     () => schedulesTable("POST", { body: { start_date: "2026-11-11", label: `Smoke-${runId}-anonymous-insert` } }),
-    { statusNotClass: 2 },
+    anonymousTableDenied("schedules"),
   ],
   [
     `${anonymous.label}: schedule_staffing insert is rejected`,
@@ -3655,12 +3874,12 @@ const steps = [
       scheduleStaffingTable("POST", {
         body: { schedule_id: smokeScheduleId, shift_id: sameNameShiftId, day_offset: 3, required_count: 1 },
       }),
-    { statusNotClass: 2 },
+    anonymousTableDenied("schedule_staffing"),
   ],
   [
     `${anonymous.label}: schedule_employees insert is rejected`,
     () => scheduleEmployeesTable("POST", { body: { schedule_id: smokeScheduleId, employee_id: apiEmployeeId } }),
-    { statusNotClass: 2 },
+    anonymousTableDenied("schedule_employees"),
   ],
   [
     `${anonymous.label}: rpc save_schedule is rejected`,
@@ -3670,7 +3889,17 @@ const steps = [
         undefined,
         saveScheduleArgs({ ...createdSchedule(), label: `Smoke-${runId}-anonymous-rpc` }),
       ),
-    { statusNotClass: 2 },
+    anonymousFunctionDenied("save_schedule"),
+  ],
+  // The refused save carried a label of this pattern: a refusal that stored a schedule anyway would show up here.
+  [
+    `${planner.label}: schedules read finds no schedule left by the rpc call of ${anonymous.label}`,
+    async () =>
+      schedulesTable("GET", {
+        token: await accessToken(planner),
+        query: `?label=like.Smoke-${runId}-anonymous-rpc*`,
+      }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
   ],
   ...notPlannerScheduleSteps(employee),
   ...notPlannerScheduleSteps(noRole),
@@ -3688,6 +3917,132 @@ const steps = [
     "shows the schedule without the deleted cell",
     trimmedSchedule,
     "the replaced schedule without the cell of the second shift on day 6",
+  ),
+  // The view the schedule list reads (see isScheduleSummary): the counts of four schedules whose numbers differ, the order and
+  // the limit the list asks for, and the refusal of every write to it. The schedules of the three groups of steps above
+  // are in their final state here (the replaced one has just lost its cell on day 6).
+  [
+    `${planner.label}: schedules insert returns a schedule without cells and people`,
+    async () => {
+      const result = await schedulesTable("POST", {
+        token: await accessToken(planner),
+        body: { start_date: emptyScheduleStartDate, label: emptyScheduleLabel },
+        prefer: "return=representation",
+      });
+      emptyScheduleId = parseJson(result.body)?.[0]?.id;
+      return result;
+    },
+    {
+      status: 201,
+      check: (rows) =>
+        Array.isArray(rows) && rows.length === 1 && isUuidText(rows[0].id) && rows[0].label === emptyScheduleLabel,
+      describe: "the inserted schedule, echoed back",
+    },
+  ],
+  plannerReadsSummary(
+    "shows the schedule of the database steps with 1 person and a total of 6",
+    () => smokeScheduleId,
+    () => ({
+      startDate: trimmedSchedule().startDate,
+      label: trimmedSchedule().label,
+      employeeCount: 1,
+      totalRequired: 6,
+    }),
+    "the schedule saved through the function: 1 person, 2 + 4 required",
+  ),
+  plannerReadsSummary(
+    "shows the schedule of the API steps with 2 people and a total of 8",
+    () => apiScheduleId,
+    () => ({
+      startDate: changedApiSchedule().startDate,
+      label: changedApiSchedule().label,
+      employeeCount: 2,
+      totalRequired: 8,
+    }),
+    "the schedule saved through the API: 2 people, 5 + 1 + 2 required",
+  ),
+  plannerReadsSummary(
+    "shows the schedule of the assignment routes with 2 people and a total of 1",
+    () => routeScheduleId,
+    () => ({
+      startDate: trimmedRouteSchedule().startDate,
+      label: trimmedRouteSchedule().label,
+      employeeCount: 2,
+      totalRequired: 1,
+    }),
+    "the schedule of the assignment routes: 2 people, 1 required",
+  ),
+  plannerReadsSummary(
+    "shows the schedule without cells and people with zeros",
+    () => emptyScheduleId,
+    () => ({ startDate: emptyScheduleStartDate, label: emptyScheduleLabel, employeeCount: 0, totalRequired: 0 }),
+    "the schedule without cells and people: 0 people, 0 required",
+  ),
+  // The list asks for the newest first and a limit; four schedules of this run exist, so a limit of 2 must cut. The first step
+  // is the query of the list, over every schedule there is; the second keeps to the schedules of this run, where the order is
+  // known: the two of 2026-11-15 come first, the one created later (the schedule of the database steps) before the one
+  // created earlier (the API schedule), and the schedules of 2026-11-11 and 2026-11-09 are cut off.
+  [
+    `${planner.label}: schedule_summaries read ordered newest first with a limit of 2 returns two rows`,
+    async () =>
+      scheduleSummariesTable("GET", {
+        token: await accessToken(planner),
+        query: "?order=start_date.desc,created_at.desc&limit=2",
+      }),
+    { status: 200, check: isNewestFirst(2), describe: "exactly two rows, each not newer than the one before it" },
+  ],
+  [
+    `${planner.label}: schedule_summaries read of this run ordered newest first with a limit of 2 returns the two newest`,
+    async () =>
+      scheduleSummariesTable("GET", {
+        token: await accessToken(planner),
+        query: `?label=like.Smoke-${runId}-*&order=start_date.desc,created_at.desc&limit=2&select=id,start_date,created_at`,
+      }),
+    {
+      status: 200,
+      check: hasScheduleIds(() => [smokeScheduleId, apiScheduleId]),
+      describe: "the schedule of the database steps, then the schedule of the API steps, and no other",
+    },
+  ],
+  // Nothing writes to the view: select is the only privilege that signed-in users have on it. The planner passes every policy
+  // of the tables under it and has insert and update on `schedules`, so a 403 that names the view is its missing grant. A
+  // write that got through would show in the read of the labels below and in the row of the schedule it aims at.
+  [
+    `${planner.label}: schedule_summaries insert is refused`,
+    async () =>
+      scheduleSummariesTable("POST", {
+        token: await accessToken(planner),
+        body: { start_date: "2026-11-11", label: `${summaryWriteLabel}-insert` },
+      }),
+    viewDenied("schedule_summaries"),
+  ],
+  [
+    `${planner.label}: schedule_summaries update is refused`,
+    async () =>
+      scheduleSummariesTable("PATCH", {
+        token: await accessToken(planner),
+        query: `?id=eq.${emptyScheduleId}`,
+        body: { label: `${summaryWriteLabel}-update` },
+      }),
+    viewDenied("schedule_summaries"),
+  ],
+  [
+    `${planner.label}: schedule_summaries delete is refused`,
+    async () =>
+      scheduleSummariesTable("DELETE", { token: await accessToken(planner), query: `?id=eq.${emptyScheduleId}` }),
+    viewDenied("schedule_summaries"),
+  ],
+  [
+    `${planner.label}: schedules read finds no schedule left by the refused writes to the view`,
+    async () =>
+      schedulesTable("GET", { token: await accessToken(planner), query: `?label=like.${summaryWriteLabel}*` }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  plannerReadsSummary(
+    "still shows the schedule without cells and people after the refused writes",
+    () => emptyScheduleId,
+    () => ({ startDate: emptyScheduleStartDate, label: emptyScheduleLabel, employeeCount: 0, totalRequired: 0 }),
+    "the schedule without cells and people, unchanged",
   ),
   // Assignments: a planner puts people on the cells of a schedule, and the database keeps the rules of the table. The cell
   // and the person must belong to the schedule (composite foreign keys), the source is manual or generated, an entry is

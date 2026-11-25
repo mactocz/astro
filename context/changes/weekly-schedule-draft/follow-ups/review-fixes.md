@@ -14,3 +14,7 @@ Poprawki zakolejkowane w triage przeglądu implementacji (`reviews/impl-review.m
 | F8 | `try/catch` wokół walidacji w `submit`; limit etykiety po zwinięciu spacji; liczba tylko z cyfr; blokada ponownego wysłania po błędzie sieci | `src/components/hooks/useScheduleForm.ts` (po zmianach S-04) | |
 | F9 | Jeden wyeksportowany komparator (także dla `assignment.ts`) i mapowanie błędów bazy w czystej funkcji z testem | `src/lib/schedules.ts`, `src/lib/services/schedule.ts`, `src/lib/services/assignment.ts` | |
 | F10 | Addendum z korektami planu (zapisane w raporcie) i podpowiedź zakresu przy polu daty | `src/components/schedules/ScheduleForm.tsx` | addendum zrobione |
+
+## Status
+
+F1 do F10 zrealizowane na gałęzi `change/review-fixes-s03` (2026-11-25), jednym commitem. Bramki: `astro sync`, lint, `astro check` (0/0/0), `npm test` (1065), build i pełny smoke (565 kroków) na świeżym `db reset`; kontrola celowego uszkodzenia kroków smoke (widok `schedule_summaries` i jego RLS, odmowy anonima dla funkcji, e-mail w wyspie, notka o obcięciu listy) wywróciła właściwe kroki. F7 dodaje migrację `*_schedule_summaries.sql`: `npx supabase db push` przed wdrożeniem kodu. F8 zmienia pole liczby osób z `type=number` na tekst z `inputMode=numeric`: do sprawdzenia w przeglądarce.
