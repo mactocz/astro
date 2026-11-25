@@ -2,19 +2,23 @@
 // that the database role helpers read the role from the token, that only planners can read and write the employees,
 // shifts and schedules tables through PostgREST (an employee with a linked account reads only their own employee row,
 // and no session writes the user_id, invited_at and activated_at columns), that a schedule is saved atomically through
-// the save_schedule function, that the function mark_account_active records the activation of the caller's own row only
-// (an account without a role, an anonymous caller and another employee change nothing, the first activation stays),
-// that the employee, shift and schedule API routes keep to the role gate, the validation and their status codes, that
-// the employee, shift and schedule pages open for the planner only (the schedule list and form show what the database
-// holds), that the invitation mails link to the set-password page, the whole invitation flow (invite, invite again,
-// password reset, a foreign account, the tokens from the admin API instead of the mails, the new employee's session,
-// the activation time that the first password set records and a reset keeps, and the locked e-mail), what the pages of
-// that flow show (the account column and invite button of the employee list, the locked e-mail field of the edit page,
-// the password form of the set-password page; read from the HTML the server renders), and that public registration
-// stays closed. Zero dependencies on purpose. It creates real accounts and removes its own accounts, employee, shift
-// and schedule rows with the service-role key, so it only runs against a LOCAL Supabase, and the app under test must
-// read the same stack (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from
-// there. Values come from `supabase status -o env`.
+// the save_schedule function (a save changes only the difference, so it keeps the assignments of what stays and refuses
+// to drop those of a removed cell or person without a confirmation), that an assignment keeps to its foreign keys and
+// constraints and only a planner reads and changes it, that the function mark_account_active records the activation of
+// the caller's own row only (an account without a role, an anonymous caller and another employee change nothing, the
+// first activation stays), that the employee, shift and schedule API routes keep to the role gate, the validation and
+// their status codes (the routes that add and remove one assignment of a schedule are idempotent, and the save of a
+// schedule answers 409 with the number of assignments it would remove until the body confirms the removal), that the
+// employee, shift and schedule pages open for the planner only (the schedule list, form and assignment page show what
+// the database holds, down to which shift button of which person is on), that the invitation mails link to the
+// set-password page, the whole invitation flow (invite, invite again, password reset, a foreign account, the tokens
+// from the admin API instead of the mails, the new employee's session, the activation time that the first password set
+// records and a reset keeps, and the locked e-mail), what the pages of that flow show (the account column and invite
+// button of the employee list, the locked e-mail field of the edit page, the password form of the set-password page;
+// read from the HTML the server renders), and that public registration stays closed. Zero dependencies on purpose. It
+// creates real accounts and removes its own accounts, employee, shift and schedule rows with the service-role key, so
+// it only runs against a LOCAL Supabase, and the app under test must read the same stack (.env / .dev.vars), including
+// SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from there. Values come from `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -258,6 +262,10 @@ function scheduleStaffingTable(method, options) {
 
 function scheduleEmployeesTable(method, options) {
   return restTable("schedule_employees", method, options);
+}
+
+function assignmentsTable(method, options) {
+  return restTable("schedule_assignments", method, options);
 }
 
 // Every signed-in user may edit their own user_metadata, so Supabase is expected to accept this; the role must still
@@ -532,6 +540,10 @@ const isLinkedToNoRoleAccount = (rows) =>
 // A missing column privilege is SQLSTATE 42501 (403 for a signed-in caller). The planner passes every policy of the
 // table, so a refusal with this code can only come from the column grants.
 const isPermissionDenied = (error) => error?.code === "42501";
+// The same code for the function itself: without execute the error names the function, while a caller that may execute it
+// is stopped one step later, at the table (`permission denied for table schedules`). Only the first proves the revoke.
+const isFunctionDenied = (error) =>
+  isPermissionDenied(error) && typeof error?.message === "string" && error.message.includes("function save_schedule");
 
 const plannerReadsOwnRow = (name, changes, describe) => [
   `${planner.label}: ${name}`,
@@ -722,13 +734,16 @@ const failedReplacement = () => ({
   employeeIds: [smokeEmployeeId, apiEmployeeId],
 });
 
-// The named arguments of save_schedule for a state; an `id` of null creates a schedule, any other replaces that one.
-const saveScheduleArgs = (state, id = null) => ({
+// The named arguments of save_schedule for a state; an `id` of null creates a schedule, any other saves over that one.
+// `confirmRemovals` says whether the assignments of a removed cell or person may go with it; the function has no default
+// arguments, so all six are always sent (an explicit null is the caller's to pass).
+const saveScheduleArgs = (state, id = null, confirmRemovals = false) => ({
   p_schedule_id: id,
   p_start_date: state.startDate,
   p_label: state.label,
   p_staffing: state.staffing,
   p_employee_ids: state.employeeIds,
+  p_confirm_removals: confirmRemovals,
 });
 
 // `check` predicates for the three tables, each given the state the schedule should be in and, as a function, the id of
@@ -801,6 +816,7 @@ const scheduleTables = {
   schedules: schedulesTable,
   schedule_staffing: scheduleStaffingTable,
   schedule_employees: scheduleEmployeesTable,
+  schedule_assignments: assignmentsTable,
 };
 const plannerRejectsScheduleRow = (table, description, body, constraint) => [
   `${planner.label}: ${table} insert ${description} is rejected`,
@@ -903,6 +919,229 @@ const notPlannerScheduleSteps = (actor) => [
     `is unchanged after ${actor.label} write attempts`,
     replacedSchedule,
     "the replaced schedule, unchanged",
+  ),
+];
+
+// The assignment steps share a schedule of their own, so that they leave the one above alone. Its cells are named A to E:
+// A and B are the first shift on days 0 and 1, C, D and E the second shift on days 0, 1 and 2. It covers the two people
+// of the API steps. It is created as `createdAssignSchedule` (cells A to D, both people) and then saved over, each state
+// differing from the one before in what its step is about: another label; another count and the new cell E; the count
+// of B set directly (no save); cell A gone; one person gone. Six assignments sit on it: A and B once for each person, C
+// and D for the API employee only. Removing a cell or a person is first refused (the label of such a save must not
+// stick) and then confirmed. The label starts with "Smoke-" because the final cleanup step deletes by that prefix; the
+// assignments go with the schedule by cascade. Every state is a function, because the ids in it are only known once
+// earlier steps have run.
+const assignScheduleLabel = `Smoke-${runId}-assign`;
+let assignScheduleId;
+const assignScheduleChildren = () => `?schedule_id=eq.${assignScheduleId}`;
+
+const assignCellAt = (cell) =>
+  ({
+    A: [smokeShiftId, 0],
+    B: [smokeShiftId, 1],
+    C: [sameNameShiftId, 0],
+    D: [sameNameShiftId, 1],
+    E: [sameNameShiftId, 2],
+  })[cell];
+// `counts` maps a cell name to its required count; the people default to both of the API steps.
+const assignState = (suffix, counts, employeeIds = [smokeEmployeeId, apiEmployeeId]) => ({
+  startDate: "2026-11-11",
+  label: `${assignScheduleLabel}${suffix}`,
+  staffing: Object.entries(counts).map(([cell, requiredCount]) => {
+    const [shiftId, dayOffset] = assignCellAt(cell);
+    return { shiftId, dayOffset, requiredCount };
+  }),
+  employeeIds,
+});
+const createdAssignSchedule = () => assignState("", { A: 2, B: 3, C: 1, D: 2 });
+const renamedAssignSchedule = () => assignState("-renamed", { A: 2, B: 3, C: 1, D: 2 });
+const recountedAssignSchedule = () => assignState("-renamed", { A: 1, B: 3, C: 1, D: 2, E: 1 });
+const patchedAssignSchedule = () => assignState("-renamed", { A: 1, B: 4, C: 1, D: 2, E: 1 });
+const withoutCellAssignSchedule = () => assignState("-no-cell", { B: 4, C: 1, D: 2, E: 1 });
+const withoutPersonAssignSchedule = () => assignState("-no-person", { B: 4, C: 1, D: 2, E: 1 }, [smokeEmployeeId]);
+// Saves that the database must refuse as long as they are not confirmed. Each has a label of its own, which must not
+// stick: the header is updated before the refusal, and the refusal has to undo that.
+const refusedCellAssignSchedule = () => assignState("-refused-cell", { B: 4, C: 1, D: 2, E: 1 });
+const refusedPersonAssignSchedule = () => assignState("-refused-person", { B: 4, C: 1, D: 2, E: 1 }, [smokeEmployeeId]);
+const refusedBothAssignSchedule = () => assignState("-refused-both", { C: 1, D: 2, E: 1 }, [smokeEmployeeId]);
+// The arguments of the signature that save_schedule had before S-04, which no longer exists.
+const oldSignatureArgs = () => {
+  const args = saveScheduleArgs({ ...createdAssignSchedule(), label: `${assignScheduleLabel}-old-signature` });
+  delete args.p_confirm_removals;
+  return args;
+};
+
+const assignmentIn = (cell, employeeId) => {
+  const [shiftId, dayOffset] = assignCellAt(cell);
+  return { cell, shiftId, dayOffset, employeeId };
+};
+// The six assignments, the first one added alone and the other five in one batch. What is left once cell A is gone, and
+// once the API employee is gone as well, are filters of the same list.
+const allAssignments = () => [
+  assignmentIn("A", smokeEmployeeId),
+  assignmentIn("A", apiEmployeeId),
+  assignmentIn("B", smokeEmployeeId),
+  assignmentIn("B", apiEmployeeId),
+  assignmentIn("C", apiEmployeeId),
+  assignmentIn("D", apiEmployeeId),
+];
+const firstAssignment = () => allAssignments().slice(0, 1);
+const otherAssignments = () => allAssignments().slice(1);
+const assignmentsWithoutCellA = () => allAssignments().filter((assignment) => assignment.cell !== "A");
+const assignmentsOfSmokeEmployeeOnly = () =>
+  assignmentsWithoutCellA().filter((assignment) => assignment.employeeId === smokeEmployeeId);
+// The columns of the table for an assignment; `source` is left out, because the default is what S-04 relies on.
+const assignmentRow = ({ shiftId, dayOffset, employeeId }) => ({
+  schedule_id: assignScheduleId,
+  shift_id: shiftId,
+  day_offset: dayOffset,
+  employee_id: employeeId,
+});
+const assignmentFilter = ({ shiftId, dayOffset, employeeId }) =>
+  `${assignScheduleChildren()}&shift_id=eq.${shiftId}&day_offset=eq.${dayOffset}&employee_id=eq.${employeeId}`;
+const cellFilter = (cell) => {
+  const [shiftId, dayOffset] = assignCellAt(cell);
+  return `${assignScheduleChildren()}&shift_id=eq.${shiftId}&day_offset=eq.${dayOffset}`;
+};
+
+// Rows that each break exactly one rule of the table, for the planner's attempts. The first sits on day 5, on which the
+// schedule has no cell; the second is in cell B, but its person is in no roster of these steps (an employee of the API
+// steps that the schedule does not cover); the third is valid but for its source (cell D exists, the person is in the
+// roster and the key is free).
+const assignmentInCellWithoutStaffing = () => assignmentRow({ ...assignmentIn("A", smokeEmployeeId), dayOffset: 5 });
+const assignmentOfPersonOutsideRoster = () => assignmentRow(assignmentIn("B", secondApiEmployeeId));
+const assignmentWithBogusSource = () => ({ ...assignmentRow(assignmentIn("D", smokeEmployeeId)), source: "bogus" });
+
+// `check` predicates for the assignments of the schedule: exactly the expected ones (a function that lists them), each
+// with the source the column defaults to. The rows come back in no promised order, so they are compared as sorted lists.
+const assignmentKey = (shiftId, dayOffset, employeeId) => `${shiftId}/${dayOffset}/${employeeId}`;
+const isAssignments = (expected) => (rows) =>
+  Array.isArray(rows) &&
+  rows.every((row) => row.schedule_id === assignScheduleId && row.source === "manual") &&
+  sameItems(
+    rows.map((row) => assignmentKey(row.shift_id, row.day_offset, row.employee_id)),
+    expected().map((assignment) => assignmentKey(assignment.shiftId, assignment.dayOffset, assignment.employeeId)),
+  );
+// PT409 is the refusal of a save that would take assignments along; the count comes back as text in `details`.
+const refusesRemoval = (count) => (error) =>
+  error.code === "PT409" && error.message === "Assignments would be removed" && error.details === String(count);
+const isAssignScheduleId = (id) => id === assignScheduleId;
+
+const plannerReadsAssignments = (name, expected, what) => [
+  `${planner.label}: schedule_assignments read ${name}`,
+  async () => assignmentsTable("GET", { token: await accessToken(planner), query: assignScheduleChildren() }),
+  {
+    status: 200,
+    check: isAssignments(expected),
+    describe: `exactly the assignments of ${what}, all with source manual`,
+  },
+];
+// The header, the cells, the people and the assignments of the assignment schedule, read back in four steps.
+const plannerReadsAssignSchedule = (name, state, expected, what) => [
+  ...plannerReadsSchedule(name, state, what, () => assignScheduleId),
+  plannerReadsAssignments(name, expected, what),
+];
+
+// A save of the assignment schedule over itself that the planner makes; `confirmRemovals` is passed on as it is.
+const plannerSavesAssignSchedule = (description, state, expected, confirmRemovals = false) => [
+  `${planner.label}: rpc save_schedule ${description}`,
+  async () =>
+    rpc("save_schedule", await accessToken(planner), saveScheduleArgs(state(), assignScheduleId, confirmRemovals)),
+  expected,
+];
+const savesAssignSchedule = { status: 200, check: isAssignScheduleId, describe: "the id of the same schedule" };
+const refusesRemovalOf = (count) => ({
+  status: 409,
+  check: refusesRemoval(count),
+  describe: `an error with the code PT409, the message "Assignments would be removed" and the details "${count}"`,
+});
+
+// A signed-in account without planner rights, at a time when the assignment schedule holds all six assignments: the table
+// looks empty, an insert is refused, a delete and an update of a required count are refused or hidden, and so is a save
+// that would take assignments along with a removed cell, even though it carries the confirmation (so that only the
+// policies stand in the way). The planner's reads afterwards are the proof that nothing changed, whatever status
+// PostgREST used to answer.
+const notPlannerAssignmentSteps = (actor) => [
+  [
+    `${actor.label}: schedule_assignments read returns an empty list`,
+    async () => assignmentsTable("GET", { token: await accessToken(actor), query: "?select=schedule_id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: schedule_assignments insert is rejected`,
+    async () =>
+      assignmentsTable("POST", {
+        token: await accessToken(actor),
+        body: assignmentRow(assignmentIn("C", smokeEmployeeId)),
+      }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${actor.label}: schedule_assignments delete is refused or hidden`,
+    async () => assignmentsTable("DELETE", { token: await accessToken(actor), query: assignScheduleChildren() }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: schedule_staffing update of the required count is refused or hidden`,
+    async () =>
+      scheduleStaffingTable("PATCH", {
+        token: await accessToken(actor),
+        query: cellFilter("A"),
+        body: { required_count: 9 },
+      }),
+    { statusNotClass: 5 },
+  ],
+  [
+    `${actor.label}: rpc save_schedule dropping a cell with assignments and a confirmation is rejected`,
+    async () =>
+      rpc(
+        "save_schedule",
+        await accessToken(actor),
+        saveScheduleArgs(assignState(`-${actor.label}-rpc`, { B: 3, C: 1, D: 2 }), assignScheduleId, true),
+      ),
+    { statusNotClass: 2 },
+  ],
+  ...plannerReadsAssignSchedule(
+    `is unchanged after ${actor.label} write attempts`,
+    createdAssignSchedule,
+    allAssignments,
+    "the assignment schedule, unchanged",
+  ),
+];
+
+// The same for a caller that never signed in, which the database does not let near the table or the function at all.
+const anonymousAssignmentSteps = [
+  [`${anonymous.label}: schedule_assignments read is rejected`, () => assignmentsTable("GET"), { statusNotClass: 2 }],
+  [
+    `${anonymous.label}: schedule_assignments insert is rejected`,
+    () => assignmentsTable("POST", { body: assignmentRow(assignmentIn("C", smokeEmployeeId)) }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedule_assignments delete is rejected`,
+    () => assignmentsTable("DELETE", { query: assignScheduleChildren() }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: schedule_staffing update of the required count is rejected`,
+    () => scheduleStaffingTable("PATCH", { query: cellFilter("A"), body: { required_count: 9 } }),
+    { statusNotClass: 2 },
+  ],
+  [
+    `${anonymous.label}: rpc save_schedule dropping a cell with assignments and a confirmation is rejected`,
+    () =>
+      rpc(
+        "save_schedule",
+        undefined,
+        saveScheduleArgs(assignState(`-${anonymous.label}-rpc`, { B: 3, C: 1, D: 2 }), assignScheduleId, true),
+      ),
+    { statusNotClass: 2, check: isFunctionDenied, describe: "a permission error (42501) for the function itself" },
+  ],
+  ...plannerReadsAssignSchedule(
+    `is unchanged after ${anonymous.label} write attempts`,
+    createdAssignSchedule,
+    allAssignments,
+    "the assignment schedule, unchanged",
   ),
 ];
 
@@ -1036,7 +1275,8 @@ const cellsOf = (row) =>
   [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map(([, cell]) => cell.replace(/<[^>]*>/g, "").trim());
 
 // The list row of the schedule: the period, the label, the number of people (2), the sum of the grid (5 + 1 + 2), the day
-// of creation and the edit link, whose aria-label names the period and the label.
+// of creation and the two links of the actions cell (edit and assign), the edit one with an aria-label that names the
+// period and the label. The assign link has steps of its own (listsAssignLinkInRow and listsAssignLinkInCard).
 const listsApiSchedule = (html) => {
   const row = tableRowWith(html, apiScheduleLabel);
   if (row === undefined) return false;
@@ -1049,7 +1289,8 @@ const listsApiSchedule = (html) => {
     cells[2] === String(state.employeeIds.length) &&
     cells[3] === String(state.staffing.reduce((sum, cell) => sum + cell.requiredCount, 0)) &&
     /^\d{2}\.\d{2}\.\d{4}$/.test(cells[4]) &&
-    cells[5] === "Edytuj" &&
+    // The links are separate elements: removing their tags may leave a space or nothing between the two words.
+    /^Edytuj\s*Obsadź$/.test(cells[5]) &&
     row.includes(`href="/schedules/${apiScheduleId}"`) &&
     row.includes(`aria-label="Edytuj: ${apiSchedulePeriod}, ${apiScheduleLabel}"`)
   );
@@ -1112,6 +1353,191 @@ const visitApiSchedulePage = (actor, status, expected) => [
   `${actor.label}: GET /schedules/<id>${expected.describe ? ` shows ${expected.describe}` : ""}`,
   () => request(actor, `/schedules/${apiScheduleId}`),
   { status, ...expected },
+];
+
+// The assignment routes (POST and DELETE /api/schedules/<id>/assignments) are tried on a schedule of their own, created
+// through the app, so that the schedule above stays in the states its steps expect. Its label starts with "Smoke-" because
+// the final cleanup step deletes by that prefix (its assignments go with it by cascade), and it must not start with the
+// label of the schedule above: the read after the refused requests and the list page find that one by its prefix. It has
+// three cells (A and B are the first API shift on days 0 and 1, C is the second one on day 0) and two people in the
+// roster, the two API employees: the second one holds an assignment only in the block of steps that try DELETE (which
+// needs a neighbour of another person in the same cell), every other step works with the first one. No employee of this
+// run is left to be outside the roster (the employee of the database steps does not exist yet), so the steps for a person
+// outside the roster name the id that no employee has: it breaks the same foreign key, the one to the roster. The saves
+// that drop cells A and B, which then hold assignments, are refused (409) until the body confirms them with
+// `confirmRemoval: true`. Every state is a function, because the ids in it are only known once earlier steps have run.
+const routeScheduleLabel = `Smoke-${runId}-route-assign`;
+let routeScheduleId;
+const routeAssignmentsUrl = () => `/api/schedules/${routeScheduleId}/assignments`;
+const routeScheduleUrl = () => `/api/schedules/${routeScheduleId}`;
+const routeScheduleChildren = () => `?schedule_id=eq.${routeScheduleId}`;
+const unknownAssignmentsUrl = `/api/schedules/${unknownScheduleId}/assignments`;
+const malformedAssignmentsUrl = "/api/schedules/not-a-uuid/assignments";
+
+const routeCellAt = (cell) => ({ A: [apiShiftId, 0], B: [apiShiftId, 1], C: [secondApiShiftId, 0] })[cell];
+// `counts` maps a cell name to its required count.
+const routeState = (suffix, counts) => ({
+  startDate: "2026-11-11",
+  label: `${routeScheduleLabel}${suffix}`,
+  staffing: Object.entries(counts).map(([cell, requiredCount]) => {
+    const [shiftId, dayOffset] = routeCellAt(cell);
+    return { shiftId, dayOffset, requiredCount };
+  }),
+  employeeIds: [apiEmployeeId, secondApiEmployeeId],
+});
+const routeSchedule = () => routeState("", { A: 2, B: 1, C: 1 });
+// What a save sends that drops cells A and B: once with a label that must not stick (the save is refused) and once to
+// stay (the save is confirmed).
+const refusedRouteSchedule = () => routeState("-refused", { C: 1 });
+const trimmedRouteSchedule = () => routeState("-trimmed", { C: 1 });
+
+// The edit page of the route schedule in the state the steps leave it in when the pages are visited: saved by the confirmed
+// PUT (the label of `trimmedRouteSchedule`) and still holding the one assignment of cell C (the witness), so it is the page
+// of a schedule that has assignments. Its address needs the id, which only exists once the create step has run, so it is
+// built when the step runs.
+const visitRouteSchedulePage = (actor, status, expected) => [
+  `${actor.label}: GET /schedules/<id> of the schedule with an assignment${expected.describe ? ` shows ${expected.describe}` : ""}`,
+  () => request(actor, `/schedules/${routeScheduleId}`),
+  { status, ...expected },
+];
+const hasTrimmedRouteLabel = (html) =>
+  inputsOf(html).find((input) => input.id === "label")?.value === trimmedRouteSchedule().label;
+
+// The body of the assignment routes for a cell; the person is the one of the roster unless another is named.
+const routeAssignment = (cell, employeeId = apiEmployeeId) => {
+  const [shiftId, dayOffset] = routeCellAt(cell);
+  return { shiftId, dayOffset, employeeId };
+};
+// The assignments the table should hold: those of the named cells, for the person of the roster. The witness is the one
+// the refused requests must leave alone.
+const routeAssignmentsOf =
+  (...cells) =>
+  () =>
+    cells.map((cell) => routeAssignment(cell));
+const routeWitness = routeAssignmentsOf("C");
+// The same for assignments named one by one, as [cell, who] pairs: "first" is the person of the roster that
+// `routeAssignment` names by default, "second" the other one (see the steps that try DELETE).
+const routePersonOf = (who) => (who === "second" ? secondApiEmployeeId : apiEmployeeId);
+const routeAssignmentsAmong =
+  (...named) =>
+  () =>
+    named.map(([cell, who]) => routeAssignment(cell, routePersonOf(who)));
+
+// A body that the gate must turn away before the route sees it. The cell and the person do not exist, so nothing could be
+// stored even if the gate let it through (the route would answer 422 instead of 401 or 403).
+const deniedAssignment = { shiftId: unknownShiftId, dayOffset: 0, employeeId: unknownEmployeeId };
+// POST and DELETE of an actor without planner rights; `reason` is what the gate says (the 401 and the 403 differ in it).
+const deniedAssignmentCalls = (actor, status, reason) =>
+  ["POST", "DELETE"].map((method) => [
+    `${actor.label}: ${method} /api/schedules/<id>/assignments`,
+    () => request(actor, unknownAssignmentsUrl, { method, json: deniedAssignment }),
+    {
+      status,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: isError(reason),
+      describe: `the error ${reason}`,
+    },
+  ]);
+
+// Both routes answer a successful write with exactly { ok: true }.
+const isAssignmentWritten = (body) => body.ok === true && Object.keys(body).length === 1;
+const wasWritten = { status: 200, check: isAssignmentWritten, describe: "ok: true and nothing else" };
+const isUnsupportedMediaType = (body) => body.error === "unsupported_media_type";
+// The route does not take the confirmation of the save for one unless it is exactly true; the 409 says how many
+// assignments it would have removed.
+const wouldRemoveAssignments = (count) => (body) =>
+  body.error === "assignments_would_be_removed" && body.removed === count && Object.keys(body).length === 2;
+const isRouteScheduleSaved = (body) =>
+  isUuidText(body.id) && body.id === routeScheduleId && Object.keys(body).length === 1;
+
+// `check` predicate for the assignments of the route schedule: exactly the expected ones (a function that lists them),
+// each with the source the column defaults to; the rows come back in no promised order.
+const isRouteAssignments = (expected) => (rows) =>
+  Array.isArray(rows) &&
+  rows.every((row) => row.schedule_id === routeScheduleId && row.source === "manual") &&
+  sameItems(
+    rows.map((row) => assignmentKey(row.shift_id, row.day_offset, row.employee_id)),
+    expected().map((assignment) => assignmentKey(assignment.shiftId, assignment.dayOffset, assignment.employeeId)),
+  );
+
+const plannerReadsRouteAssignments = (name, expected, what) => [
+  `${planner.label}: schedule_assignments of the route schedule read ${name}`,
+  async () => assignmentsTable("GET", { token: await accessToken(planner), query: routeScheduleChildren() }),
+  {
+    status: 200,
+    check: isRouteAssignments(expected),
+    describe: `exactly the assignments of ${what}, all with source manual`,
+  },
+];
+// The header, the cells, the people and the assignments of the route schedule, read back in four steps.
+const plannerReadsRouteSchedule = (name, state, expected, what) => [
+  ...plannerReadsSchedule(name, state, what, () => routeScheduleId),
+  plannerReadsRouteAssignments(name, expected, what),
+];
+
+// A call of the assignment routes by the planner. `url` is a function and `body` returns the `json`, `form` or `jsonText`
+// option of the request, because the ids in them are only known once earlier steps have run.
+const plannerCallsAssignments = (method, name, url, body, expected) => [
+  `${planner.label}: ${method} /api/schedules/<id>/assignments ${name}`,
+  () => request(planner, url(), { method, ...body() }),
+  { contentType: "application/json", cacheControl: "no-store", ...expected },
+];
+// The same, followed by a read that shows that the table still holds the witness and nothing else, so a refused POST
+// added nothing and a DELETE that found nothing took nothing away.
+const plannerTriesAssignmentCall = (method, name, url, body, expected) => [
+  plannerCallsAssignments(method, name, url, body, expected),
+  plannerReadsRouteAssignments(`is unchanged after ${method} ${name}`, routeWitness, "the witness alone"),
+];
+// A DELETE by the planner followed by a read of the whole table, which must then hold exactly `expected` (`what` says
+// what that is): the assignment the body names is gone, or was never there, and nothing else has gone with it. `url` and
+// `assignment` are functions, like `url` and `body` above; `assignment` returns the body itself.
+const plannerDeletesRouteAssignment = (name, url, assignment, expected, what) => [
+  plannerCallsAssignments("DELETE", name, url, () => ({ json: assignment() }), wasWritten),
+  plannerReadsRouteAssignments(`holds what is left after DELETE ${name}`, expected, what),
+];
+// What both methods must refuse in the same way, before the cell or the person is looked at.
+const refusedRouteCalls = (method) => [
+  ...plannerTriesAssignmentCall(
+    method,
+    "with a bad shift id, a day offset of 7 and a bad employee id",
+    routeAssignmentsUrl,
+    () => ({ json: { shiftId: "not-a-uuid", dayOffset: 7, employeeId: "nope" } }),
+    {
+      status: 422,
+      check: hasErrorsOnFields("shiftId", "dayOffset", "employeeId"),
+      describe: "errors for exactly the shiftId, dayOffset and employeeId fields",
+    },
+  ),
+  ...plannerTriesAssignmentCall(
+    method,
+    "with a form body",
+    routeAssignmentsUrl,
+    () => ({ form: routeAssignment("A") }),
+    {
+      status: 415,
+      check: isUnsupportedMediaType,
+      describe: "the error unsupported_media_type",
+    },
+  ),
+  ...plannerTriesAssignmentCall(
+    method,
+    "with a body that is not JSON",
+    routeAssignmentsUrl,
+    () => ({ jsonText: "{" }),
+    {
+      status: 400,
+      check: isInvalidJson,
+      describe: "the error invalid_json",
+    },
+  ),
+  ...plannerTriesAssignmentCall(
+    method,
+    "on an id that is not a UUID",
+    () => malformedAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    { status: 404, check: isNotFound, describe: "the error not_found" },
+  ),
 ];
 
 // The invitation steps share three employees the planner creates through the app: one that gets invited, one without an
@@ -1308,6 +1734,211 @@ const hasPasswordFormIsland = (html) => {
   );
 };
 
+// The assignment page (/schedules/<id>/assign) is visited for two schedules: the API schedule (three cells with a
+// required count, two people, no assignment) and the route schedule (one cell, two people, one assignment: the
+// witness). Its island is rendered on the server, so the table of people and the coverage summary are in the HTML. A
+// person's row is found by the text of its row header, never by a name anywhere in the page: Astro also writes the
+// props of the island, names included, into the astro-island tag, and that proves nothing about a row. A shift button
+// counts only as the pair of its aria-label (person, day, shift with its hours) and its aria-pressed in one tag.
+const MINUS = "\u2212"; // U+2212, the minus sign of the shortage mark (not a hyphen)
+// What a screen reader gets in the coverage table on a day on which the shift does not run, in place of a counter.
+const noCellWords = "brak tej zmiany tego dnia";
+
+// The elements with a tag name that do not nest (rows, cells, list items, links, paragraphs), each cut out whole.
+const elementsOf = (html, name) =>
+  [...html.matchAll(new RegExp(`<${name}\\b${TAG_ATTRIBUTES}>[\\s\\S]*?</${name}>`, "g"))].map(([element]) => element);
+const textOf = (html) => html.replace(/<[^>]*>/g, "").trim();
+const textsOf = (html, name) => elementsOf(html, name).map(textOf);
+// The <a> elements of a piece of HTML, each as { href, label, text }: the address, the aria-label and the text.
+const linksOf = (html) =>
+  elementsOf(html, "a").map((link) => {
+    const [tag] = tagsOf(link, "a");
+    return { href: attributeOf(tag, "href"), label: attributeOf(tag, "aria-label"), text: textOf(link) };
+  });
+
+// The link from a row or a card of the schedule list to the assignment page of the API schedule: the address, an
+// aria-label that names the period and the label like the one of the edit link, and the text.
+const hasAssignLink = (part) =>
+  linksOf(part).some(
+    (link) =>
+      link.href === `/schedules/${apiScheduleId}/assign` &&
+      link.label === `Obsadź: ${apiSchedulePeriod}, ${apiScheduleLabel}` &&
+      link.text === "Obsadź",
+  );
+// The list has the schedule twice, as a table row (wide layout) and as a card (narrow layout), and each has the link.
+const listsAssignLinkInRow = (html) => {
+  const row = elementsOf(html, "tr").find((element) => element.includes(apiScheduleLabel));
+  return row !== undefined && hasAssignLink(row);
+};
+const listsAssignLinkInCard = (html) => {
+  const card = elementsOf(html, "li").find((element) => element.includes(apiScheduleLabel));
+  return card !== undefined && hasAssignLink(card);
+};
+// The edit page leads to the assignment page of its schedule.
+const linksToAssignPage = (html) =>
+  linksOf(html).some(
+    (link) => link.href === `/schedules/${apiScheduleId}/assign` && link.text === "Obsadź pracowników",
+  );
+
+// The page says what it is: the title and the only <h1>, then the period and the label of the schedule, each in a
+// paragraph of its own.
+const showsAssignHeading = (period, label) => (html) => {
+  const headings = textsOf(html, "h1");
+  const paragraphs = textsOf(html, "p");
+  return (
+    headings.length === 1 &&
+    headings[0] === "Obsadzanie grafiku" &&
+    textsOf(html, "title")[0] === "Obsadzanie grafiku" &&
+    paragraphs.includes(period) &&
+    paragraphs.includes(label)
+  );
+};
+const headingExcerpt = (html) =>
+  ["title", "h1", "p"].map((name) => `${name}: ${textsOf(html, name).slice(0, 3).join(" | ")}`).join("\n");
+// The way back: to the edit page of the API schedule and to the list.
+const linksBackFromAssignPage = (html) => {
+  const links = linksOf(html);
+  return (
+    links.some((link) => link.href === `/schedules/${apiScheduleId}` && link.text === "Edytuj grafik") &&
+    links.some((link) => link.href === "/schedules" && link.text === "Lista grafików")
+  );
+};
+
+// The island holds two tables: the people's table, then the section of the coverage summary, so the HTML is cut at
+// the section. The body rows of a table come back as { header, cells }: the text of the row header (<th scope="row">)
+// and each <td> element whole.
+const cutAtCoverage = (html) => {
+  const at = html.indexOf('aria-labelledby="coverage-heading"');
+  return at === -1 ? [html, ""] : [html.slice(0, at), html.slice(at)];
+};
+const bodyRowsOf = (html) =>
+  elementsOf(html, "tr").flatMap((row) => {
+    const header = elementsOf(row, "th").find((th) => attributeOf(tagsOf(th, "th")[0], "scope") === "row");
+    return header === undefined ? [] : [{ header: textOf(header), cells: elementsOf(row, "td") }];
+  });
+
+// The people's table, as one entry per person (in the order of their names, whatever the order of the rows) with a list
+// of buttons for each of the seven days; a day without a button (the dash of a day without a shift) has an empty list.
+// A button is "<aria-label> [aria-pressed=true|false]". `personRow` writes the same shape for what a person should
+// have: `byDay` maps a day offset to its buttons.
+const pressedButton = (label, pressed) => `${label} [aria-pressed=${pressed}]`;
+const buttonsOfCell = (cell) =>
+  tagsOf(cell, "button")
+    .filter((tag) => hasAttribute(tag, "aria-pressed"))
+    .map((tag) => pressedButton(attributeOf(tag, "aria-label"), attributeOf(tag, "aria-pressed")));
+const byPerson = (a, b) => a.person.localeCompare(b.person);
+const gridOf = (html) =>
+  bodyRowsOf(cutAtCoverage(html)[0])
+    .map(({ header, cells }) => ({ person: header, days: cells.map(buttonsOfCell) }))
+    .sort(byPerson);
+const personRow = (person, byDay) => ({ person, days: Array.from({ length: 7 }, (_unused, day) => byDay[day] ?? []) });
+const showsGrid = (expected) => (html) => JSON.stringify(gridOf(html)) === JSON.stringify([...expected].sort(byPerson));
+const gridExcerpt = (html) =>
+  gridOf(html)
+    .map(({ person, days }) => `${person}: ${JSON.stringify(days)}`)
+    .join("\n");
+
+// The coverage table has exactly one row for each of `expected`, a [hours, counters] pair: the row of a shift is the
+// one whose header starts with the shift name and holds its hours (the two API shifts share a name). `counters` maps a
+// day offset to the text of the cell, the counter with its mark for a shortage or an excess as the tags leave it; every
+// other day must say that the shift does not run.
+const coverageRowsOf = (html) =>
+  bodyRowsOf(cutAtCoverage(html)[1]).map(({ header, cells }) => ({ header, cells: cells.map(textOf) }));
+const showsCoverage = (expected) => (html) => {
+  const rows = coverageRowsOf(html);
+  return (
+    rows.length === expected.length &&
+    expected.every(([times, counters]) => {
+      const found = rows.filter((row) => row.header.startsWith(apiShiftName) && row.header.includes(times));
+      return (
+        found.length === 1 &&
+        found[0].cells.length === 7 &&
+        found[0].cells.every((text, day) => (day in counters ? text === counters[day] : text.endsWith(noCellWords)))
+      );
+    })
+  );
+};
+const coverageExcerpt = (html) => JSON.stringify(coverageRowsOf(html));
+
+// The page lists people as "Nazwisko Imię", and a button is named "<person>, <day>, <shift name> <hours>". The two API
+// shifts share a name, so the hours tell them apart: the first runs 22:00-07:00 (the shift steps moved its end from
+// 06:00), the second 06:00-14:00.
+const personName = (employee) => `${employee.lastName} ${employee.firstName}`;
+const apiEmployeeName = personName(apiEmployee);
+const secondApiEmployeeName = personName(secondApiEmployee);
+const apiShiftTitle = `${apiShiftName} 22:00–07:00`;
+const secondApiShiftTitle = `${apiShiftName} 06:00–14:00`;
+const buttonLabel = (person, day, shiftTitle) => `${person}, ${day}, ${shiftTitle}`;
+
+// The route schedule when the pages are visited: the period 11.11 (a Wednesday) to 17.11.2026, the label of the
+// confirmed PUT, and a single cell, the second API shift on day 0 with a count of 1. The first person holds the witness
+// assignment there (the button is on), the second does not (the button is off), and the coverage is 1 of 1 without a
+// mark.
+const routeSchedulePeriod = "11.11–17.11.2026";
+const routeGrid = [
+  personRow(apiEmployeeName, {
+    0: [pressedButton(buttonLabel(apiEmployeeName, "śr. 11.11", secondApiShiftTitle), "true")],
+  }),
+  personRow(secondApiEmployeeName, {
+    0: [pressedButton(buttonLabel(secondApiEmployeeName, "śr. 11.11", secondApiShiftTitle), "false")],
+  }),
+];
+const routeCoverage = [["06:00–14:00", { 0: "1 z 1" }]];
+// The same schedule with the second person on cell C as well: two people where one is needed, so both buttons are on
+// and the counter reads 2 z 1 with the excess mark +1 (U+002B) and the words for a screen reader, and no shortage mark.
+const routeGridWithSurplus = [
+  personRow(apiEmployeeName, {
+    0: [pressedButton(buttonLabel(apiEmployeeName, "śr. 11.11", secondApiShiftTitle), "true")],
+  }),
+  personRow(secondApiEmployeeName, {
+    0: [pressedButton(buttonLabel(secondApiEmployeeName, "śr. 11.11", secondApiShiftTitle), "true")],
+  }),
+];
+const routeCoverageWithSurplus = [["06:00–14:00", { 0: "2 z 1+1nadmiar 1" }]];
+
+// The API schedule when the pages are visited: the period 15.11 (a Sunday) to 21.11.2026 and no assignment. Its cells
+// are the first shift on day 0 (5 people), the second shift on day 3 (1 person) and on day 4 (2 people), so each person
+// has three buttons, all off, and every counter is short by the whole count.
+const apiGridOf = (person) =>
+  personRow(person, {
+    0: [pressedButton(buttonLabel(person, "niedz. 15.11", apiShiftTitle), "false")],
+    3: [pressedButton(buttonLabel(person, "śr. 18.11", secondApiShiftTitle), "false")],
+    4: [pressedButton(buttonLabel(person, "czw. 19.11", secondApiShiftTitle), "false")],
+  });
+const apiGrid = [apiGridOf(apiEmployeeName), apiGridOf(secondApiEmployeeName)];
+const apiCoverage = [
+  ["22:00–07:00", { 0: `0 z 5${MINUS}5brakuje 5` }],
+  ["06:00–14:00", { 3: `0 z 1${MINUS}1brakuje 1`, 4: `0 z 2${MINUS}2brakuje 2` }],
+];
+
+// The container that PlannerLayout puts around every planner page, as its class tokens: `max-w-7xl` for a page that
+// gets the `wide` prop (the assignment page), `max-w-4xl` for the others. The classes are read from this element and
+// not from anywhere in the page, because a stylesheet that is inlined into the page holds both of them.
+const layoutClassesOf = (html) =>
+  tagsOf(html, "div")
+    .map((tag) => (attributeOf(tag, "class") ?? "").split(/\s+/))
+    .find((classes) => classes.includes("mx-auto") && classes.includes("w-full"));
+const hasWideLayout = (html) => {
+  const classes = layoutClassesOf(html);
+  return classes !== undefined && classes.includes("max-w-7xl") && !classes.includes("max-w-4xl");
+};
+const hasNarrowLayout = (html) => {
+  const classes = layoutClassesOf(html);
+  return classes !== undefined && classes.includes("max-w-4xl") && !classes.includes("max-w-7xl");
+};
+const layoutExcerpt = (html) => `the layout container has the classes ${JSON.stringify(layoutClassesOf(html))}`;
+
+// The assignment page of a schedule the steps above saved; its address needs the id, which only exists once the create
+// step has run, so it is built when the step runs. `which` names the schedule in the step; the page is not cached.
+const visitAssignPage = (which, id, expected) => [
+  `${planner.label}: GET /schedules/<id>/assign of ${which} shows ${expected.describe}`,
+  () => request(planner, `/schedules/${id()}/assign`),
+  { status: 200, cacheControl: "no-store", ...expected },
+];
+const visitApiAssignPage = (expected) => visitAssignPage("the API schedule", () => apiScheduleId, expected);
+const visitRouteAssignPage = (expected) =>
+  visitAssignPage("the schedule with an assignment", () => routeScheduleId, expected);
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -1319,6 +1950,8 @@ const steps = [
   visit(anonymous, "/shifts/new", 401),
   visit(anonymous, "/schedules", 401),
   visit(anonymous, "/schedules/new", 401),
+  // The gate answers before the page runs, so the id may be one that no schedule has: a planner would get a 404 there.
+  visit(anonymous, `/schedules/${unknownScheduleId}/assign`, 401),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
@@ -1339,6 +1972,7 @@ const steps = [
     () => request(anonymous, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
     { status: 401, contentType: "application/json" },
   ],
+  ...deniedAssignmentCalls(anonymous, 401, "unauthenticated"),
   [
     `${anonymous.label}: PUT /api/schedules/<id>`,
     () => request(anonymous, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -1364,11 +1998,13 @@ const steps = [
   visit(noRole, "/planner", 403),
   visit(noRole, "/schedules", 403),
   visit(noRole, "/schedules/new", 403),
+  visit(noRole, `/schedules/${unknownScheduleId}/assign`, 403),
   [
     `${noRole.label}: POST /api/schedules`,
     () => request(noRole, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
     { status: 403, contentType: "application/json" },
   ],
+  ...deniedAssignmentCalls(noRole, 403, "forbidden"),
   [
     `${noRole.label}: PUT /api/schedules/<id>`,
     () => request(noRole, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -1409,6 +2045,7 @@ const steps = [
   visit(employee, "/schedules", 403),
   visit(employee, "/schedules/new", 403),
   visit(employee, `/schedules/${unknownScheduleId}`, 403),
+  visit(employee, `/schedules/${unknownScheduleId}/assign`, 403),
   [
     `${employee.label}: POST /api/employees`,
     () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
@@ -1439,6 +2076,7 @@ const steps = [
     () => request(employee, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
     { status: 403, contentType: "application/json" },
   ],
+  ...deniedAssignmentCalls(employee, 403, "forbidden"),
   [
     `${employee.label}: PUT /api/schedules/<id>`,
     () => request(employee, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -1732,6 +2370,266 @@ const steps = [
     check: isNotFound,
     describe: "the error not_found",
   }),
+  // The assignment routes, on a schedule of their own (see routeSchedule). An assignment is added and removed by one
+  // request each, and both are idempotent: adding what is there and removing what is gone answer 200 and change nothing.
+  [
+    `${planner.label}: POST /api/schedules creates the schedule for the assignment routes`,
+    async () => {
+      const result = await request(planner, "/api/schedules", { method: "POST", json: routeSchedule() });
+      routeScheduleId = parseJson(result.body)?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: (body) => isUuidText(body.id) && Object.keys(body).length === 1,
+      describe: "the id of the new schedule and nothing else",
+    },
+  ],
+  ...plannerReadsRouteSchedule(
+    "shows the schedule created for the assignment routes",
+    routeSchedule,
+    () => [],
+    "the route schedule (3 cells, 2 people, no assignments)",
+  ),
+  plannerCallsAssignments(
+    "POST",
+    "adds an assignment",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments("shows the assignment just added", routeAssignmentsOf("A"), "the assignment just added"),
+  plannerCallsAssignments(
+    "POST",
+    "again accepts the assignment that is there",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments(
+    "still shows one assignment after the repeated POST",
+    routeAssignmentsOf("A"),
+    "the one assignment, not repeated",
+  ),
+  plannerCallsAssignments(
+    "DELETE",
+    "removes the assignment",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments("shows no assignment after the DELETE", () => [], "none (the assignment is gone)"),
+  plannerCallsAssignments(
+    "DELETE",
+    "again accepts the removal of what is gone",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments("still shows no assignment after the repeated DELETE", () => [], "none"),
+  // From here on one assignment, in cell C, is always there: the witness that the requests below must leave alone. The
+  // block after it gives the witness neighbours and takes them away again, so that it is alone again when the block is over.
+  plannerCallsAssignments(
+    "POST",
+    "adds the witness",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("C") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments("shows the witness", routeWitness, "the witness alone"),
+  // A DELETE takes exactly the assignment its body names, by the whole key (schedule, shift, day, person), and nothing next
+  // to it. Every part of the key has a neighbour that a filter missing that part would take along: the assignment A of the
+  // first person is joined by the same person on the same day and another shift (the witness C), by the same person on the
+  // same shift and another day (B) and by another person in the same cell (A of the second person). For the schedule, the
+  // same key is sent to a schedule that does not exist while the assignment is there. Each DELETE is followed by a read of
+  // the whole table, so what is taken, and what is not, shows. A DELETE of what is already gone is tried with the
+  // neighbours there as well; the removals that follow it leave the witness alone in the table.
+  plannerCallsAssignments(
+    "POST",
+    "adds the assignment of cell A for the first person",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerCallsAssignments(
+    "POST",
+    "adds the assignment of cell A for the second person",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A", secondApiEmployeeId) }),
+    wasWritten,
+  ),
+  plannerCallsAssignments(
+    "POST",
+    "adds the assignment of cell B for the first person",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("B") }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments(
+    "shows the witness with the three neighbours of cell A",
+    routeAssignmentsAmong(["A", "first"], ["A", "second"], ["B", "first"], ["C", "first"]),
+    "cells A, B and C of the first person and cell A of the second person",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "with the key of the assignment of cell A of the first person, on a schedule that does not exist",
+    () => unknownAssignmentsUrl,
+    () => routeAssignment("A"),
+    routeAssignmentsAmong(["A", "first"], ["A", "second"], ["B", "first"], ["C", "first"]),
+    "cells A, B and C of the first person and cell A of the second person (nothing is taken)",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell A of the first person takes that one only",
+    routeAssignmentsUrl,
+    () => routeAssignment("A"),
+    routeAssignmentsAmong(["A", "second"], ["B", "first"], ["C", "first"]),
+    "cell A of the second person and cells B and C of the first person (the one of cell A of the first person is gone)",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell A of the first person again finds nothing, the neighbours stay",
+    routeAssignmentsUrl,
+    () => routeAssignment("A"),
+    routeAssignmentsAmong(["A", "second"], ["B", "first"], ["C", "first"]),
+    "cell A of the second person and cells B and C of the first person (as before)",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell A of the second person takes that one only",
+    routeAssignmentsUrl,
+    () => routeAssignment("A", secondApiEmployeeId),
+    routeAssignmentsAmong(["B", "first"], ["C", "first"]),
+    "cells B and C of the first person",
+  ),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell B of the first person takes that one only",
+    routeAssignmentsUrl,
+    () => routeAssignment("B"),
+    routeWitness,
+    "the witness alone",
+  ),
+  ...refusedRouteCalls("POST"),
+  ...refusedRouteCalls("DELETE"),
+  // A well-formed body that names a cell without staffing, a person outside the roster or a schedule that does not exist
+  // breaks a foreign key (422 unknown_reference when adding); a removal of such an assignment finds nothing and is a 200.
+  ...plannerTriesAssignmentCall(
+    "POST",
+    "in a cell without staffing",
+    routeAssignmentsUrl,
+    () => ({ json: { shiftId: apiShiftId, dayOffset: 3, employeeId: apiEmployeeId } }),
+    { status: 422, check: isUnknownReference, describe: "the error unknown_reference" },
+  ),
+  ...plannerTriesAssignmentCall(
+    "POST",
+    "for a person outside the roster",
+    routeAssignmentsUrl,
+    // Both API employees are in the roster by now, and no other employee exists at this point of the run: the id that no
+    // employee has breaks the same foreign key (schedule_assignments_employee_fkey, to the roster of the schedule).
+    () => ({ json: routeAssignment("A", unknownEmployeeId) }),
+    { status: 422, check: isUnknownReference, describe: "the error unknown_reference" },
+  ),
+  ...plannerTriesAssignmentCall(
+    "POST",
+    "on a schedule that does not exist",
+    () => unknownAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    { status: 422, check: isUnknownReference, describe: "the error unknown_reference" },
+  ),
+  ...plannerTriesAssignmentCall(
+    "DELETE",
+    "of an assignment in a cell without staffing finds nothing",
+    routeAssignmentsUrl,
+    () => ({ json: { shiftId: apiShiftId, dayOffset: 3, employeeId: apiEmployeeId } }),
+    wasWritten,
+  ),
+  ...plannerTriesAssignmentCall(
+    "DELETE",
+    "on a schedule that does not exist finds nothing",
+    () => unknownAssignmentsUrl,
+    // The key of the witness, which is in the table: only the schedule of the request tells it from the assignment there.
+    () => ({ json: routeAssignment("C") }),
+    wasWritten,
+  ),
+  // The save of the schedule over the routes: it refuses to drop cells A and B once they hold an assignment each, unless
+  // the body confirms it with exactly `confirmRemoval: true`. A refused save changes nothing, its label included.
+  plannerCallsAssignments(
+    "POST",
+    "adds an assignment in cell A",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    wasWritten,
+  ),
+  plannerCallsAssignments(
+    "POST",
+    "adds an assignment in cell B",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("B") }),
+    wasWritten,
+  ),
+  ...plannerReadsRouteSchedule(
+    "shows the three assignments, one in each cell",
+    routeSchedule,
+    routeAssignmentsOf("A", "B", "C"),
+    "the route schedule, with an assignment in each of its three cells",
+  ),
+  plannerPutsSchedule(
+    "/api/schedules/<id> dropping two cells with assignments is refused without a confirmation",
+    routeScheduleUrl,
+    {
+      status: 409,
+      cacheControl: "no-store",
+      check: wouldRemoveAssignments(2),
+      describe: "the error assignments_would_be_removed and removed: 2, nothing else",
+    },
+    refusedRouteSchedule,
+  ),
+  ...plannerReadsRouteSchedule(
+    "is unchanged after the refused PUT",
+    routeSchedule,
+    routeAssignmentsOf("A", "B", "C"),
+    "the route schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerPutsSchedule(
+    '/api/schedules/<id> with confirmRemoval "yes" is refused like no confirmation',
+    routeScheduleUrl,
+    {
+      status: 409,
+      cacheControl: "no-store",
+      check: wouldRemoveAssignments(2),
+      describe: "the error assignments_would_be_removed and removed: 2, nothing else",
+    },
+    () => ({ ...refusedRouteSchedule(), confirmRemoval: "yes" }),
+  ),
+  ...plannerReadsRouteSchedule(
+    'is unchanged after the PUT with confirmRemoval "yes"',
+    routeSchedule,
+    routeAssignmentsOf("A", "B", "C"),
+    "the route schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerPutsSchedule(
+    "/api/schedules/<id> with confirmRemoval true drops the cells and their assignments",
+    routeScheduleUrl,
+    {
+      status: 200,
+      cacheControl: "no-store",
+      check: isRouteScheduleSaved,
+      describe: "the id of the same schedule and nothing else",
+    },
+    () => ({ ...trimmedRouteSchedule(), confirmRemoval: true }),
+  ),
+  ...plannerReadsRouteSchedule(
+    "shows the schedule without cells A and B and only the assignment of cell C",
+    trimmedRouteSchedule,
+    routeWitness,
+    "the route schedule with the single cell C, and its assignment (those of the dropped cells are gone)",
+  ),
+  // A view that was loaded before the save still offers cell A: adding there now breaks the foreign key.
+  ...plannerTriesAssignmentCall(
+    "POST",
+    "in a cell that a save has just dropped",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("A") }),
+    { status: 422, check: isUnknownReference, describe: "the error unknown_reference" },
+  ),
   ...plannerReadsSchedule(
     "is unchanged after the refused requests",
     changedApiSchedule,
@@ -1763,7 +2661,25 @@ const steps = [
     "/schedules",
     200,
     listsApiSchedule,
-    "the API schedule: period 15.11-21.11.2026, label, 2 people, total 8, a creation date and the edit link",
+    "the API schedule: period 15.11-21.11.2026, label, 2 people, total 8, a creation date, the edit link and an assign link",
+    "no-store",
+  ),
+  // The link "Obsadź" to the assignment page, in the table row and in the card of the narrow layout, each named by the
+  // period and the label like the edit link.
+  visitChecked(
+    planner,
+    "/schedules",
+    200,
+    listsAssignLinkInRow,
+    'in the table row of the API schedule, the link "Obsadź" to /schedules/<id>/assign with the aria-label "Obsadź: <period>, <label>"',
+    "no-store",
+  ),
+  visitChecked(
+    planner,
+    "/schedules",
+    200,
+    listsAssignLinkInCard,
+    'in the card of the API schedule, the link "Obsadź" to /schedules/<id>/assign with the aria-label "Obsadź: <period>, <label>"',
     "no-store",
   ),
   visitChecked(planner, "/schedules", 200, hasD6Notice, "the D6 notice", "no-store"),
@@ -1784,6 +2700,113 @@ const steps = [
     describe: "the date, label, cells and people of the API schedule as the form state",
     cacheControl: "no-store",
   }),
+  visitApiSchedulePage(planner, 200, {
+    bodyCheck: linksToAssignPage,
+    describe: 'the link "Obsadź pracowników" to /schedules/<id>/assign',
+    cacheControl: "no-store",
+  }),
+  // A page without the `wide` prop keeps the narrow container; only the assignment page gets the wide one (see below).
+  visitApiSchedulePage(planner, 200, {
+    bodyCheck: hasNarrowLayout,
+    describe: "the narrow layout container (max-w-4xl, not max-w-7xl), as every page without the wide prop",
+    excerpt: layoutExcerpt,
+    cacheControl: "no-store",
+  }),
+  // The edit page of a schedule that has assignments: the page counts them for the form (the number lets the form tell the
+  // planner that a new date moves them) and must still render the form. The confirmation block and the date note are
+  // client state, so the browser review shows them, not this step.
+  visitRouteSchedulePage(planner, 200, {
+    bodyCheck: hasTrimmedRouteLabel,
+    describe: "the label of the route schedule, saved last by the confirmed PUT, in the label field",
+    cacheControl: "no-store",
+  }),
+  // The assignment page of the API schedule, which has no assignment: every button is off and every counter of the
+  // coverage table is short by the whole required count. Each step proves one thing, so a failure names its cause.
+  visitApiAssignPage({
+    bodyCheck: showsAssignHeading(apiSchedulePeriod, apiScheduleLabel),
+    describe:
+      'the title and heading "Obsadzanie grafiku", the period 15.11–21.11.2026 and the label of the API schedule',
+    excerpt: headingExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: linksBackFromAssignPage,
+    describe: 'the links "Edytuj grafik" to the edit page of the schedule and "Lista grafików" to the list',
+    excerpt: (html) => JSON.stringify(linksOf(html)),
+  }),
+  visitApiAssignPage({ bodyCheck: hasD6Notice, describe: "the D6 notice" }),
+  visitApiAssignPage({
+    bodyCheck: showsGrid(apiGrid),
+    describe:
+      "a row for each of the two people with, on days 0, 3 and 4, the button of the shift that runs that day and nothing else, every aria-pressed false",
+    excerpt: gridExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: showsCoverage(apiCoverage),
+    describe: `the coverage table with 0 z 5 and the shortage mark ${MINUS}5 for the first shift on day 0, 0 z 1 and ${MINUS}1 on day 3 and 0 z 2 and ${MINUS}2 on day 4 for the second one, and no counter on the other days`,
+    excerpt: coverageExcerpt,
+  }),
+  // The table needs the room: the assignment page has the wide container, not the narrow one of the other pages.
+  visitApiAssignPage({
+    bodyCheck: hasWideLayout,
+    describe: "the wide layout container (max-w-7xl, not max-w-4xl)",
+    excerpt: layoutExcerpt,
+  }),
+  // The assignment page of the route schedule, which holds one assignment (the witness): the first person's button is
+  // on, the second person's button for the same cell is off, and the single counter is full. Its label is the one of
+  // the confirmed PUT; reading it from trimmedRouteSchedule needs no ids, so it can be taken before the steps have run.
+  visitRouteAssignPage({
+    bodyCheck: showsAssignHeading(routeSchedulePeriod, trimmedRouteSchedule().label),
+    describe:
+      'the title and heading "Obsadzanie grafiku", the period 11.11–17.11.2026 and the label of the route schedule',
+    excerpt: headingExcerpt,
+  }),
+  visitRouteAssignPage({ bodyCheck: hasD6Notice, describe: "the D6 notice" }),
+  visitRouteAssignPage({
+    bodyCheck: showsGrid(routeGrid),
+    describe:
+      "a row for each of the two people with only the button of the single cell on day 0: aria-pressed true for the person with the assignment and false for the other",
+    excerpt: gridExcerpt,
+  }),
+  visitRouteAssignPage({
+    bodyCheck: showsCoverage(routeCoverage),
+    describe: `the coverage table with a single row whose day 0 reads 1 z 1 without a shortage (${MINUS}) or excess (+) mark and no counter on the other days`,
+    excerpt: coverageExcerpt,
+  }),
+  // An excess: a second person on cell C, which needs one. No schedule above has more people than it needs, so this is
+  // the only place that shows the excess mark. The steps end with the witness alone again, the state that the rest of
+  // the run (and the cleanup) expects of this schedule.
+  plannerCallsAssignments(
+    "POST",
+    "adds the assignment of cell C for the second person, one more than the cell needs",
+    routeAssignmentsUrl,
+    () => ({ json: routeAssignment("C", secondApiEmployeeId) }),
+    wasWritten,
+  ),
+  plannerReadsRouteAssignments(
+    "shows cell C for both people after the second POST",
+    routeAssignmentsAmong(["C", "first"], ["C", "second"]),
+    "exactly two assignments, cell C of the first and of the second person",
+  ),
+  visitRouteAssignPage({
+    bodyCheck: showsGrid(routeGridWithSurplus),
+    describe:
+      "two people on cell C: a row for each with only the button of the cell on day 0, both with aria-pressed true",
+    excerpt: gridExcerpt,
+  }),
+  visitRouteAssignPage({
+    bodyCheck: showsCoverage(routeCoverageWithSurplus),
+    describe: `two people on cell C: the coverage row whose day 0 reads 2 z 1 with the excess mark +1 and the words nadmiar 1, and no shortage mark (${MINUS}, brakuje)`,
+    excerpt: coverageExcerpt,
+  }),
+  ...plannerDeletesRouteAssignment(
+    "of the assignment of cell C of the second person takes the excess away",
+    routeAssignmentsUrl,
+    () => routeAssignment("C", secondApiEmployeeId),
+    routeWitness,
+    "the witness alone (cell C of the first person)",
+  ),
+  visit(planner, `/schedules/${unknownScheduleId}/assign`, 404, notFoundScheduleMessage, "no-store"),
+  visit(planner, "/schedules/not-a-uuid/assign", 404, notFoundScheduleMessage, "no-store"),
   visit(planner, `/schedules/${unknownScheduleId}`, 404, notFoundScheduleMessage),
   visit(planner, "/schedules/not-a-uuid", 404, notFoundScheduleMessage),
 
@@ -2666,6 +3689,224 @@ const steps = [
     trimmedSchedule,
     "the replaced schedule without the cell of the second shift on day 6",
   ),
+  // Assignments: a planner puts people on the cells of a schedule, and the database keeps the rules of the table. The cell
+  // and the person must belong to the schedule (composite foreign keys), the source is manual or generated, an entry is
+  // never updated, and nobody but a planner sees or changes one. A save of the schedule changes only the difference: it
+  // keeps the assignments of every cell and person that stays, and it takes those of a removed cell or person along only
+  // when the caller confirms (PT409 otherwise, with nothing changed). These steps use a schedule of their own (see
+  // assignState), after the shifts and people above.
+  [
+    `${planner.label}: rpc save_schedule creates the schedule for the assignment steps`,
+    async () => {
+      const result = await rpc("save_schedule", await accessToken(planner), saveScheduleArgs(createdAssignSchedule()));
+      assignScheduleId = parseJson(result.body);
+      return result;
+    },
+    { status: 200, check: isUuidText, describe: "the id of the new schedule" },
+  ],
+  ...plannerReadsAssignSchedule(
+    "shows the new schedule without assignments",
+    createdAssignSchedule,
+    () => [],
+    "the new assignment schedule (4 cells, 2 people, no assignments)",
+  ),
+  // The function has six parameters and no defaults; the signature of five was dropped, so a call of the old shape finds
+  // no function (PostgREST: PGRST202) and, above all, creates nothing.
+  [
+    `${planner.label}: rpc save_schedule with the five arguments of the old signature is rejected`,
+    async () => rpc("save_schedule", await accessToken(planner), oldSignatureArgs()),
+    {
+      statusNotClass: 2,
+      check: (error) => error.code === "PGRST202",
+      describe: "an error with the code PGRST202 (no such function)",
+    },
+  ],
+  [
+    `${planner.label}: schedules read finds no schedule left by the old signature`,
+    async () =>
+      schedulesTable("GET", { token: await accessToken(planner), query: `?label=like.${assignScheduleLabel}-old*` }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${planner.label}: schedule_assignments insert adds an assignment`,
+    async () =>
+      assignmentsTable("POST", { token: await accessToken(planner), body: assignmentRow(firstAssignment()[0]) }),
+    { status: 201 },
+  ],
+  plannerReadsAssignments("shows the new assignment with source manual", firstAssignment, "the assignment just added"),
+  plannerRejectsScheduleRow(
+    "schedule_assignments",
+    "with a repeated primary key",
+    () => assignmentRow(firstAssignment()[0]),
+    "schedule_assignments_pkey",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_assignments",
+    "in a cell without staffing",
+    assignmentInCellWithoutStaffing,
+    "schedule_assignments_cell_fkey",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_assignments",
+    "for a person outside the roster",
+    assignmentOfPersonOutsideRoster,
+    "schedule_assignments_employee_fkey",
+  ),
+  plannerRejectsScheduleRow(
+    "schedule_assignments",
+    "with a source of bogus",
+    assignmentWithBogusSource,
+    "schedule_assignments_source_valid",
+  ),
+  plannerReadsAssignments("is unchanged after the rejected inserts", firstAssignment, "the assignment just added"),
+  // No update grant at all: even a value that the source constraint would accept is refused, with a permission error.
+  [
+    `${planner.label}: schedule_assignments update is refused`,
+    async () =>
+      assignmentsTable("PATCH", {
+        token: await accessToken(planner),
+        query: assignmentFilter(firstAssignment()[0]),
+        body: { source: "generated" },
+      }),
+    { statusNotClass: 2, check: isPermissionDenied, describe: "a permission error (42501)" },
+  ],
+  plannerReadsAssignments(
+    "is unchanged after the update attempt",
+    firstAssignment,
+    "the assignment just added, still with source manual",
+  ),
+  [
+    `${planner.label}: schedule_assignments insert adds five more in one request`,
+    async () =>
+      assignmentsTable("POST", {
+        token: await accessToken(planner),
+        body: otherAssignments().map((assignment) => assignmentRow(assignment)),
+      }),
+    { status: 201 },
+  ],
+  plannerReadsAssignments("shows all six assignments", allAssignments, "the six assignments"),
+  ...notPlannerAssignmentSteps(employee),
+  ...notPlannerAssignmentSteps(noRole),
+  ...anonymousAssignmentSteps,
+  // A save that changes the schedule but removes nothing needs no confirmation and keeps every assignment, also those of
+  // a cell whose count it sets: the cell keeps its row, so nothing cascades.
+  plannerSavesAssignSchedule(
+    "changing only the label keeps every assignment",
+    renamedAssignSchedule,
+    savesAssignSchedule,
+  ),
+  ...plannerReadsAssignSchedule(
+    "shows the new label and all six assignments",
+    renamedAssignSchedule,
+    allAssignments,
+    "the renamed assignment schedule",
+  ),
+  plannerSavesAssignSchedule(
+    "changing a required count and adding a cell keeps every assignment",
+    recountedAssignSchedule,
+    savesAssignSchedule,
+  ),
+  ...plannerReadsAssignSchedule(
+    "shows the new count, the new cell and all six assignments",
+    recountedAssignSchedule,
+    allAssignments,
+    "the assignment schedule with cell A at 1 (two people in it) and cell E added",
+  ),
+  // The same column grant, used directly: the planner may set a required count, and nothing else of a cell.
+  [
+    `${planner.label}: schedule_staffing update changes the required count of a cell`,
+    async () =>
+      scheduleStaffingTable("PATCH", {
+        token: await accessToken(planner),
+        query: cellFilter("B"),
+        body: { required_count: 4 },
+      }),
+    { statusClass: 2 },
+  ],
+  ...plannerReadsAssignSchedule(
+    "shows the count set directly and all six assignments",
+    patchedAssignSchedule,
+    allAssignments,
+    "the assignment schedule with cell B at 4",
+  ),
+  [
+    `${planner.label}: schedule_staffing update of the shift is refused`,
+    async () =>
+      scheduleStaffingTable("PATCH", {
+        token: await accessToken(planner),
+        query: cellFilter("B"),
+        body: { shift_id: sameNameShiftId },
+      }),
+    { statusNotClass: 2, check: isPermissionDenied, describe: "a permission error (42501)" },
+  ],
+  ...plannerReadsAssignSchedule(
+    "is unchanged after the refused update of the shift",
+    patchedAssignSchedule,
+    allAssignments,
+    "the assignment schedule, unchanged",
+  ),
+  // Removing a cell or a person that holds assignments: refused without a confirmation, with the count in the error and
+  // nothing changed (the label of the refused save included), then done with it, as the planner, and only those
+  // assignments go. Cell A holds two assignments, the API employee three of the four that are left after it, and a save
+  // that drops cell B and the API employee together touches four (not five: an assignment is counted once).
+  plannerSavesAssignSchedule(
+    "dropping a cell with assignments is refused without a confirmation",
+    refusedCellAssignSchedule,
+    refusesRemovalOf(2),
+  ),
+  ...plannerReadsAssignSchedule(
+    "is unchanged after the refused removal of a cell",
+    patchedAssignSchedule,
+    allAssignments,
+    "the assignment schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerSavesAssignSchedule(
+    "dropping the cell with a confirmation removes its assignments",
+    withoutCellAssignSchedule,
+    savesAssignSchedule,
+    true,
+  ),
+  ...plannerReadsAssignSchedule(
+    "shows the schedule without cell A and the two assignments in it",
+    withoutCellAssignSchedule,
+    assignmentsWithoutCellA,
+    "the assignment schedule without cell A, and four assignments (those of the other cells stay)",
+  ),
+  plannerSavesAssignSchedule(
+    "dropping a person with assignments is refused without a confirmation",
+    refusedPersonAssignSchedule,
+    refusesRemovalOf(3),
+  ),
+  ...plannerReadsAssignSchedule(
+    "is unchanged after the refused removal of a person",
+    withoutCellAssignSchedule,
+    assignmentsWithoutCellA,
+    "the assignment schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerSavesAssignSchedule(
+    "dropping a cell and a person is refused when the confirmation is null, and counts each assignment once",
+    refusedBothAssignSchedule,
+    refusesRemovalOf(4),
+    null,
+  ),
+  ...plannerReadsAssignSchedule(
+    "is unchanged after the refused removal of a cell and a person",
+    withoutCellAssignSchedule,
+    assignmentsWithoutCellA,
+    "the assignment schedule, unchanged, with the label of before the refused save",
+  ),
+  plannerSavesAssignSchedule(
+    "dropping the person with a confirmation removes their assignments",
+    withoutPersonAssignSchedule,
+    savesAssignSchedule,
+    true,
+  ),
+  ...plannerReadsAssignSchedule(
+    "shows the schedule without the API employee and the three assignments of that person",
+    withoutPersonAssignSchedule,
+    assignmentsOfSmokeEmployeeOnly,
+    "the assignment schedule with one person, and one assignment (the other person's assignments are gone)",
+  ),
   // The foreign keys are on delete restrict: no shift or employee that a schedule uses can be removed, not even with the
   // service-role key. The planner's reads show that the rows are still there.
   [
@@ -2724,12 +3965,19 @@ const steps = [
   // Always last: removes every account and row this and earlier runs left behind (the tables have no delete grant for the
   // API, so only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they
   // were before. The schedules go first: their foreign keys to shifts and employees are on delete restrict, and deleting
-  // a schedule cascades to its cells and people. The accounts go next: a row linked to one only loses its user_id, and
-  // the employee steps after them delete it. The shifts go last, once no schedule refers to them.
+  // a schedule cascades to its cells, people and assignments. The accounts go next: a row linked to one only loses its
+  // user_id, and the employee steps after them delete it. The shifts go last, once no schedule refers to them.
   [
     "service role: delete the smoke schedules",
     () => schedulesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?label=like.Smoke-*" }),
     { statusClass: 2 },
+  ],
+  // The assignment schedule still held an assignment, which only the cascade through its cell and its person can have
+  // removed.
+  [
+    "service role: no assignment of the smoke schedule is left",
+    () => assignmentsTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: assignScheduleChildren() }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
   ],
   ["service role: delete the smoke accounts", deleteSmokeAccounts, { statusClass: 2 }],
   [

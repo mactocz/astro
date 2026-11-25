@@ -28,8 +28,10 @@ const rows = schedules.map((schedule) => {
     employeeCount: schedule.employeeCount,
     totalRequired: schedule.totalRequired,
     created: createdFormat.format(new Date(schedule.createdAt)),
-    // Every row says "Edytuj", so the link is named by the period and by the label that tells drafts of one period apart.
+    // Every row says "Edytuj" and "Obsadź", so each link is named by the period and by the label that tells drafts of one
+    // period apart.
     editLabel: schedule.label ? `Edytuj: ${period}, ${schedule.label}` : `Edytuj: ${period}`,
+    assignLabel: schedule.label ? `Obsadź: ${period}, ${schedule.label}` : `Obsadź: ${period}`,
   };
 });
 
@@ -98,6 +100,13 @@ Astro.response.headers.set("Cache-Control", "no-store");
                   >
                     Edytuj
                   </a>
+                  <a
+                    href={`/schedules/${row.id}/assign`}
+                    aria-label={row.assignLabel}
+                    class="ml-4 text-purple-300 transition-colors hover:text-purple-100 hover:underline"
+                  >
+                    Obsadź
+                  </a>
                 </td>
               </tr>
             ))}
@@ -119,6 +128,13 @@ Astro.response.headers.set("Cache-Control", "no-store");
               class="mt-3 inline-block py-1 text-sm text-purple-300 transition-colors hover:text-purple-100 hover:underline"
             >
               Edytuj
+            </a>
+            <a
+              href={`/schedules/${row.id}/assign`}
+              aria-label={row.assignLabel}
+              class="mt-3 ml-4 inline-block py-1 text-sm text-purple-300 transition-colors hover:text-purple-100 hover:underline"
+            >
+              Obsadź
             </a>
           </li>
         ))}

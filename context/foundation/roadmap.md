@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-11-06
+updated: 2026-11-24
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -46,7 +46,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | done |
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | done |
 | S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | in-progress |
-| S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | proposed |
+| S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | in-progress |
 | S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | proposed |
 | S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | proposed |
 | S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | proposed |
@@ -162,7 +162,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Blockers:** —
 - **Unknowns:** —
 - **Risk:** Wpisy ręczne muszą być rozpoznawalne od początku, żeby późniejsze generowanie ich nie nadpisało (zabezpieczenie PRD: planista nie traci ręcznych zmian).
-- **Status:** proposed
+- **Status:** in-progress
 
 ### S-05: Naruszenia reguł na żywo
 

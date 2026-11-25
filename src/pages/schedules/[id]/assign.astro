@@ -1,0 +1,103 @@
+---
+import PlannerLayout from "@/layouts/PlannerLayout.astro";
+import AssignmentGrid from "@/components/schedules/AssignmentGrid";
+import ScheduleNotice from "@/components/schedules/ScheduleNotice.astro";
+import { listAssignments } from "@/lib/assignments";
+import { listEmployees } from "@/lib/employees";
+import { toEmployeeOptions, toShiftOptions } from "@/lib/schedule-options";
+import { getSchedule } from "@/lib/schedules";
+import { formatPeriod } from "@/lib/services/schedule";
+import { listShifts } from "@/lib/shifts";
+import type { AssignmentInput, EmployeeOption, ShiftOption } from "@/types";
+
+const { supabase } = Astro.locals;
+if (!supabase) {
+  // The access gate lets nobody through without a configured client, so this is a misconfiguration.
+  throw new Error("The Supabase client is missing; check SUPABASE_URL and SUPABASE_KEY.");
+}
+
+// getSchedule answers null for an id that is not a UUID, without querying the database.
+const { id } = Astro.params;
+const schedule = id === undefined ? null : await getSchedule(supabase, id);
+
+let shiftOptions: ShiftOption[] = [];
+let employeeOptions: EmployeeOption[] = [];
+let assignments: AssignmentInput[] = [];
+if (schedule) {
+  // The grid needs the whole shift dictionary and the whole roster (it picks the ones the schedule uses) and the
+  // assignments made so far.
+  const [shifts, employees, stored] = await Promise.all([
+    listShifts(supabase),
+    listEmployees(supabase),
+    listAssignments(supabase, schedule.id),
+  ]);
+  shiftOptions = toShiftOptions(shifts);
+  employeeOptions = toEmployeeOptions(employees);
+  // The island gets plain data. `source` stays on the server: the page does not show it, and every entry made here is manual.
+  assignments = stored.map(({ shiftId, dayOffset, employeeId }) => ({ shiftId, dayOffset, employeeId }));
+} else {
+  // The project has no 404 page, so a missing schedule gets its own message with this status.
+  Astro.response.status = 404;
+}
+
+// Validation makes sure a schedule has at least one cell and one person, so this is false only for a stored schedule that
+// someone has emptied by hand; the page then says so instead of showing an empty table.
+const assignable = schedule !== null && schedule.staffing.length > 0 && schedule.employeeIds.length > 0;
+
+// The grid lists the names of the employees: no cache may keep this page.
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<PlannerLayout title={schedule ? "Obsadzanie grafiku" : "Nie znaleziono grafiku"} wide={schedule !== null}>
+  {schedule ? (
+    <>
+      <h1 class="mb-2 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+        Obsadzanie grafiku
+      </h1>
+      <div class="mb-3">
+        <p class="text-lg font-semibold text-white">{formatPeriod(schedule.startDate)}</p>
+        {schedule.label && <p class="break-words text-blue-100/80">{schedule.label}</p>}
+      </div>
+      <div class="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <a
+          href={`/schedules/${schedule.id}`}
+          class="py-1 text-purple-300 transition-colors hover:text-purple-100 hover:underline"
+        >
+          Edytuj grafik
+        </a>
+        <a href="/schedules" class="py-1 text-purple-300 transition-colors hover:text-purple-100 hover:underline">
+          Lista grafików
+        </a>
+      </div>
+
+      <ScheduleNotice />
+
+      {assignable ? (
+        <div class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-xl sm:p-6">
+          <AssignmentGrid
+            schedule={schedule}
+            shifts={shiftOptions}
+            employees={employeeOptions}
+            assignments={assignments}
+            client:load
+          />
+        </div>
+      ) : (
+        <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
+          <p class="text-blue-100/80">
+            Ten grafik nie ma obsady albo pracowników, więc nie ma kogo przypisywać. Uzupełnij go w edycji grafiku.
+          </p>
+        </div>
+      )}
+    </>
+  ) : (
+    <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
+      <h1 class="mb-4 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+        Nie znaleziono grafiku
+      </h1>
+      <a href="/schedules" class="text-purple-300 hover:underline">
+        Wróć do listy grafików
+      </a>
+    </div>
+  )}
+</PlannerLayout>

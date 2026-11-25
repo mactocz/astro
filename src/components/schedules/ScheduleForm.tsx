@@ -1,4 +1,4 @@
-import { CalendarDays, Tag } from "lucide-react";
+import { CalendarDays, Tag, TriangleAlert } from "lucide-react";
 import { FormField } from "@/components/auth/FormField";
 import { ServerError } from "@/components/auth/ServerError";
 import { useScheduleForm } from "@/components/hooks/useScheduleForm";
@@ -22,9 +22,12 @@ interface Props {
   employees: EmployeeOption[];
   /** The schedule to edit; none for a new one. */
   schedule?: Schedule;
+  /** How many assignments the schedule has; a new schedule has none. */
+  assignmentCount?: number;
 }
 
 const hintClass = "mt-1 text-xs text-blue-100/50";
+const MOVE_NOTE_ID = "startDate-assignments";
 
 // The line under the date field: the seven days the typed date starts, or null while it is not a valid date.
 function periodPreview(startDate: string): string | null {
@@ -36,9 +39,9 @@ function unavailableShift(id: string): ShiftOption {
   return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "" };
 }
 
-export default function ScheduleForm({ shifts, employees, schedule }: Props) {
-  const form = useScheduleForm({ schedule, employees });
-  const { values, fieldErrors, serverError, pending } = form;
+export default function ScheduleForm({ shifts, employees, schedule, assignmentCount = 0 }: Props) {
+  const form = useScheduleForm({ schedule, employees, assignmentCount });
+  const { values, fieldErrors, serverError, pending, removal } = form;
 
   const inGrid = new Set(values.shiftIds);
   const offered = new Set(shifts.map((shift) => shift.id));
@@ -66,11 +69,17 @@ export default function ScheduleForm({ shifts, employees, schedule }: Props) {
             error={fieldErrors.startDate}
             min={SCHEDULE_MIN_DATE}
             max={SCHEDULE_MAX_DATE}
+            describedBy={form.assignmentsMove ? MOVE_NOTE_ID : undefined}
             icon={<CalendarDays className="size-4" />}
           />
           <p aria-live="polite" className="mt-1 text-sm text-blue-100/80">
             {periodPreview(values.startDate)}
           </p>
+          {form.assignmentsMove ? (
+            <p id={MOVE_NOTE_ID} className="mt-2 text-sm text-amber-100/90">
+              {`Ten grafik ma przypisania pracowników (liczba: ${assignmentCount}). Zmiana daty przesunie je razem z całym tygodniem: zostają przy tych samych dniach siatki, więc dni tygodnia dostaną inne daty.`}
+            </p>
+          ) : null}
         </div>
 
         <FormField
@@ -117,6 +126,37 @@ export default function ScheduleForm({ shifts, employees, schedule }: Props) {
       />
 
       <ServerError message={serverError} />
+
+      {removal ? (
+        // A warning, not an error: nothing is wrong with the form, the save only needs a yes. Only the sentence is the alert,
+        // so a screen reader does not read the buttons out with it; the safe button takes the focus.
+        <div className="space-y-3 rounded-xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100/90">
+          <p role="alert" className="flex items-start gap-2">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+            {`Zapis usunie przypisania pracowników. Liczba przypisań do usunięcia: ${removal.count}. Dotyczy zmiany lub osoby, którą usuwasz z grafiku.`}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              disabled={pending}
+              onClick={form.saveAndRemove}
+              className="rounded-lg bg-amber-300 px-4 py-2 font-medium text-slate-900 transition-colors hover:bg-amber-200"
+            >
+              {pending ? "Zapisywanie..." : "Zapisz i usuń przypisania"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={form.backToEditing}
+              autoFocus
+              className="rounded-lg border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+            >
+              Wróć do edycji
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex items-center gap-4 pt-2">
         <Button

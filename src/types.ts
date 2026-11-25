@@ -84,6 +84,40 @@ export interface ScheduleSummary {
 export type ScheduleField = "startDate" | "label" | "staffing" | "employeeIds";
 export type ScheduleFieldErrors = Partial<Record<ScheduleField, string>>;
 
+/** Who put an assignment there: the planner by hand, or the schedule generator. */
+export type AssignmentSource = "manual" | "generated";
+
+/** One employee on one shift on one day of a schedule; the cell is the pair of `shiftId` and `dayOffset`. */
+export interface AssignmentInput {
+  /** The id of a shift from the shift dictionary. */
+  shiftId: string;
+  /** Days after the start date, 0 to 6. */
+  dayOffset: number;
+  /** The id of an employee. */
+  employeeId: string;
+}
+
+export interface Assignment extends AssignmentInput {
+  source: AssignmentSource;
+}
+
+export type AssignmentField = "shiftId" | "dayOffset" | "employeeId";
+export type AssignmentFieldErrors = Partial<Record<AssignmentField, string>>;
+
+/** How well one staffing cell is covered: the people it needs against the people assigned to it. */
+export interface CoverageCell {
+  shiftId: string;
+  dayOffset: number;
+  /** The required count of the staffing cell. */
+  required: number;
+  /** Different employees assigned to the cell. */
+  assigned: number;
+  /** People still missing, never negative. */
+  missing: number;
+  /** People above the required count, never negative. */
+  surplus: number;
+}
+
 /** A shift as the schedule form offers it: only what the form shows, with the times already formatted. */
 export interface ShiftOption {
   id: string;
