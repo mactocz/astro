@@ -1,11 +1,23 @@
-import { Check } from "lucide-react";
+import { Check, OctagonAlert, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { ServerError } from "@/components/auth/ServerError";
 import { assignmentKey, useAssignments } from "@/components/hooks/useAssignments";
+import { useViolations } from "@/components/hooks/useViolations";
+import { ViolationList } from "@/components/schedules/ViolationList";
 import { employeeDayKey } from "@/lib/services/assignment";
+import { summarizeViolations } from "@/lib/services/rules";
 import { PERIOD_DAYS, dayColumns } from "@/lib/services/schedule";
+import { formatCellMarker, formatViolationCounts } from "@/lib/services/violation-view";
 import { cn } from "@/lib/utils";
-import type { AssignmentInput, CoverageCell, EmployeeOption, Schedule, ShiftOption, StaffingCell } from "@/types";
+import type {
+  AssignmentInput,
+  CoverageCell,
+  EmployeeOption,
+  Schedule,
+  ShiftOption,
+  StaffingCell,
+  Violation,
+} from "@/types";
 
 interface Props {
   schedule: Schedule;
@@ -31,7 +43,7 @@ const cellKey = (shiftId: string, dayOffset: number): string => `${shiftId}/${da
 
 // A shift that has staffing in the schedule but is no longer on the list: it keeps its buttons, so nobody is hidden.
 function unavailableShift(id: string): ShiftOption {
-  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "" };
+  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "", startMinute: 0, endMinute: 0 };
 }
 
 // The name and the hours, which tell apart two shifts that share a name. A shift that is gone has no hours to show.
@@ -90,12 +102,43 @@ function CoverageValue({ cell }: { cell: CoverageCell }) {
   );
 }
 
+// What a cell says under its buttons when a violation sits on it: the weight in words with the count ("Krytyczne: 2"), the
+// icon and the colour only an addition. The whole text is one string, so the markup never splits it.
+function CellMarker({ violations }: { violations: readonly Violation[] }) {
+  const counts = summarizeViolations(violations);
+  const Icon = counts.critical > 0 ? OctagonAlert : TriangleAlert;
+  return (
+    <div
+      className={cn(
+        "mt-1 flex items-start justify-center gap-1 text-xs leading-snug font-medium",
+        counts.critical > 0 ? "text-red-200" : "text-amber-200",
+      )}
+    >
+      <Icon aria-hidden="true" className="mt-px size-3 shrink-0" />
+      <span>{formatCellMarker(counts)}</span>
+    </div>
+  );
+}
+
+// What the "Wskazania" column says about a person: all their violations in words ("2 krytyczne, 1 ostrzeżenie"), or "brak".
+function PersonViolations({ violations }: { violations: readonly Violation[] | undefined }) {
+  const counts = summarizeViolations(violations ?? []);
+  const text = formatViolationCounts(counts);
+  if (text === "") {
+    return <span className="text-blue-100/40">brak</span>;
+  }
+  return <span className={cn("font-medium", counts.critical > 0 ? "text-red-200" : "text-amber-200")}>{text}</span>;
+}
+
 export default function AssignmentGrid({ schedule, shifts, employees, assignments }: Props) {
-  const { byEmployeeDay, coverage, busy, error, toggle } = useAssignments({
+  const { list, byEmployeeDay, coverage, busy, error, toggle } = useAssignments({
     scheduleId: schedule.id,
     staffing: schedule.staffing,
     initial: assignments,
   });
+  // The rules read the optimistic list of the hook, so they follow every click, a click that is taken back included. They get
+  // the shifts of the dictionary only, never the placeholder of `shiftLayout`, which has no hours.
+  const violations = useViolations({ schedule, shifts, employees, list });
 
   const columns = useMemo(() => dayColumns(schedule.startDate), [schedule.startDate]);
   // The rows are the people of the schedule, in the order of the employee list.
@@ -135,6 +178,9 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                   {column.label}
                 </th>
               ))}
+              <th scope="col" className="min-w-32 px-2 py-2 text-left font-medium whitespace-nowrap text-blue-100/60">
+                Wskazania
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -145,7 +191,9 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                 </th>
                 {columns.map((column) => {
                   const dayShifts = layout.byDay[column.offset];
-                  const pressedShiftIds = byEmployeeDay[employeeDayKey(employee.id, column.offset)];
+                  const dayKey = employeeDayKey(employee.id, column.offset);
+                  const pressedShiftIds = byEmployeeDay[dayKey];
+                  const cellViolations = violations.byEmployeeDay[dayKey];
                   return (
                     <td key={column.offset} className="border-t border-white/10 px-1 py-2 text-center align-top">
                       {dayShifts.length === 0 ? (
@@ -182,22 +230,28 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                           })}
                         </div>
                       )}
+                      {cellViolations ? <CellMarker violations={cellViolations} /> : null}
                     </td>
                   );
                 })}
+                <td className="min-w-32 border-t border-white/10 px-2 py-2 text-left align-top text-xs">
+                  <PersonViolations violations={violations.byEmployee[employee.id]} />
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
+      <ViolationList violations={violations.violations} counts={violations.counts} />
+
       <section aria-labelledby="coverage-heading" className="mt-6">
         <h2 id="coverage-heading" className="mb-1 text-lg font-semibold text-white">
           Obsada zmian
         </h2>
         <p className="mb-2 text-xs text-blue-100/50">
-          Ile osób jest przypisanych z ilu potrzebnych. Oznaczenie −n to brak osób, a +n to nadmiar. To informacja o
-          obsadzie, nie błąd.
+          Ile osób jest przypisanych z ilu potrzebnych. Oznaczenie −n to brak osób, a +n to nadmiar. Brak obsady jest
+          ostrzeżeniem na liście wskazań, a nadmiar tylko informacją.
         </p>
         <div className="overflow-x-auto rounded-xl border border-white/10">
           <table className="w-full min-w-[44rem] border-separate border-spacing-0 text-sm">

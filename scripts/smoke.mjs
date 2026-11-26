@@ -13,8 +13,10 @@
 // the body confirms the removal), that the view behind the schedule list counts the people and the required staffing of
 // each schedule, hides them from everyone but a planner and takes no write, that the employee, shift and schedule pages
 // open for the planner only (the schedule list, form and assignment page show what the database holds, down to which
-// shift button of which person is on, and the pages that list employees for the schedule form and the assignment grid
-// carry no e-mail address), that the invitation mails link to the set-password page, the whole invitation flow (invite,
+// shift button of which person is on and which violations of the work-time rules the page lists for it: a schedule of four
+// people, one for each rule scenario, is read down to the counter, every item with its reason, the marks of the day cells and
+// what goes when one assignment is taken off; and the pages
+// that list employees for the schedule form and the assignment grid carry no e-mail address), that the invitation mails link to the set-password page, the whole invitation flow (invite,
 // invite again, password reset, a foreign account, the tokens from the admin API instead of the mails, the new
 // employee's session, the activation time that the first password set records and a reset keeps, and the locked
 // e-mail), what the pages of that flow show (the account column and invite button of the employee list, the locked
@@ -1905,10 +1907,10 @@ const hasPasswordFormIsland = (html) => {
 
 // The assignment page (/schedules/<id>/assign) is visited for two schedules: the API schedule (three cells with a
 // required count, two people, no assignment) and the route schedule (one cell, two people, one assignment: the
-// witness). Its island is rendered on the server, so the table of people and the coverage summary are in the HTML. A
-// person's row is found by the text of its row header, never by a name anywhere in the page: Astro also writes the
-// props of the island, names included, into the astro-island tag, and that proves nothing about a row. A shift button
-// counts only as the pair of its aria-label (person, day, shift with its hours) and its aria-pressed in one tag.
+// witness). Its island is rendered on the server, so the table of people, the list of violations and the coverage summary
+// are in the HTML. A person's row is found by the text of its row header, never by a name anywhere in the page: Astro also
+// writes the props of the island, names included, into the astro-island tag, and that proves nothing about a row. A shift
+// button counts only as the pair of its aria-label (person, day, shift with its hours) and its aria-pressed in one tag.
 const MINUS = "\u2212"; // U+2212, the minus sign of the shortage mark (not a hyphen)
 // What a screen reader gets in the coverage table on a day on which the shift does not run, in place of a counter.
 const noCellWords = "brak tej zmiany tego dnia";
@@ -1973,9 +1975,9 @@ const linksBackFromAssignPage = (html) => {
   );
 };
 
-// The island holds two tables: the people's table, then the section of the coverage summary, so the HTML is cut at
-// the section. The body rows of a table come back as { header, cells }: the text of the row header (<th scope="row">)
-// and each <td> element whole.
+// The island holds the people's table, then the section of the list of violations (no table, so no row header in it), then
+// the section of the coverage summary with its own table, so the HTML is cut at the coverage section. The body rows of a
+// table come back as { header, cells }: the text of the row header (<th scope="row">) and each <td> element whole.
 const cutAtCoverage = (html) => {
   const at = html.indexOf('aria-labelledby="coverage-heading"');
   return at === -1 ? [html, ""] : [html.slice(0, at), html.slice(at)];
@@ -1989,7 +1991,11 @@ const bodyRowsOf = (html) =>
 // The people's table, as one entry per person (in the order of their names, whatever the order of the rows) with a list
 // of buttons for each of the seven days; a day without a button (the dash of a day without a shift) has an empty list.
 // A button is "<aria-label> [aria-pressed=true|false]". `personRow` writes the same shape for what a person should
-// have: `byDay` maps a day offset to its buttons.
+// have: `byDay` maps a day offset to its buttons. A row has eight cells in all, the seven days and then the column
+// "Wskazania" (the violations of the person); the days are the first seven, and `cells` is the number the row has, so a
+// row with a cell too few or too many still fails the comparison. The last cell has steps of its own (`violationColumnOf`).
+const DAY_CELLS = 7;
+const GRID_ROW_CELLS = DAY_CELLS + 1;
 const pressedButton = (label, pressed) => `${label} [aria-pressed=${pressed}]`;
 const buttonsOfCell = (cell) =>
   tagsOf(cell, "button")
@@ -1998,13 +2004,21 @@ const buttonsOfCell = (cell) =>
 const byPerson = (a, b) => a.person.localeCompare(b.person);
 const gridOf = (html) =>
   bodyRowsOf(cutAtCoverage(html)[0])
-    .map(({ header, cells }) => ({ person: header, days: cells.map(buttonsOfCell) }))
+    .map(({ header, cells }) => ({
+      person: header,
+      days: cells.slice(0, DAY_CELLS).map(buttonsOfCell),
+      cells: cells.length,
+    }))
     .sort(byPerson);
-const personRow = (person, byDay) => ({ person, days: Array.from({ length: 7 }, (_unused, day) => byDay[day] ?? []) });
+const personRow = (person, byDay) => ({
+  person,
+  days: Array.from({ length: DAY_CELLS }, (_unused, day) => byDay[day] ?? []),
+  cells: GRID_ROW_CELLS,
+});
 const showsGrid = (expected) => (html) => JSON.stringify(gridOf(html)) === JSON.stringify([...expected].sort(byPerson));
 const gridExcerpt = (html) =>
   gridOf(html)
-    .map(({ person, days }) => `${person}: ${JSON.stringify(days)}`)
+    .map(({ person, days, cells }) => `${person}: ${JSON.stringify(days)} (${cells} cells)`)
     .join("\n");
 
 // The coverage table has exactly one row for each of `expected`, a [hours, counters] pair: the row of a shift is the
@@ -2080,6 +2094,147 @@ const apiCoverage = [
   ["06:00–14:00", { 3: `0 z 1${MINUS}1brakuje 1`, 4: `0 z 2${MINUS}2brakuje 2` }],
 ];
 
+// The violations of the live check (S-05) on the assignment page. The list is a section of its own between the people's
+// table and the coverage section: a heading, a counter (the one paragraph with aria-live="polite"), a list (`ul`) with an
+// item for each violation, and a fixed note on what is not checked. Every text below is one string in the page (React
+// writes a template literal as one text node), so no comment node splits it. An item reads as the weight, a space and the
+// reason ("Krytyczne <reason>" or "Ostrzeżenie <reason>"), critical ones first; the reason names the person, the day and the
+// numbers. The list holds what the rules say about the schedule as it stands, so every step states it in full: here the
+// shortages (a warning for each staffing cell with fewer people than it needs), and for a person only what their own
+// assignments cause.
+const EN_DASH = String.fromCharCode(0x2013); // U+2013, the dash between the start and the end of a shift
+const shiftHours = (start, end) => `${start}${EN_DASH}${end}`;
+const warningItem = (reason) => `Ostrzeżenie ${reason}`;
+const understaffedReason = (shiftName, dayLabel, hours, assigned, required) =>
+  `Brak obsady: zmiana ${shiftName} (${dayLabel}, ${hours}): przypisano ${assigned} z ${required}, brakuje ${required - assigned}.`;
+const noViolationsCounter = "Brak wskazań";
+const edgesNote =
+  "Reguły oceniają ten grafik. Odpoczynek na jego krawędziach (poprzedni i następny tydzień) nie jest sprawdzany: wolne na końcu i na początku grafiku liczy się jako jedna przerwa. Shiftly ostrzega i nie gwarantuje zgodności z prawem.";
+const coverageNote = "Brak obsady jest ostrzeżeniem na liście wskazań, a nadmiar tylko informacją.";
+
+// The section: from its own opening tag (so that an attribute on the tag itself, such as a role, is part of it) to its closing
+// tag (it holds no other section, and the coverage section follows it), or undefined when the page has none.
+const violationSectionOf = (html) => {
+  const at = html.indexOf('aria-labelledby="violations-heading"');
+  const start = at === -1 ? -1 : html.lastIndexOf("<section", at);
+  const end = at === -1 ? -1 : html.indexOf("</section>", at);
+  return start === -1 || end === -1 ? undefined : html.slice(start, end);
+};
+const violationCounterOf = (html) => {
+  const section = violationSectionOf(html);
+  const counter =
+    section === undefined
+      ? undefined
+      : elementsOf(section, "p").find((paragraph) => attributeOf(tagsOf(paragraph, "p")[0], "aria-live") === "polite");
+  return counter === undefined ? undefined : textOf(counter);
+};
+// The text of every item of the list; none when the section has no list (the page leaves it out when there is nothing to
+// list), undefined when there is no section or more than one list.
+const violationItemsOf = (html) => {
+  const section = violationSectionOf(html);
+  const lists = section === undefined ? undefined : elementsOf(section, "ul");
+  return lists === undefined || lists.length > 1 ? undefined : lists.length === 0 ? [] : textsOf(lists[0], "li");
+};
+const violationsExcerpt = (html) =>
+  JSON.stringify({ counter: violationCounterOf(html), items: violationItemsOf(html) }, null, 1);
+// The counter and the items must be exactly these, in this order.
+const showsViolations = (items, counter) => (html) =>
+  violationCounterOf(html) === counter && JSON.stringify(violationItemsOf(html)) === JSON.stringify(items);
+// The section is there with its heading, the heading is the label the section points to, and the section comes after the
+// people's table and before the coverage section.
+const hasViolationSection = (html) => {
+  const section = violationSectionOf(html);
+  const at = html.indexOf('aria-labelledby="violations-heading"');
+  return (
+    section !== undefined &&
+    html.includes('id="violations-heading"') &&
+    JSON.stringify(textsOf(section, "h2")) === JSON.stringify(["Wskazania"]) &&
+    html.indexOf("</table>") < at &&
+    at < html.indexOf('aria-labelledby="coverage-heading"')
+  );
+};
+const violationSectionExcerpt = (html) =>
+  violationSectionOf(html) ?? "(no section with aria-labelledby violations-heading)";
+const hasEdgesNote = (html) => {
+  const section = violationSectionOf(html);
+  return section !== undefined && textsOf(section, "p").includes(edgesNote);
+};
+// A change of the list must not be announced as an alert: the section has no role="alert" and no assertive live region
+// (the errors of saving are the ones that have role="alert", in their own element above the table).
+const hasNoViolationAlert = (html) => {
+  const section = violationSectionOf(html);
+  return section !== undefined && !section.includes('role="alert"') && !section.includes('aria-live="assertive"');
+};
+
+// The people's table has one header cell for each of the seven days between the person and the column "Wskazania".
+const gridHeadersOf = (html) => {
+  const tables = elementsOf(cutAtCoverage(html)[0], "table");
+  return tables.length === 1
+    ? elementsOf(tables[0], "th")
+        .filter((th) => attributeOf(tagsOf(th, "th")[0], "scope") === "col")
+        .map(textOf)
+    : undefined;
+};
+const showsGridHeaders = (expected) => (html) => JSON.stringify(gridHeadersOf(html)) === JSON.stringify(expected);
+const apiGridHeaders = [
+  "Pracownik",
+  "niedz. 15.11",
+  "pon. 16.11",
+  "wt. 17.11",
+  "śr. 18.11",
+  "czw. 19.11",
+  "pt. 20.11",
+  "sob. 21.11",
+  "Wskazania",
+];
+
+// The last cell of each person's row (the column "Wskazania") holds the count of the violations about that person in words,
+// or "brak"; the cells of the days hold a marker ("Krytyczne: n", "Ostrzeżenie: n") only when a violation sits on that
+// person and day.
+const violationColumnOf = (html) =>
+  bodyRowsOf(cutAtCoverage(html)[0])
+    .map(({ header, cells }) => ({
+      person: header,
+      violations: cells.length === GRID_ROW_CELLS ? textOf(cells[DAY_CELLS]) : null,
+    }))
+    .sort(byPerson);
+const dayCellMarkersOf = (html) =>
+  bodyRowsOf(cutAtCoverage(html)[0]).flatMap(({ header, cells }) =>
+    cells
+      .slice(0, DAY_CELLS)
+      .map(textOf)
+      .filter((text) => /Krytyczne|Ostrzeżenie/.test(text))
+      .map((text) => `${header}: ${text}`),
+  );
+const showsViolationColumn = (expected) => (html) =>
+  JSON.stringify(violationColumnOf(html)) === JSON.stringify([...expected].sort(byPerson)) &&
+  dayCellMarkersOf(html).length === 0;
+const violationColumnExcerpt = (html) =>
+  JSON.stringify({ column: violationColumnOf(html), cellMarkers: dayCellMarkersOf(html) }, null, 1);
+// Both people of the API steps with nothing to report about them.
+const noPersonalViolations = [apiEmployeeName, secondApiEmployeeName].map((person) => ({
+  person,
+  violations: "brak",
+}));
+
+// The explanation under the coverage table: a shortage is a warning on the list, an excess is only information. The old
+// sentence ("nie błąd") is gone.
+const explainsCoverageNote = (html) => {
+  const [explanation] = textsOf(cutAtCoverage(html)[1], "p");
+  return explanation !== undefined && explanation.includes(coverageNote) && !explanation.includes("nie błąd");
+};
+
+// The shortages of the API schedule when the pages are visited, in the order of the list (the rule, then the key, which
+// starts with the day): a warning for each of its three cells, none for a person (nobody is assigned, so no hours).
+const apiFirstHours = shiftHours("22:00", "07:00");
+const apiSecondHours = shiftHours("06:00", "14:00");
+const apiViolationItems = [
+  warningItem(understaffedReason(apiShiftName, "niedz. 15.11", apiFirstHours, 0, 5)),
+  warningItem(understaffedReason(apiShiftName, "śr. 18.11", apiSecondHours, 0, 1)),
+  warningItem(understaffedReason(apiShiftName, "czw. 19.11", apiSecondHours, 0, 2)),
+];
+const apiViolationCounter = "Wskazania: 3 ostrzeżenia";
+
 // The container that PlannerLayout puts around every planner page, as its class tokens: `max-w-7xl` for a page that
 // gets the `wide` prop (the assignment page), `max-w-4xl` for the others. The classes are read from this element and
 // not from anywhere in the page, because a stylesheet that is inlined into the page holds both of them.
@@ -2107,6 +2262,467 @@ const visitAssignPage = (which, id, expected) => [
 const visitApiAssignPage = (expected) => visitAssignPage("the API schedule", () => apiScheduleId, expected);
 const visitRouteAssignPage = (expected) =>
   visitAssignPage("the schedule with an assignment", () => routeScheduleId, expected);
+
+// The live rules on real data (S-05). The rules schedule has a week of its own, 02.11-08.11.2026: a Monday to a Sunday with no
+// holiday in it, so the weekly norm of a full-time employee is 40 h. It has four employees, all with a full FTE, one for each
+// scenario below, and three shifts: M and N are the shifts of the API steps (06:00-14:00, 8 h, and 22:00-07:00, 9 h; they
+// share a name, the hours tell them apart) and E is a shift of 01:00-09:00 (8 h) that the steps create. The planner puts the
+// people on the cells through the assignment route, and the page steps read what the rules say of that in the HTML: the counter
+// and every item of the list (the weight and the whole reason, in the order of the rules), the column "Wskazania" and the marks
+// of the day cells, the coverage table and the buttons that are pressed.
+//   alfa  (a)  N on day 0 alone: 9 h in the day that starts with it, and a shift longer than 8 h
+//   beta  (b)  M and N on day 0: a break of 8 h between them and 16 h in the day that starts with M; N alone on day 3
+//   gamma (c)  M on day 4 and E on day 5: a break of exactly 11 h, which is allowed, but 13 h in the day that starts with M
+//   delta (d)  M on all seven days: 56 h in the week (more than 48 h), no break of 35 h and more than the norm of 40 h
+// The staffing: M needs 2 people on days 0, 4 and 6 and 1 on the others, N needs 1 on days 0 and 3 and E needs 2 on day 2 and
+// 1 on day 5. So N on day 0 has an excess (alfa and beta), M on day 6 a shortage (delta alone), E on day 2 nobody (a cell
+// without any assignment), and every other cell is complete. The people and the cells are named by the keys below
+// (`alfa/N/0` is alfa on shift N on day 0), the ids only exist once the steps that create the rows have run.
+const rulesScheduleLabel = `Smoke-${runId}-rules`;
+const rulesStartDate = "2026-11-02";
+const rulesPeriod = `02.11${EN_DASH}08.11.2026`;
+const rulesDays = ["pon. 02.11", "wt. 03.11", "śr. 04.11", "czw. 05.11", "pt. 06.11", "sob. 07.11", "niedz. 08.11"];
+const rulesEarlyShiftName = `Smoke-${runId}-Wczesna`;
+const rulesEarlyShift = { name: rulesEarlyShiftName, startTime: "01:00", endTime: "09:00" };
+let rulesEarlyShiftId;
+let rulesScheduleId;
+const rulesIds = {};
+const rulesShifts = {
+  M: { name: apiShiftName, hours: shiftHours("06:00", "14:00"), id: () => secondApiShiftId },
+  N: { name: apiShiftName, hours: shiftHours("22:00", "07:00"), id: () => apiShiftId },
+  E: { name: rulesEarlyShiftName, hours: shiftHours("01:00", "09:00"), id: () => rulesEarlyShiftId },
+};
+// The e-mails start with "smoke-" and are lower case, so the final cleanup deletes the rows by that prefix.
+const rulesPeople = Object.fromEntries(
+  ["alfa", "beta", "gamma", "delta"].map((who) => [
+    who,
+    {
+      firstName: "Ola",
+      lastName: `Smoke-${runId}-${who}`,
+      email: `smoke-${runId}-rules-${who}@example.com`,
+      fteNumerator: 1,
+      fteDenominator: 1,
+    },
+  ]),
+);
+const rulesName = (who) => personName(rulesPeople[who]);
+const rulesAssignmentsUrl = () => `/api/schedules/${rulesScheduleId}/assignments`;
+
+// [shift, day, required count] of every cell of the staffing grid.
+const rulesStaffing = [
+  ["M", 0, 2],
+  ["M", 1, 1],
+  ["M", 2, 1],
+  ["M", 3, 1],
+  ["M", 4, 2],
+  ["M", 5, 1],
+  ["M", 6, 2],
+  ["N", 0, 1],
+  ["N", 3, 1],
+  ["E", 2, 2],
+  ["E", 5, 1],
+];
+const rulesSchedule = () => ({
+  startDate: rulesStartDate,
+  label: rulesScheduleLabel,
+  staffing: rulesStaffing.map(([shift, dayOffset, requiredCount]) => ({
+    shiftId: rulesShifts[shift].id(),
+    dayOffset,
+    requiredCount,
+  })),
+  employeeIds: Object.values(rulesIds),
+});
+
+// [person, shift, day] of the thirteen assignments the steps add, one request each, and what is left of them once the
+// assignments of `removed` have been taken off.
+const rulesAssignments = [
+  ["alfa", "N", 0],
+  ["beta", "M", 0],
+  ["beta", "N", 0],
+  ["beta", "N", 3],
+  ["gamma", "M", 4],
+  ["gamma", "E", 5],
+  ...[0, 1, 2, 3, 4, 5, 6].map((day) => ["delta", "M", day]),
+];
+const rulesTag = ([who, shift, day]) => `${who}/${shift}/${day}`;
+const rulesWithout = (removed) =>
+  rulesAssignments.filter((assignment) => !removed.some((other) => rulesTag(other) === rulesTag(assignment)));
+const rulesBody = ([who, shift, day]) => ({
+  shiftId: rulesShifts[shift].id(),
+  dayOffset: day,
+  employeeId: rulesIds[who],
+});
+
+// `check` predicate for the assignments of the rules schedule: exactly the expected ones (a function that lists them), each
+// with the source the column defaults to; the rows come back in no promised order.
+const isRulesAssignments = (expected) => (rows) =>
+  Array.isArray(rows) &&
+  rows.every((row) => row.schedule_id === rulesScheduleId && row.source === "manual") &&
+  sameItems(
+    rows.map((row) => assignmentKey(row.shift_id, row.day_offset, row.employee_id)),
+    expected().map((assignment) => {
+      const { shiftId, dayOffset, employeeId } = rulesBody(assignment);
+      return assignmentKey(shiftId, dayOffset, employeeId);
+    }),
+  );
+const plannerReadsRulesAssignments = (name, expected, what) => [
+  `${planner.label}: schedule_assignments of the rules schedule read ${name}`,
+  async () =>
+    assignmentsTable("GET", { token: await accessToken(planner), query: `?schedule_id=eq.${rulesScheduleId}` }),
+  {
+    status: 200,
+    check: isRulesAssignments(expected),
+    describe: `exactly the assignments of ${what}, all with source manual`,
+  },
+];
+const plannerAddsRulesAssignment = (assignment) =>
+  plannerCallsAssignments(
+    "POST",
+    `adds ${rulesTag(assignment)}`,
+    rulesAssignmentsUrl,
+    () => ({ json: rulesBody(assignment) }),
+    wasWritten,
+  );
+// A DELETE of one assignment followed by a read of the whole table, which must hold exactly what `removed` leaves.
+const plannerTakesOffRulesAssignment = (assignment, removed) => [
+  plannerCallsAssignments(
+    "DELETE",
+    `takes off ${rulesTag(assignment)}`,
+    rulesAssignmentsUrl,
+    () => ({ json: rulesBody(assignment) }),
+    wasWritten,
+  ),
+  plannerReadsRulesAssignments(
+    `holds what is left after DELETE ${rulesTag(assignment)}`,
+    () => rulesWithout(removed),
+    `the rules schedule without ${removed.map(rulesTag).join(", ")}`,
+  ),
+];
+
+// What the list must say, written the way the rules word it (src/lib/services/rules.ts). An expected item has what the page
+// sorts by (the weight, the rule, the person and the day of its first anchor, or of its cell for a shortage) and the reason.
+// The order is that of the rules: the weight (critical first), the rule, the person by id (a shortage has none and comes last),
+// then the key, which starts with the day of the first anchor. No two items of one person and one rule share a day here.
+const SEVERITY_WORDS = { critical: "Krytyczne", warning: "Ostrzeżenie" };
+const SEVERITY_ORDER = ["critical", "warning"];
+const RULES_ORDER = ["daily_rest", "daily_hours", "weekly_hours", "weekly_rest", "weekly_norm", "understaffed"];
+const ruleItem = (severity, rule, who, day, reason) => ({ severity, rule, who, day, reason });
+const compareIds = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const compareItems = (a, b) =>
+  SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) ||
+  RULES_ORDER.indexOf(a.rule) - RULES_ORDER.indexOf(b.rule) ||
+  Number(a.who === null) - Number(b.who === null) ||
+  (a.who === null || b.who === null ? 0 : compareIds(rulesIds[a.who], rulesIds[b.who])) ||
+  a.day - b.day;
+// The text of each list item: the weight, a space and the reason.
+const listOf = (items) =>
+  [...items].sort(compareItems).map((item) => `${SEVERITY_WORDS[item.severity]} ${item.reason}`);
+
+const longShiftNote =
+  "Zmiana dłuższa niż 8 h wymaga systemu równoważnego czasu pracy (art. 135), którego Shiftly nie obsługuje.";
+const cellDescription = (shift, day) => `${rulesShifts[shift].name} (${rulesDays[day]}, ${rulesShifts[shift].hours})`;
+// More than 8 h of work in the 24 hours from the start of a shift: `day` and `start` are those of the shift that opens the
+// day, `worked` what the person works in it; a shift longer than 8 h in the day adds the sentence about art. 135.
+const dailyHoursItem = (who, day, start, worked, longShift) =>
+  ruleItem(
+    "critical",
+    "daily_hours",
+    who,
+    day,
+    `${rulesName(who)}: w dobie liczonej od ${rulesDays[day]}, ${start} przepracowane ${worked}, dopuszczalne najwyżej 8 h.${longShift ? ` ${longShiftNote}` : ""}`,
+  );
+// A break of less than 11 h between two shifts of one day.
+const dailyRestItem = (who, day, gap, earlierShift, nextShift) =>
+  ruleItem(
+    "critical",
+    "daily_rest",
+    who,
+    day,
+    `${rulesName(who)}: przerwa ${gap} między zmianami ${cellDescription(earlierShift, day)} i ${cellDescription(nextShift, day)}, wymagane co najmniej 11 h.`,
+  );
+const weeklyHoursItem = (who, total) =>
+  ruleItem(
+    "critical",
+    "weekly_hours",
+    who,
+    0,
+    `${rulesName(who)}: w tygodniu grafiku (${rulesPeriod}) łączny czas pracy ${total}, dopuszczalne najwyżej 48 h.`,
+  );
+const weeklyRestItem = (who, longest, where) =>
+  ruleItem(
+    "critical",
+    "weekly_rest",
+    who,
+    0,
+    `${rulesName(who)}: w tygodniu grafiku (${rulesPeriod}) najdłuższa przerwa trwa ${longest} (${where}), wymagany odpoczynek tygodniowy co najmniej 35 h.`,
+  );
+// The norm of the week has no holiday to lower it, and the FTE is full.
+const weeklyNormItem = (who, total) =>
+  ruleItem(
+    "warning",
+    "weekly_norm",
+    who,
+    0,
+    `${rulesName(who)}: w tygodniu grafiku (${rulesPeriod}) łączny czas pracy ${total}, norma tygodniowa (pełny etat) to 40 h.`,
+  );
+const shortageItem = (shift, day, assigned, required) =>
+  ruleItem(
+    "warning",
+    "understaffed",
+    null,
+    day,
+    understaffedReason(rulesShifts[shift].name, rulesDays[day], rulesShifts[shift].hours, assigned, required),
+  );
+
+const alfaHours = () => dailyHoursItem("alfa", 0, "22:00", "9 h", true);
+const betaRest = () => dailyRestItem("beta", 0, "8 h", "M", "N");
+const betaHoursOnDay0 = () => dailyHoursItem("beta", 0, "06:00", "16 h", true);
+const betaHoursOnDay3 = () => dailyHoursItem("beta", 3, "22:00", "9 h", true);
+const gammaHours = () => dailyHoursItem("gamma", 4, "06:00", "13 h", false);
+const deltaWeeklyHours = () => weeklyHoursItem("delta", "56 h");
+// 7 x 8 h with 16 h between two days: every break is 16 h, the one across the edge of the schedule (from the end of the shift
+// on day 6 to the start of the one on day 0) is the first of the list, so it is the one the reason names.
+const deltaWeeklyRest = () =>
+  weeklyRestItem(
+    "delta",
+    "16 h",
+    `od ${rulesDays[6]}, 14:00 do końca grafiku i od początku grafiku do ${rulesDays[0]}, 06:00`,
+  );
+
+// The coverage table of the rules schedule: the counters of N on day 0 and of M on day 6 change from state to state.
+const rulesCoverage = ({ n0, m6 }) => [
+  ["M", { 0: "2 z 2", 1: "1 z 1", 2: "1 z 1", 3: "1 z 1", 4: "2 z 2", 5: "1 z 1", 6: m6 }],
+  ["N", { 0: n0, 3: "1 z 1" }],
+  ["E", { 2: `0 z 2${MINUS}2brakuje 2`, 5: "1 z 1" }],
+];
+const inExcess = "2 z 1+1nadmiar 1";
+const shortBy = (assigned, required) =>
+  `${assigned} z ${required}${MINUS}${required - assigned}brakuje ${required - assigned}`;
+
+// The four states of the rules schedule the steps read. The first has all thirteen assignments; each next one takes one more
+// assignment off, so what changes is what that assignment caused and nothing else. A state lists the items of the list (a
+// function, as the ids are not known yet), the counter, the text of the column "Wskazania" of each person, the marks of the day
+// cells (a day and its text, for the people who have one) and the coverage table.
+const rulesStates = [
+  {
+    what: "with all thirteen assignments",
+    removed: [],
+    counter: "Wskazania: 7 krytycznych, 3 ostrzeżenia",
+    items: () => [
+      alfaHours(),
+      betaRest(),
+      betaHoursOnDay0(),
+      betaHoursOnDay3(),
+      gammaHours(),
+      deltaWeeklyHours(),
+      deltaWeeklyRest(),
+      weeklyNormItem("delta", "56 h"),
+      shortageItem("E", 2, 0, 2),
+      shortageItem("M", 6, 1, 2),
+    ],
+    columns: { alfa: "1 krytyczne", beta: "3 krytyczne", gamma: "1 krytyczne", delta: "2 krytyczne, 1 ostrzeżenie" },
+    marks: {
+      alfa: { 0: "Krytyczne: 1" },
+      beta: { 0: "Krytyczne: 2", 3: "Krytyczne: 1" },
+      gamma: { 4: "Krytyczne: 1", 5: "Krytyczne: 1" },
+    },
+    coverage: rulesCoverage({ n0: inExcess, m6: shortBy(1, 2) }),
+    listDescribe:
+      'the counter "Wskazania: 7 krytycznych, 3 ostrzeżenia" and the ten items in the order of the rules: critical (the rest of beta, the hours of alfa, of beta on days 0 and 3 and of gamma, the weekly hours and the weekly rest of delta), then the warnings (delta over the norm, the shortages of E on day 2 and of M on day 6)',
+    placesDescribe:
+      'the column "Wskazania" reading "1 krytyczne" for alfa, "3 krytyczne" for beta, "1 krytyczne" for gamma and "2 krytyczne, 1 ostrzeżenie" for delta, and the marks "Krytyczne: 1" on day 0 of alfa, "Krytyczne: 2" on day 0 and "Krytyczne: 1" on day 3 of beta, "Krytyczne: 1" on days 4 and 5 of gamma and no mark for delta',
+    coverageDescribe:
+      "the coverage table with every cell complete except N on day 0 in excess (2 z 1, +1), M on day 6 short (1 z 2, -1) and E on day 2 with nobody (0 z 2, -2)",
+  },
+  {
+    what: "after beta's N on day 0 is taken off",
+    removed: [["beta", "N", 0]],
+    counter: "Wskazania: 5 krytycznych, 3 ostrzeżenia",
+    items: () => [
+      alfaHours(),
+      betaHoursOnDay3(),
+      gammaHours(),
+      deltaWeeklyHours(),
+      deltaWeeklyRest(),
+      weeklyNormItem("delta", "56 h"),
+      shortageItem("E", 2, 0, 2),
+      shortageItem("M", 6, 1, 2),
+    ],
+    columns: { alfa: "1 krytyczne", beta: "1 krytyczne", gamma: "1 krytyczne", delta: "2 krytyczne, 1 ostrzeżenie" },
+    marks: {
+      alfa: { 0: "Krytyczne: 1" },
+      beta: { 3: "Krytyczne: 1" },
+      gamma: { 4: "Krytyczne: 1", 5: "Krytyczne: 1" },
+    },
+    coverage: rulesCoverage({ n0: "1 z 1", m6: shortBy(1, 2) }),
+    listDescribe:
+      'the counter "Wskazania: 5 krytycznych, 3 ostrzeżenia" and the list without the rest and the 16 h of beta on day 0, while the hours of alfa (the same shift on the same day, another person) and of beta on day 3 stay',
+    placesDescribe:
+      'beta reading "1 krytyczne" with the mark "Krytyczne: 1" on day 3 only (none on day 0), and alfa, gamma and delta as before',
+    coverageDescribe: "N on day 0 complete now (1 z 1, the excess is gone) and every other counter as before",
+  },
+  {
+    what: "after delta's M on day 6 is taken off too",
+    removed: [
+      ["beta", "N", 0],
+      ["delta", "M", 6],
+    ],
+    counter: "Wskazania: 3 krytyczne, 3 ostrzeżenia",
+    items: () => [
+      alfaHours(),
+      betaHoursOnDay3(),
+      gammaHours(),
+      weeklyNormItem("delta", "48 h"),
+      shortageItem("E", 2, 0, 2),
+      shortageItem("M", 6, 0, 2),
+    ],
+    columns: { alfa: "1 krytyczne", beta: "1 krytyczne", gamma: "1 krytyczne", delta: "1 ostrzeżenie" },
+    marks: {
+      alfa: { 0: "Krytyczne: 1" },
+      beta: { 3: "Krytyczne: 1" },
+      gamma: { 4: "Krytyczne: 1", 5: "Krytyczne: 1" },
+    },
+    coverage: rulesCoverage({ n0: "1 z 1", m6: shortBy(0, 2) }),
+    listDescribe:
+      'the counter "Wskazania: 3 krytyczne, 3 ostrzeżenia": delta keeps only the warning about the norm, now with 48 h (48 h in the week is the limit itself, and the free time at the end and at the start of the schedule is one break of 40 h), and M on day 6 is short by 2',
+    placesDescribe: 'delta reading "1 ostrzeżenie", alfa, beta and gamma as before',
+    coverageDescribe: "M on day 6 with nobody now (0 z 2, -2) and every other counter as before",
+  },
+  {
+    what: "after alfa's N on day 0 is taken off too",
+    removed: [
+      ["beta", "N", 0],
+      ["delta", "M", 6],
+      ["alfa", "N", 0],
+    ],
+    counter: "Wskazania: 2 krytyczne, 4 ostrzeżenia",
+    items: () => [
+      betaHoursOnDay3(),
+      gammaHours(),
+      weeklyNormItem("delta", "48 h"),
+      shortageItem("N", 0, 0, 1),
+      shortageItem("E", 2, 0, 2),
+      shortageItem("M", 6, 0, 2),
+    ],
+    columns: { alfa: "brak", beta: "1 krytyczne", gamma: "1 krytyczne", delta: "1 ostrzeżenie" },
+    marks: { beta: { 3: "Krytyczne: 1" }, gamma: { 4: "Krytyczne: 1", 5: "Krytyczne: 1" } },
+    coverage: rulesCoverage({ n0: shortBy(0, 1), m6: shortBy(0, 2) }),
+    listDescribe:
+      'the counter "Wskazania: 2 krytyczne, 4 ostrzeżenia": no item about alfa any more, and N on day 0 short by 1, the first of the shortages (ahead of day 2 and day 6)',
+    placesDescribe: 'alfa reading "brak" with no mark, and beta, gamma and delta as before',
+    coverageDescribe: "N on day 0 with nobody now (0 z 1, -1) and every other counter as before",
+  },
+];
+
+// The page of the rules schedule; its address needs the id, which only exists once the create step has run.
+const visitRulesAssignPage = (expected) => visitAssignPage("the rules schedule", () => rulesScheduleId, expected);
+
+// The items that are about one person: their reason starts with the person's name, right after the weight.
+const itemsAbout = (items, who) =>
+  items.filter((item) => Object.values(SEVERITY_WORDS).some((word) => item.startsWith(`${word} ${rulesName(who)}: `)));
+// The marks of the day cells, as { person, marks } for each person who has one, marks being { day: text }. The text is what is
+// left of the cell without its buttons: the mark ("Krytyczne: 2"), or nothing for a cell without one.
+const withoutButtons = (cell) => cell.replace(/<button\b[\s\S]*?<\/button>/g, "");
+const dayMarksOf = (html) =>
+  bodyRowsOf(cutAtCoverage(html)[0])
+    .map(({ header, cells }) => ({
+      person: header,
+      marks: Object.fromEntries(
+        cells
+          .slice(0, DAY_CELLS)
+          .map((cell, day) => [day, textOf(withoutButtons(cell))])
+          .filter(([, text]) => /^(?:Krytyczne|Ostrzeżenie)/.test(text)),
+      ),
+    }))
+    .filter(({ marks }) => Object.keys(marks).length > 0)
+    .sort(byPerson);
+
+// What the page says about one person, and what it must say.
+const rulesPersonView = (who) => (html) => ({
+  items: itemsAbout(violationItemsOf(html) ?? [], who),
+  column: violationColumnOf(html).find((row) => row.person === rulesName(who))?.violations,
+  marks: dayMarksOf(html).find((row) => row.person === rulesName(who))?.marks ?? {},
+});
+const showsRulesPerson = (who, expected) => (html) =>
+  violationItemsOf(html) !== undefined &&
+  JSON.stringify(rulesPersonView(who)(html)) ===
+    JSON.stringify({ items: listOf(expected.items()), column: expected.column, marks: expected.marks });
+const rulesPersonExcerpt = (who) => (html) => JSON.stringify(rulesPersonView(who)(html), null, 1);
+const rulesPersonStep = (who, expected, describe) =>
+  visitRulesAssignPage({ bodyCheck: showsRulesPerson(who, expected), describe, excerpt: rulesPersonExcerpt(who) });
+
+// The column "Wskazania" of every person and the marks of every day cell, together: who has what, and where.
+const expectedColumns = (state) =>
+  Object.entries(state.columns)
+    .map(([who, violations]) => ({ person: rulesName(who), violations }))
+    .sort(byPerson);
+const expectedMarks = (state) =>
+  Object.entries(state.marks)
+    .map(([who, marks]) => ({ person: rulesName(who), marks }))
+    .sort(byPerson);
+const showsRulesPlaces = (state) => (html) =>
+  JSON.stringify(violationColumnOf(html)) === JSON.stringify(expectedColumns(state)) &&
+  JSON.stringify(dayMarksOf(html)) === JSON.stringify(expectedMarks(state));
+const rulesPlacesExcerpt = (html) =>
+  JSON.stringify({ column: violationColumnOf(html), marks: dayMarksOf(html) }, null, 1);
+
+// The coverage table has exactly one row for each of `expected`, a [shift key, counters] pair: the row of a shift is the one
+// whose header starts with the shift name and holds its hours (M and N share a name); `counters` maps a day to the text of its
+// cell, and every other day must say that the shift does not run.
+const showsRulesCoverage = (expected) => (html) => {
+  const rows = coverageRowsOf(html);
+  return (
+    rows.length === expected.length &&
+    expected.every(([shift, counters]) => {
+      const { name, hours } = rulesShifts[shift];
+      const found = rows.filter((row) => row.header.startsWith(name) && row.header.includes(hours));
+      return (
+        found.length === 1 &&
+        found[0].cells.length === 7 &&
+        found[0].cells.every((text, day) => (day in counters ? text === counters[day] : text.endsWith(noCellWords)))
+      );
+    })
+  );
+};
+
+// The buttons that are on (aria-pressed="true"), by their aria-label, in sorted order: one for each assignment that is there.
+const pressedLabelsOf = (html) =>
+  tagsOf(cutAtCoverage(html)[0], "button")
+    .filter((tag) => attributeOf(tag, "aria-pressed") === "true")
+    .map((tag) => attributeOf(tag, "aria-label"))
+    .sort();
+const pressedLabelsFor = (assignments) =>
+  assignments
+    .map(([who, shift, day]) =>
+      buttonLabel(rulesName(who), rulesDays[day], `${rulesShifts[shift].name} ${rulesShifts[shift].hours}`),
+    )
+    .sort();
+
+// The four steps that read one state: the counter and the list, the places (column and marks), the coverage table and the
+// pressed buttons, which show that the assignment that was taken off is really gone from the page.
+const rulesStateSteps = (state) => [
+  visitRulesAssignPage({
+    bodyCheck: (html) => showsViolations(listOf(state.items()), state.counter)(html),
+    describe: `${state.what}: ${state.listDescribe}`,
+    excerpt: violationsExcerpt,
+  }),
+  visitRulesAssignPage({
+    bodyCheck: showsRulesPlaces(state),
+    describe: `${state.what}: ${state.placesDescribe}`,
+    excerpt: rulesPlacesExcerpt,
+  }),
+  visitRulesAssignPage({
+    bodyCheck: showsRulesCoverage(state.coverage),
+    describe: `${state.what}: ${state.coverageDescribe}`,
+    excerpt: coverageExcerpt,
+  }),
+  visitRulesAssignPage({
+    bodyCheck: (html) =>
+      JSON.stringify(pressedLabelsOf(html)) === JSON.stringify(pressedLabelsFor(rulesWithout(state.removed))),
+    describe: `${state.what}: a pressed button for each of the ${rulesAssignments.length - state.removed.length} assignments that are left, and for no other`,
+    excerpt: (html) => JSON.stringify(pressedLabelsOf(html), null, 1),
+  }),
+];
 
 // The planner pages that hand the employees to an island (the new and the edit form of a schedule, and the assignment
 // page) list people by name and id only (toEmployeeOptions), so an e-mail address never travels into the page, where the
@@ -2940,6 +3556,50 @@ const steps = [
     describe: `the coverage table with 0 z 5 and the shortage mark ${MINUS}5 for the first shift on day 0, 0 z 1 and ${MINUS}1 on day 3 and 0 z 2 and ${MINUS}2 on day 4 for the second one, and no counter on the other days`,
     excerpt: coverageExcerpt,
   }),
+  // The violations of the live check on the page of the API schedule, which has no assignment: a shortage is a warning for
+  // each of its three cells (listed with the reason that names the shift, the day and the headcount), and nobody has a
+  // violation of their own. Each step proves one thing, so a failure names its cause.
+  visitApiAssignPage({
+    bodyCheck: showsGridHeaders(apiGridHeaders),
+    describe:
+      'the header row of the people\'s table: "Pracownik", the seven days from niedz. 15.11 to sob. 21.11 and the column "Wskazania" last',
+    excerpt: (html) => JSON.stringify(gridHeadersOf(html)),
+  }),
+  visitApiAssignPage({
+    bodyCheck: hasViolationSection,
+    describe:
+      'the section of the list of violations with the heading "Wskazania", after the people\'s table and before the coverage section',
+    excerpt: violationSectionExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: showsViolations(apiViolationItems, apiViolationCounter),
+    describe:
+      'the counter "Wskazania: 3 ostrzeżenia" and exactly three items "Ostrzeżenie Brak obsady: zmiana <shift> (<day>, <hours>): przypisano 0 z <n>, brakuje <n>." for the cells on days 0, 3 and 4, in that order',
+    excerpt: violationsExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: showsViolationColumn(noPersonalViolations),
+    describe:
+      'the column "Wskazania" reading "brak" in the row of each of the two people, and no marker "Krytyczne" or "Ostrzeżenie" in any cell of a day',
+    excerpt: violationColumnExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: hasEdgesNote,
+    describe:
+      "the fixed note under the list: the rules judge this schedule alone and the rest at its edges is not checked",
+    excerpt: violationSectionExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: hasNoViolationAlert,
+    describe: 'no role="alert" and no assertive live region in the list of violations (a click must not announce one)',
+    excerpt: violationSectionExcerpt,
+  }),
+  visitApiAssignPage({
+    bodyCheck: explainsCoverageNote,
+    describe:
+      "under the coverage table the sentence that a shortage is a warning on the list and an excess is only information, without the old sentence",
+    excerpt: (html) => textsOf(cutAtCoverage(html)[1], "p")[0] ?? "(no coverage section)",
+  }),
   // The table needs the room: the assignment page has the wide container, not the narrow one of the other pages.
   visitApiAssignPage({
     bodyCheck: hasWideLayout,
@@ -2968,6 +3628,26 @@ const steps = [
     describe: `the coverage table with a single row whose day 0 reads 1 z 1 without a shortage (${MINUS}) or excess (+) mark and no counter on the other days`,
     excerpt: coverageExcerpt,
   }),
+  // The witness alone breaks no rule: one shift of 8 h (the limit itself is allowed), a break of more than 35 h around it,
+  // and 8 h is far under the norm of a half-time week with a holiday (11.11) that is 16 h. The cell is complete (1 z 1),
+  // so nothing is short either: the list says so and the people have nothing of their own.
+  visitRouteAssignPage({
+    bodyCheck: showsViolations([], noViolationsCounter),
+    describe:
+      'the counter "Brak wskazań" and no list item: the witness alone breaks no rule and the only cell is complete',
+    excerpt: violationsExcerpt,
+  }),
+  visitRouteAssignPage({
+    bodyCheck: showsViolationColumn(noPersonalViolations),
+    describe:
+      'the column "Wskazania" reading "brak" in the row of each of the two people, and no marker in any cell of a day',
+    excerpt: violationColumnExcerpt,
+  }),
+  visitRouteAssignPage({
+    bodyCheck: hasEdgesNote,
+    describe: "the fixed note under the list, also when the list is empty",
+    excerpt: violationSectionExcerpt,
+  }),
   // An excess: a second person on cell C, which needs one. No schedule above has more people than it needs, so this is
   // the only place that shows the excess mark. The steps end with the witness alone again, the state that the rest of
   // the run (and the cleanup) expects of this schedule.
@@ -2994,6 +3674,19 @@ const steps = [
     describe: `two people on cell C: the coverage row whose day 0 reads 2 z 1 with the excess mark +1 and the words nadmiar 1, and no shortage mark (${MINUS}, brakuje)`,
     excerpt: coverageExcerpt,
   }),
+  // The excess is information on the coverage table and not a violation: both people work 8 h under the norm and nothing is
+  // short, so the list stays empty and the people's column still reads "brak".
+  visitRouteAssignPage({
+    bodyCheck: showsViolations([], noViolationsCounter),
+    describe: 'the counter "Brak wskazań" and no list item: an excess of staff (2 z 1) is no violation',
+    excerpt: violationsExcerpt,
+  }),
+  visitRouteAssignPage({
+    bodyCheck: showsViolationColumn(noPersonalViolations),
+    describe:
+      'the column "Wskazania" reading "brak" for both people, now that both are on cell C, and no marker in any cell of a day',
+    excerpt: violationColumnExcerpt,
+  }),
   ...plannerDeletesRouteAssignment(
     "of the assignment of cell C of the second person takes the excess away",
     routeAssignmentsUrl,
@@ -3001,6 +3694,158 @@ const steps = [
     routeWitness,
     "the witness alone (cell C of the first person)",
   ),
+
+  // The live rules on real data (see rulesPeople): a schedule of its own, four people (one for each scenario of the rules) and
+  // a shift for the break of exactly 11 h, all made through the app like the schedules above. Their e-mails and names start
+  // with "smoke-" / "Smoke-", so the final cleanup finds them.
+  [
+    `${planner.label}: POST /api/shifts creates the early shift of the rules schedule`,
+    async () => {
+      const result = await request(planner, "/api/shifts", { method: "POST", json: rulesEarlyShift });
+      rulesEarlyShiftId = parseJson(result.body)?.shift?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      check: (body) =>
+        typeof body.shift.id === "string" &&
+        body.shift.name === rulesEarlyShiftName &&
+        body.shift.startMinute === 60 &&
+        body.shift.endMinute === 540,
+      describe: "the shift 01:00-09:00 (minutes 60 to 540) with its own id",
+    },
+  ],
+  ...Object.entries(rulesPeople).map(([who, input]) =>
+    plannerCreatesEmployee(`the employee ${who} of the rules schedule`, input, (id) => {
+      rulesIds[who] = id;
+    }),
+  ),
+  [
+    `${planner.label}: POST /api/schedules creates the rules schedule`,
+    async () => {
+      const result = await request(planner, "/api/schedules", { method: "POST", json: rulesSchedule() });
+      rulesScheduleId = parseJson(result.body)?.id;
+      return result;
+    },
+    {
+      status: 201,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: (body) => isUuidText(body.id) && Object.keys(body).length === 1,
+      describe: "the id of the new schedule and nothing else",
+    },
+  ],
+  ...plannerReadsSchedule(
+    "shows the rules schedule",
+    rulesSchedule,
+    "the rules schedule (11 cells of 3 shifts, 4 people)",
+    () => rulesScheduleId,
+  ),
+  ...rulesAssignments.map(plannerAddsRulesAssignment),
+  plannerReadsRulesAssignments(
+    "shows the thirteen assignments",
+    () => rulesAssignments,
+    "the rules schedule: 1 of alfa, 3 of beta, 2 of gamma and 7 of delta",
+  ),
+  // The page with all thirteen assignments. First what the page is (the schedule, the seven days and the column of the
+  // violations last), then the list for each scenario with its person (the reason, the column and the marks of that person
+  // only), then the whole list, the places of all the people, the coverage table and the pressed buttons together.
+  visitRulesAssignPage({
+    bodyCheck: showsAssignHeading(rulesPeriod, rulesScheduleLabel),
+    describe: `the title and heading "Obsadzanie grafiku", the period ${rulesPeriod} and the label of the rules schedule`,
+    excerpt: headingExcerpt,
+  }),
+  visitRulesAssignPage({
+    bodyCheck: showsGridHeaders(["Pracownik", ...rulesDays, "Wskazania"]),
+    describe: `the header row of the people's table: "Pracownik", the seven days from ${rulesDays[0]} to ${rulesDays[6]} and the column "Wskazania" last`,
+    excerpt: (html) => JSON.stringify(gridHeadersOf(html)),
+  }),
+  visitRulesAssignPage({
+    bodyCheck: hasViolationSection,
+    describe:
+      'the section of the list of violations with the heading "Wskazania", after the people\'s table and before the coverage section',
+    excerpt: violationSectionExcerpt,
+  }),
+  // (a) One shift of 9 h alone: more than 8 h in the day that starts with it, with the sentence about art. 135. No break
+  // between shifts, no week above 48 h, no missing weekly rest and no week above the norm, so it is the only item.
+  rulesPersonStep(
+    "alfa",
+    { items: () => [alfaHours()], column: "1 krytyczne", marks: { 0: "Krytyczne: 1" } },
+    'alfa (N on day 0 alone, 9 h): the one item "Krytyczne ... w dobie liczonej od pon. 02.11, 22:00 przepracowane 9 h, dopuszczalne najwyżej 8 h." with the sentence about the system of equivalent working time (art. 135), the column "1 krytyczne" and the mark "Krytyczne: 1" on day 0 only',
+  ),
+  // (b) M and N on one day: 8 h between the end of M and the start of N is less than 11 h, and the day that starts with M holds
+  // 8 h of M and 8 h of N (the window ends at 06:00 of the next day), 16 h in all, with the sentence for the 9 h shift. Both
+  // items sit on the cell of day 0, so it carries "Krytyczne: 2". N on day 3 alone is a violation of its own on its own day.
+  rulesPersonStep(
+    "beta",
+    {
+      items: () => [betaRest(), betaHoursOnDay0(), betaHoursOnDay3()],
+      column: "3 krytyczne",
+      marks: { 0: "Krytyczne: 2", 3: "Krytyczne: 1" },
+    },
+    'beta (M and N on day 0, N alone on day 3): in this order the rest "przerwa 8 h między zmianami ... i ..., wymagane co najmniej 11 h.", the hours "od pon. 02.11, 06:00 przepracowane 16 h" and the hours "od czw. 05.11, 22:00 przepracowane 9 h", the column "3 krytyczne" and the marks "Krytyczne: 2" on day 0 and "Krytyczne: 1" on day 3',
+  ),
+  // (c) A break of exactly 11 h (M ends at 14:00 on day 4, E starts at 01:00 on day 5) is allowed, so there is no item about the
+  // rest. The day that starts with M still holds 8 h of M and the 5 h of E before 06:00 of the next day, 13 h, so that is the
+  // one item, on the cells of both days, and no shift is longer than 8 h, so there is no sentence about art. 135.
+  rulesPersonStep(
+    "gamma",
+    {
+      items: () => [gammaHours()],
+      column: "1 krytyczne",
+      marks: { 4: "Krytyczne: 1", 5: "Krytyczne: 1" },
+    },
+    'gamma (M on day 4 and E on day 5, a break of exactly 11 h, which is allowed): no item about the rest, the one item "od pt. 06.11, 06:00 przepracowane 13 h" without the sentence about art. 135, the column "1 krytyczne" and the mark "Krytyczne: 1" on days 4 and 5',
+  ),
+  // (d) M on all seven days: 56 h in the week, and the breaks are 16 h each (the free time at both edges of the schedule is one
+  // break of 16 h, the first named), so the weekly rest is missing; 56 h is also above the norm of 40 h. No day has more than
+  // 8 h and no break between two days is shorter than 11 h. The items belong to no cell, so no day carries a mark.
+  rulesPersonStep(
+    "delta",
+    {
+      items: () => [deltaWeeklyHours(), deltaWeeklyRest(), weeklyNormItem("delta", "56 h")],
+      column: "2 krytyczne, 1 ostrzeżenie",
+      marks: {},
+    },
+    'delta (M on all seven days): in this order the weekly hours "łączny czas pracy 56 h, dopuszczalne najwyżej 48 h", the weekly rest "najdłuższa przerwa trwa 16 h (od niedz. 08.11, 14:00 do końca grafiku i od początku grafiku do pon. 02.11, 06:00)" and the warning about the norm "56 h, norma tygodniowa (pełny etat) to 40 h", the column "2 krytyczne, 1 ostrzeżenie" and no mark in any day',
+  ),
+  // (e) A shortage is one warning for each cell with fewer people than it needs, whoever is in it: E on day 2 has nobody (0 of
+  // 2) and M on day 6 only delta (1 of 2). N on day 0 (2 of 1) is in excess, and the complete cells give no item.
+  visitRulesAssignPage({
+    bodyCheck: (html) =>
+      JSON.stringify(
+        (violationItemsOf(html) ?? []).filter((item) => item.startsWith(`${SEVERITY_WORDS.warning} Brak obsady:`)),
+      ) === JSON.stringify(listOf([shortageItem("E", 2, 0, 2), shortageItem("M", 6, 1, 2)])),
+    describe:
+      'the shortages: exactly two items "Ostrzeżenie Brak obsady: zmiana ... (śr. 04.11, 01:00-09:00): przypisano 0 z 2, brakuje 2." and "... (niedz. 08.11, 06:00-14:00): przypisano 1 z 2, brakuje 1.", and none for the cell in excess or for a complete one',
+    excerpt: violationsExcerpt,
+  }),
+  ...rulesStateSteps(rulesStates[0]),
+  visitRulesAssignPage({
+    bodyCheck: hasEdgesNote,
+    describe:
+      "the fixed note under the list: the rules judge this schedule alone and the rest at its edges is not checked",
+    excerpt: violationSectionExcerpt,
+  }),
+  visitRulesAssignPage({
+    bodyCheck: hasNoViolationAlert,
+    describe:
+      'no role="alert" and no assertive live region in the list of violations, which has ten items (a click must not announce one)',
+    excerpt: violationSectionExcerpt,
+  }),
+  // The neighbours: one assignment at a time is taken off through the route, and the page is read again. Only what that
+  // assignment caused goes (or changes); the other person on the same shift and day, the same person on another day, and the
+  // other items stay. The table is read after each DELETE, so that what the page shows is tied to what the database holds.
+  ...plannerTakesOffRulesAssignment(["beta", "N", 0], rulesStates[1].removed),
+  ...rulesStateSteps(rulesStates[1]),
+  // Delta without M on day 6 works 48 h, the limit itself, so the weekly hours go; the free time at the end of the schedule (34
+  // h) and at its start (6 h) is one break of 40 h, which is enough for the weekly rest though neither part is, so that goes
+  // too. The norm of 40 h is still exceeded (48 h), now with the new total in its reason, and M on day 6 has nobody.
+  ...plannerTakesOffRulesAssignment(["delta", "M", 6], rulesStates[2].removed),
+  ...rulesStateSteps(rulesStates[2]),
+  ...plannerTakesOffRulesAssignment(["alfa", "N", 0], rulesStates[3].removed),
+  ...rulesStateSteps(rulesStates[3]),
   visit(planner, `/schedules/${unknownScheduleId}/assign`, 404, notFoundScheduleMessage, "no-store"),
   visit(planner, "/schedules/not-a-uuid/assign", 404, notFoundScheduleMessage, "no-store"),
   visit(planner, `/schedules/${unknownScheduleId}`, 404, notFoundScheduleMessage),

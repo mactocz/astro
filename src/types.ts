@@ -118,7 +118,44 @@ export interface CoverageCell {
   surplus: number;
 }
 
-/** A shift as the schedule form offers it: only what the form shows, with the times already formatted. */
+/** How serious a violation is: a critical one breaks a work-time rule, a warning only asks the planner to look. */
+export type ViolationSeverity = "critical" | "warning";
+
+/** The rules of the live check, in the order a result lists them. */
+export type ViolationRule =
+  "daily_rest" | "daily_hours" | "weekly_hours" | "weekly_rest" | "weekly_norm" | "understaffed";
+
+/** Where a violation sits in the schedule: an assignment or, when `employeeId` is null, a staffing cell. */
+export interface ViolationAnchor {
+  shiftId: string;
+  /** Days after the start date, 0 to 6. */
+  dayOffset: number;
+  employeeId: string | null;
+}
+
+/** One finding of the live check: a rule broken or a warning, with its reason for people and the numbers behind it. */
+export interface Violation {
+  /**
+   * Stable identity: `<rule>|<employee id or ->|<anchor keys>`, with no number computed from the data, no index and no
+   * time in it, so the same finding has the same key whatever the order of the input.
+   */
+  key: string;
+  severity: ViolationSeverity;
+  rule: ViolationRule;
+  /** The employee the violation is about, or null for a staffing cell. */
+  employeeId: string | null;
+  /** The assignments (or the staffing cell) behind it, sorted by their keys; empty for a whole week of one person. */
+  anchors: ViolationAnchor[];
+  /** The reason in Polish, with the numbers, for the planner to read. */
+  reason: string;
+  /** The measured value, in the `unit`. */
+  actual: number;
+  /** The limit the value is held against, in the `unit`. */
+  limit: number;
+  unit: "minutes" | "people";
+}
+
+/** A shift as the schedule pages offer it: the times already formatted, plus the minutes the work-time rules use. */
 export interface ShiftOption {
   id: string;
   name: string;
@@ -127,13 +164,18 @@ export interface ShiftOption {
   endsNextDay: boolean;
   /** Length of the shift, e.g. "8 h". */
   duration: string;
+  /** Minutes after midnight (0 to 1439), as in `ShiftInput`. */
+  startMinute: number;
+  /** Minutes after midnight (0 to 1439), as in `ShiftInput`; an end earlier than the start means the next day. */
+  endMinute: number;
 }
 
-/** An employee as the schedule form offers them: the id and the name to show, never the e-mail address or the FTE. */
+/** An employee as the schedule pages offer them: the id, the name to show and the FTE, never the e-mail address. */
 export interface EmployeeOption {
   id: string;
   /** "Last name First name", the order of the employee list. */
   name: string;
+  fte: Fte;
 }
 
 /** The state of the Auth account behind an employee: no account, one that never confirmed its invitation, or an active one. */
