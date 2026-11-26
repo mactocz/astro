@@ -5,9 +5,11 @@
 // the status with the SQLSTATE and the message, so a missing table or a mistyped argument does not pass for one), that a
 // schedule is saved atomically through the save_schedule function (a save changes only the difference, so it keeps the
 // assignments of what stays and refuses to drop those of a removed cell or person without a confirmation), that an
-// assignment keeps to its foreign keys and constraints and only a planner reads and changes it, that the function
-// mark_account_active records the activation of the caller's own row only (an account without a role, an anonymous
-// caller and another employee change nothing, the first activation stays), that the employee, shift and schedule API
+// assignment keeps to its foreign keys and constraints and only a planner reads and changes it, that an absence keeps to
+// its constraints and column grants (no session writes its status, or the person of a row it changes), only a planner
+// reads and changes it and it goes with its employee, that the function mark_account_active records the activation of the
+// caller's own row only (an account without a role, an anonymous caller and another employee change nothing, the first
+// activation stays), that the employee, shift and schedule API
 // routes keep to the role gate, the validation and their status codes (the routes that add and remove one assignment of
 // a schedule are idempotent, and the save of a schedule answers 409 with the number of assignments it would remove until
 // the body confirms the removal), that the view behind the schedule list counts the people and the required staffing of
@@ -274,6 +276,10 @@ function scheduleEmployeesTable(method, options) {
 
 function assignmentsTable(method, options) {
   return restTable("schedule_assignments", method, options);
+}
+
+function absencesTable(method, options) {
+  return restTable("absences", method, options);
 }
 
 // The view the schedule list reads: one flat row per schedule with its two counts.
@@ -1315,6 +1321,289 @@ const anonymousAssignmentSteps = [
     createdAssignSchedule,
     allAssignments,
     "the assignment schedule, unchanged",
+  ),
+];
+
+// The absence steps (S-07) use rows of their own, all in 2090: no schedule of this or of another run reaches that far, so no
+// page that reads absences ever sees them. They hang on employees of the database steps above, whose ids exist by then: `own`
+// on the row linked to the employee account and `noRole` on the row linked to the account without a role (so that each of
+// these accounts has an absence of its very own row to be kept from), `requested` on the roster employee (the service role
+// writes it, because no session may write a status) and `crud` on the first API employee, which the planner changes and then
+// removes. The table has no label that a cleanup could match, so the rows go with their employees (on delete cascade), and
+// the last step proves that none is left. Every row is a function, because the ids in it are only known once the insert
+// steps have run.
+let ownAbsenceId;
+let noRoleAbsenceId;
+let requestedAbsenceId;
+let crudAbsenceId;
+let boundaryAbsenceId;
+let absenceCascadeEmployeeId;
+let cascadeAbsenceIds = [];
+
+// What a session sends to insert an absence: the four columns it has a grant on, and nothing else. A status is what only the
+// service role may write.
+const ownAbsenceBody = () => ({
+  employee_id: ownEmployeeId,
+  type: "vacation",
+  start_date: "2090-03-02",
+  end_date: "2090-03-06",
+});
+const noRoleAbsenceBody = () => ({
+  employee_id: noRoleEmployeeId,
+  type: "sick_leave",
+  start_date: "2090-03-09",
+  end_date: "2090-03-09",
+});
+const requestedAbsenceBody = () => ({
+  employee_id: smokeEmployeeId,
+  type: "other",
+  status: "requested",
+  start_date: "2090-03-16",
+  end_date: "2090-03-20",
+});
+const crudAbsenceBody = () => ({
+  employee_id: apiEmployeeId,
+  type: "vacation",
+  start_date: "2090-04-06",
+  end_date: "2090-04-10",
+});
+// The three columns a session may change.
+const crudAbsenceChanges = { type: "sick_leave", start_date: "2090-04-07", end_date: "2090-04-08" };
+// The widest absence the table accepts: the earliest day allowed to the latest one, both inclusive.
+const boundaryAbsenceBody = () => ({ ...crudAbsenceBody(), start_date: "2020-01-01", end_date: "2099-12-31" });
+
+// An absence as the table stores it: the status is the default of the column, approved, unless the body names one.
+const storedAbsence = (id, body) => ({ status: "approved", ...body, id });
+const ownAbsence = () => storedAbsence(ownAbsenceId, ownAbsenceBody());
+const noRoleAbsence = () => storedAbsence(noRoleAbsenceId, noRoleAbsenceBody());
+const requestedAbsence = () => storedAbsence(requestedAbsenceId, requestedAbsenceBody());
+const crudAbsence = () => storedAbsence(crudAbsenceId, crudAbsenceBody());
+const changedCrudAbsence = () => ({ ...crudAbsence(), ...crudAbsenceChanges });
+// The absences of the four employees above in the states the steps pass through: all as inserted, the fourth one changed
+// by the planner, and the fourth one removed.
+const insertedAbsences = () => [ownAbsence(), noRoleAbsence(), requestedAbsence(), crudAbsence()];
+const changedAbsences = () => [ownAbsence(), noRoleAbsence(), requestedAbsence(), changedCrudAbsence()];
+const remainingAbsences = () => [ownAbsence(), noRoleAbsence(), requestedAbsence()];
+// Every absence of those four employees. The filter keeps rows of other employees out (those of an earlier run that failed
+// before its cleanup, or real ones), and it covers every row an attempt could touch, so that a policy that let one through
+// shows in the planner's read afterwards.
+const absenceScope = () =>
+  `?employee_id=in.(${[ownEmployeeId, noRoleEmployeeId, smokeEmployeeId, apiEmployeeId].join(",")})`;
+
+// The employee of the cascade steps. No schedule uses it, so the service role may delete it (the employees above are in
+// rosters, whose foreign key restricts a delete). Its e-mail starts with "smoke-" like every row the final cleanup deletes,
+// in case a failed step leaves it behind.
+const absenceCascadeEmployee = {
+  first_name: "Smoke",
+  last_name: `Smoke-${runId}-absence-cascade`,
+  email: `smoke-${runId}-absence-cascade@example.com`,
+  fte_numerator: 1,
+  fte_denominator: 1,
+};
+// Two absences of it with statuses no session may write, a rejected one and an approved one, which the service role writes.
+// With the requested one above, the status check of the table has then accepted each of its three values.
+const cascadeAbsenceBodies = () => [
+  {
+    employee_id: absenceCascadeEmployeeId,
+    type: "vacation",
+    status: "rejected",
+    start_date: "2090-05-04",
+    end_date: "2090-05-08",
+  },
+  {
+    employee_id: absenceCascadeEmployeeId,
+    type: "other",
+    status: "approved",
+    start_date: "2090-05-11",
+    end_date: "2090-05-11",
+  },
+];
+// The id of every absence of this run, for the check after the final cleanup.
+const absenceIdsOfTheRun = () =>
+  [ownAbsenceId, noRoleAbsenceId, requestedAbsenceId, crudAbsenceId, boundaryAbsenceId, ...cascadeAbsenceIds].filter(
+    isUuidText,
+  );
+
+// A row of the table has exactly these seven columns: there is no text column, an L4 is health data.
+const ABSENCE_COLUMNS = ["created_at", "employee_id", "end_date", "id", "start_date", "status", "type"];
+const hasAbsenceColumns = (row) => sameItems(Object.keys(row), ABSENCE_COLUMNS) && typeof row.created_at === "string";
+const absenceKey = (row) =>
+  JSON.stringify([row.id, row.employee_id, row.type, row.status, row.start_date, row.end_date]);
+// The same without the id, for rows whose id is only known from the answer.
+const absenceKeyWithoutId = (row) =>
+  JSON.stringify([row.employee_id, row.type, row.status, row.start_date, row.end_date]);
+// Exactly the expected absences (a function that lists them), in any order, each with every column as expected.
+const isAbsences = (expected) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === expected().length &&
+  rows.every((row) => hasAbsenceColumns(row)) &&
+  sameItems(rows.map(absenceKey), expected().map(absenceKey));
+// Exactly one row for each of the bodies (a function that lists them), as the table stores them and each with an id of its
+// own: what an insert answers with.
+const isAbsencesLike = (bodies) => (rows) =>
+  Array.isArray(rows) &&
+  rows.length === bodies().length &&
+  rows.every((row) => hasAbsenceColumns(row) && isUuidText(row.id)) &&
+  sameItems(
+    rows.map(absenceKeyWithoutId),
+    bodies().map((body) => absenceKeyWithoutId({ status: "approved", ...body })),
+  );
+
+// What the database says about a value it refuses, by cause. A rejected value names the constraint it breaks and carries the
+// SQLSTATE of its kind, 23514 for a CHECK and 23503 for a foreign key, so a refusal for any other reason (a policy, a missing
+// grant, a malformed value) does not pass.
+const isCheckViolation = (constraint) => (error) => error?.code === "23514" && violates(constraint)(error);
+const isForeignKeyViolation = (constraint) => (error) => error?.code === "23503" && violates(constraint)(error);
+// A date that does not exist, such as the 30th of February: 22008, "date/time field value out of range".
+const isImpossibleDate = (error) => error?.code === "22008" && messageIncludes(error, "out of range");
+// A column the caller has no grant on: the privilege check comes before the policies, so the error is the 42501 of a
+// permission, not the one of a policy, and it names the table (`permission denied for table absences`; a newer PostgreSQL
+// may name the column and the relation instead).
+const isColumnDenied = (table) => (error) =>
+  isPermissionDenied(error) &&
+  new RegExp(`permission denied for (?:table ${table}\\b|column "?\\w+"? of relation "?${table}\\b)`).test(
+    error?.message ?? "",
+  );
+const columnDenied = (table) => ({
+  status: 403,
+  check: isColumnDenied(table),
+  describe: `a permission error (42501) for the table ${table}, from a column without a grant and not from a policy`,
+});
+
+const asPlanner = async () => ({ token: await accessToken(planner) });
+const asServiceRole = async () => ({ key: SUPABASE_SERVICE_ROLE_KEY });
+
+// Inserts the rows of `bodies` (a function that lists them) as `who`, asks for them back and hands their ids to `keepIds`. The
+// answer must be exactly those rows, each with an id of its own.
+const insertsAbsences = (who, auth, name, bodies, keepIds, describe) => [
+  `${who}: absences insert ${name}`,
+  async () => {
+    const result = await absencesTable("POST", { ...(await auth()), body: bodies(), prefer: "return=representation" });
+    const rows = parseJson(result.body);
+    keepIds(Array.isArray(rows) ? rows.map((row) => row.id) : []);
+    return result;
+  },
+  { status: 201, check: isAbsencesLike(bodies), describe: `${describe}, echoed back` },
+];
+const plannerInsertsAbsences = (name, bodies, keepIds, describe) =>
+  insertsAbsences(planner.label, asPlanner, name, bodies, keepIds, describe);
+const serviceRoleInsertsAbsences = (name, bodies, keepIds, describe) =>
+  insertsAbsences("service role", asServiceRole, name, bodies, keepIds, describe);
+
+// The planner's read of the absences of the four employees, which must be exactly `expected` (a function that lists them).
+const plannerReadsAbsences = (name, expected, describe) => [
+  `${planner.label}: absences read ${name}`,
+  async () => absencesTable("GET", { token: await accessToken(planner), query: absenceScope() }),
+  {
+    status: 200,
+    check: isAbsences(expected),
+    describe: `exactly ${describe}, each with the seven columns of the table`,
+  },
+];
+
+// Each rejected insert breaks exactly one rule of the table and carries only the four columns a session may write, so the
+// constraint named in the error is the proof of why. `body` is a function, because the ids in it are only known once earlier
+// steps have run.
+const plannerRejectsAbsence = (description, body, constraint) => [
+  `${planner.label}: absences insert ${description} is rejected`,
+  async () => absencesTable("POST", { token: await accessToken(planner), body: body() }),
+  {
+    statusNotClass: 2,
+    check: isCheckViolation(constraint),
+    describe: `an error with the code 23514 naming ${constraint}`,
+  },
+];
+
+// The planner writes a column no session may write: refused with a permission error for the table, whatever the value. The
+// planner passes every policy of the table and may write the other columns, so a refusal like this can only come from the
+// column grants. `build` returns the query and body when the step runs, because the row id is only known by then.
+const plannerWriteIsDeniedOnAbsences = (description, method, build) => [
+  `${planner.label}: absences ${description} is refused`,
+  async () => absencesTable(method, { token: await accessToken(planner), ...build() }),
+  columnDenied("absences"),
+];
+
+// A signed-in account without planner rights, at a time when the four absences exist and one of them sits on the employee row
+// linked to the account itself: the table looks empty (also when asked for that very row), the policy turns down an insert for
+// that row, and an update and a delete touch no row (the account holds the grants for both, so only the policies stand in
+// the way). Each answer names its cause (see `policyTurnsDown`). The update and the delete aim at every absence of the four
+// employees, so one that went through would touch the others as well; the planner's read afterwards is the proof that nothing
+// changed. `linkedEmployeeId` is a function for the same reason as the rows above.
+const notPlannerAbsenceSteps = (actor, linkedEmployeeId) => [
+  [
+    `${actor.label}: absences read returns an empty list`,
+    async () => absencesTable("GET", { token: await accessToken(actor), query: "?select=id" }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ],
+  [
+    `${actor.label}: absences read of the absence of its own linked employee row returns an empty list`,
+    async () =>
+      absencesTable("GET", {
+        token: await accessToken(actor),
+        query: `?employee_id=eq.${linkedEmployeeId()}&select=id`,
+      }),
+    { status: 200, check: isEmptyList, describe: "an empty list, although that row has an absence" },
+  ],
+  [
+    `${actor.label}: absences insert is rejected`,
+    async () =>
+      absencesTable("POST", {
+        token: await accessToken(actor),
+        body: {
+          ...crudAbsenceBody(),
+          employee_id: linkedEmployeeId(),
+          start_date: "2090-08-03",
+          end_date: "2090-08-04",
+        },
+      }),
+    policyTurnsDown("absences"),
+  ],
+  [
+    `${actor.label}: absences update changes no row`,
+    async () =>
+      absencesTable("PATCH", {
+        token: await accessToken(actor),
+        query: absenceScope(),
+        body: { type: "other", start_date: "2090-09-01", end_date: "2090-09-02" },
+        prefer: asksForChangedRows,
+      }),
+    rowsHidden,
+  ],
+  [
+    `${actor.label}: absences delete removes no row`,
+    async () =>
+      absencesTable("DELETE", { token: await accessToken(actor), query: absenceScope(), prefer: asksForChangedRows }),
+    rowsHidden,
+  ],
+  plannerReadsAbsences(
+    `is unchanged after ${actor.label} write attempts`,
+    changedAbsences,
+    "the four absences, unchanged",
+  ),
+];
+
+// The same for a caller that never signed in, which the database does not let near the table at all.
+const anonymousAbsenceSteps = [
+  [`${anonymous.label}: absences read is rejected`, () => absencesTable("GET"), anonymousTableDenied("absences")],
+  [
+    `${anonymous.label}: absences insert is rejected`,
+    () => absencesTable("POST", { body: { ...crudAbsenceBody(), start_date: "2090-08-03", end_date: "2090-08-04" } }),
+    anonymousTableDenied("absences"),
+  ],
+  [
+    `${anonymous.label}: absences update is rejected`,
+    () => absencesTable("PATCH", { query: absenceScope(), body: { type: "other" } }),
+    anonymousTableDenied("absences"),
+  ],
+  [
+    `${anonymous.label}: absences delete is rejected`,
+    () => absencesTable("DELETE", { query: absenceScope() }),
+    anonymousTableDenied("absences"),
+  ],
+  plannerReadsAbsences(
+    `is unchanged after ${anonymous.label} write attempts`,
+    changedAbsences,
+    "the four absences, unchanged",
   ),
 ];
 
@@ -5330,6 +5619,264 @@ const steps = [
     () => ({ startDate: emptyScheduleStartDate, label: emptyScheduleLabel, employeeCount: 0, totalRequired: 0 }),
     "the schedule without cells and people, unchanged",
   ),
+  // Absences (S-07): only a planner reads and changes them. A session writes the person, the type and the two days of a new
+  // one and the type and the two days of an existing one, and never the status or the person of an existing one (the column
+  // grants); the constraints hold even for the planner; and an absence goes with its employee. These steps send bearer
+  // tokens straight to PostgREST, without the app. They use the employees of the steps above (see absenceScope), so they
+  // come after them.
+  plannerInsertsAbsences(
+    "returns the absence of the row linked to the employee account",
+    () => [ownAbsenceBody()],
+    ([id]) => {
+      ownAbsenceId = id;
+    },
+    "the vacation of that row, with the status approved that the column defaults to",
+  ),
+  plannerInsertsAbsences(
+    "returns the absence of the row linked to the account without a role",
+    () => [noRoleAbsenceBody()],
+    ([id]) => {
+      noRoleAbsenceId = id;
+    },
+    "the sick leave of that row, of one day",
+  ),
+  // No session may write a status, so the service role writes the one of a leave request that S-14 will bring.
+  serviceRoleInsertsAbsences(
+    "writes an absence with the status requested",
+    () => [requestedAbsenceBody()],
+    ([id]) => {
+      requestedAbsenceId = id;
+    },
+    "the absence of the roster employee, with the status requested",
+  ),
+  plannerInsertsAbsences(
+    "returns the absence that the update and delete steps work on",
+    () => [crudAbsenceBody()],
+    ([id]) => {
+      crudAbsenceId = id;
+    },
+    "the vacation of the first API employee",
+  ),
+  plannerReadsAbsences(
+    "shows the four absences, the one of the service role with the status requested",
+    insertedAbsences,
+    "the four absences as inserted",
+  ),
+  // The update changes the three columns it has a grant on and only the row it names; the other three rows are the proof.
+  [
+    `${planner.label}: absences update changes the type and the days`,
+    async () =>
+      absencesTable("PATCH", {
+        token: await accessToken(planner),
+        query: `?id=eq.${crudAbsenceId}`,
+        body: crudAbsenceChanges,
+        prefer: asksForChangedRows,
+      }),
+    {
+      status: 200,
+      check: isAbsences(() => [changedCrudAbsence()]),
+      describe: "exactly the changed absence, with the same person and the same status",
+    },
+  ],
+  plannerReadsAbsences(
+    "shows the changed absence and the three others as they were",
+    changedAbsences,
+    "the fourth absence with its new type and days next to the three untouched ones",
+  ),
+  // No grant on the status or on the person of an existing absence, and none on the status of a new one.
+  plannerWriteIsDeniedOnAbsences("update of the status", "PATCH", () => ({
+    query: `?id=eq.${crudAbsenceId}`,
+    body: { status: "rejected" },
+  })),
+  plannerWriteIsDeniedOnAbsences("update of the person", "PATCH", () => ({
+    query: `?id=eq.${crudAbsenceId}`,
+    body: { employee_id: smokeEmployeeId },
+  })),
+  plannerWriteIsDeniedOnAbsences("insert with a status", "POST", () => ({
+    body: { ...crudAbsenceBody(), start_date: "2090-07-06", end_date: "2090-07-07", status: "requested" },
+  })),
+  plannerReadsAbsences(
+    "is unchanged after the refused writes of the status and the person",
+    changedAbsences,
+    "the four absences, unchanged",
+  ),
+  // The date bounds are checked on each day of the absence: a start before 2020, an end after 2099 and a start after 2099
+  // each break the same constraint, and none of them breaks the one about the order of the days.
+  plannerRejectsAbsence(
+    "with a start date of 2019-12-31",
+    () => ({ ...crudAbsenceBody(), start_date: "2019-12-31", end_date: "2020-01-02" }),
+    "absences_dates_valid",
+  ),
+  plannerRejectsAbsence(
+    "with an end date of 2100-01-01",
+    () => ({ ...crudAbsenceBody(), start_date: "2099-12-30", end_date: "2100-01-01" }),
+    "absences_dates_valid",
+  ),
+  plannerRejectsAbsence(
+    "with a start date of 2100-01-01",
+    () => ({ ...crudAbsenceBody(), start_date: "2100-01-01", end_date: "2100-01-01" }),
+    "absences_dates_valid",
+  ),
+  plannerRejectsAbsence(
+    "with an end date before the start date",
+    () => ({ ...crudAbsenceBody(), start_date: "2090-05-12", end_date: "2090-05-11" }),
+    "absences_range_valid",
+  ),
+  plannerRejectsAbsence(
+    "with a type that is not on the list",
+    () => ({ ...crudAbsenceBody(), type: "holiday" }),
+    "absences_type_valid",
+  ),
+  [
+    `${planner.label}: absences insert with a date that does not exist is rejected`,
+    async () =>
+      absencesTable("POST", {
+        token: await accessToken(planner),
+        body: { ...crudAbsenceBody(), start_date: "2090-02-30", end_date: "2090-03-02" },
+      }),
+    {
+      statusNotClass: 2,
+      check: isImpossibleDate,
+      describe: "an error with the code 22008 (date/time field value out of range)",
+    },
+  ],
+  [
+    `${planner.label}: absences insert for an employee that does not exist is rejected`,
+    async () =>
+      absencesTable("POST", {
+        token: await accessToken(planner),
+        body: { ...crudAbsenceBody(), employee_id: unknownEmployeeId },
+      }),
+    {
+      statusNotClass: 2,
+      check: isForeignKeyViolation("absences_employee_id_fkey"),
+      describe: "an error with the code 23503 naming absences_employee_id_fkey",
+    },
+  ],
+  // The session has no grant on the status, so the check of the status can only be reached with the service-role key.
+  [
+    "service role: absences insert with a status that is not on the list is rejected",
+    () => absencesTable("POST", { key: SUPABASE_SERVICE_ROLE_KEY, body: { ...crudAbsenceBody(), status: "pending" } }),
+    {
+      statusNotClass: 2,
+      check: isCheckViolation("absences_status_valid"),
+      describe: "an error with the code 23514 naming absences_status_valid",
+    },
+  ],
+  // The other side of the date bounds: the earliest and the latest day are allowed, so the constraint is not one day too
+  // narrow at either end. The absence is removed again at once, with the planner's delete.
+  plannerInsertsAbsences(
+    "from 2020-01-01 to 2099-12-31 is accepted",
+    () => [boundaryAbsenceBody()],
+    ([id]) => {
+      boundaryAbsenceId = id;
+    },
+    "the absence that spans the whole range the table allows",
+  ),
+  [
+    `${planner.label}: absences delete removes the absence of the widest range`,
+    async () =>
+      absencesTable("DELETE", {
+        token: await accessToken(planner),
+        query: `?id=eq.${boundaryAbsenceId}`,
+        prefer: asksForChangedRows,
+      }),
+    {
+      status: 200,
+      check: isAbsencesLike(() => [boundaryAbsenceBody()]),
+      describe: "exactly the absence that was removed",
+    },
+  ],
+  plannerReadsAbsences(
+    "is unchanged after the rejected inserts",
+    changedAbsences,
+    "the four absences, unchanged, with nothing left by the rejected inserts",
+  ),
+  ...notPlannerAbsenceSteps(employee, () => ownEmployeeId),
+  ...notPlannerAbsenceSteps(noRole, () => noRoleEmployeeId),
+  ...anonymousAbsenceSteps,
+  // The planner removes the changed absence: the delete names one row, and its three neighbours stay. A second delete of the
+  // same row finds nothing and answers without an error (the route of S-07 treats it the same way).
+  [
+    `${planner.label}: absences delete removes the absence`,
+    async () =>
+      absencesTable("DELETE", {
+        token: await accessToken(planner),
+        query: `?id=eq.${crudAbsenceId}`,
+        prefer: asksForChangedRows,
+      }),
+    {
+      status: 200,
+      check: isAbsences(() => [changedCrudAbsence()]),
+      describe: "exactly the absence that was removed",
+    },
+  ],
+  [
+    `${planner.label}: absences delete of the same absence again removes no row`,
+    async () =>
+      absencesTable("DELETE", {
+        token: await accessToken(planner),
+        query: `?id=eq.${crudAbsenceId}`,
+        prefer: asksForChangedRows,
+      }),
+    { status: 200, check: isEmptyList, describe: "an empty list: there is nothing left to remove" },
+  ],
+  plannerReadsAbsences(
+    "shows the three others after the delete",
+    remainingAbsences,
+    "the three absences that were not deleted",
+  ),
+  // The cascade: an absence goes with its employee. The employee here is in no schedule, so the service role may delete it.
+  [
+    `${planner.label}: employees insert returns the employee of the cascade steps`,
+    async () => {
+      const result = await employeesTable("POST", {
+        token: await accessToken(planner),
+        body: absenceCascadeEmployee,
+        prefer: "return=representation",
+      });
+      absenceCascadeEmployeeId = parseJson(result.body)?.[0]?.id;
+      return result;
+    },
+    { status: 201, check: isInsertedEmployee(absenceCascadeEmployee), describe: "the inserted employee, echoed back" },
+  ],
+  serviceRoleInsertsAbsences(
+    "writes a rejected and an approved absence for that employee",
+    cascadeAbsenceBodies,
+    (ids) => {
+      cascadeAbsenceIds = ids;
+    },
+    "the two absences of the employee of the cascade steps, with the statuses rejected and approved",
+  ),
+  [
+    `${planner.label}: absences read shows the rejected and the approved absence of that employee`,
+    async () =>
+      absencesTable("GET", {
+        token: await accessToken(planner),
+        query: `?employee_id=eq.${absenceCascadeEmployeeId}`,
+      }),
+    {
+      status: 200,
+      check: isAbsencesLike(cascadeAbsenceBodies),
+      describe: "exactly the two absences of that employee, the rejected one among them",
+    },
+  ],
+  [
+    "service role: employees delete removes the employee of the cascade steps",
+    () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: `?id=eq.${absenceCascadeEmployeeId}` }),
+    { statusClass: 2 },
+  ],
+  [
+    "service role: absences read finds no absence of the deleted employee",
+    () => absencesTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: `?id=in.(${cascadeAbsenceIds.join(",")})` }),
+    { status: 200, check: isEmptyList, describe: "an empty list: the cascade removed both absences" },
+  ],
+  plannerReadsAbsences(
+    "keeps the absences of the other people after the cascade",
+    remainingAbsences,
+    "the three absences of the other people, untouched",
+  ),
+
   // Assignments: a planner puts people on the cells of a schedule, and the database keeps the rules of the table. The cell
   // and the person must belong to the schedule (composite foreign keys), the source is manual or generated, an entry is
   // never updated, and nobody but a planner sees or changes one. A save of the schedule changes only the difference: it
@@ -5607,7 +6154,8 @@ const steps = [
   // API, so only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they
   // were before. The schedules go first: their foreign keys to shifts and employees are on delete restrict, and deleting
   // a schedule cascades to its cells, people and assignments. The accounts go next: a row linked to one only loses its
-  // user_id, and the employee steps after them delete it. The shifts go last, once no schedule refers to them.
+  // user_id, and the employee steps after them delete it. The absences have no name to match, so they go with their
+  // employees (on delete cascade). The shifts go last, once no schedule refers to them.
   [
     "service role: delete the smoke schedules",
     () => schedulesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?label=like.Smoke-*" }),
@@ -5625,6 +6173,13 @@ const steps = [
     "service role: delete the smoke employees",
     () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
     { statusClass: 2 },
+  ],
+  // Three absences of the run still existed until the employees went (the others were removed by the steps themselves and
+  // are asked for as well, which does no harm), so only the cascade can have removed those.
+  [
+    "service role: no absence of the smoke employees is left",
+    () => absencesTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: `?id=in.(${absenceIdsOfTheRun().join(",")})` }),
+    { status: 200, check: isEmptyList, describe: "an empty list: the cascade removed every absence of the run" },
   ],
   // An employee without an e-mail has no address to match the step above, so it goes by its last name.
   [
