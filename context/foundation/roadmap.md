@@ -47,7 +47,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | done |
 | S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | done |
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | done |
-| S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | in-progress |
+| S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | done |
 | S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | done |
 | S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | proposed |
 | S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | proposed |
@@ -177,7 +177,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   - Jak liczyć dobę przy zmianach przechodzących przez północ (dokument zaleca potwierdzenie na przykładach testowych)? — rozstrzygnięte 2026-11-25 w planowaniu: doba to okno 24 godzin od rozpoczęcia pracy (art. 128 § 3), tydzień odpoczynku to siedem dni grafiku, przejście na inną zmianę to inna godzina rozpoczęcia, ocena tylko w obrębie jednego grafiku; limit godzin zależny od etatu jest ostrzeżeniem względem normy tygodniowej, nie krytycznym naruszeniem (norma z art. 130 jest miesięczną średnią), zob. `context/changes/live-rule-violations/plan.md`. — Owner: user. Block: no.
   - Czy reguły i ich waga (krytyczne czy ostrzeżenie) odpowiadają potrzebom prawdziwego planisty (rozmowa z osobą, która układała taki grafik)? — Owner: user. Block: no.
 - **Risk:** To rdzeń hipotezy produktu i największe ryzyko poprawności: błędna interpretacja progu po cichu daje fałszywe poczucie zgodności z prawem (PRD: narzędzie ostrzega, nie gwarantuje), więc wejdzie wcześnie, z testami powtarzalności z F-02 i przypadkami z `work-time-rules.md`. Zmiany dłuższe niż 8 godzin (system równoważny) są poza MVP i mają dawać czytelny komunikat, nie fałszywą zgodność.
-- **Status:** in-progress
+- **Status:** done
 
 ### S-06: Obciążenie względem normy
 
@@ -369,3 +369,4 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **S-04: Planista może ręcznie przypisywać pracowników do zmian w grafiku roboczym i poprawiać te wpisy.** — Archived 2026-11-25 → `context/archive/2026-11-24-manual-shift-assignment/`. Lesson: —.
 - **S-03: Planista może utworzyć grafik tygodniowy: wybrać okres (tydzień od daty początkowej), zmiany i pracowników oraz określić wymaganą liczbę osób na zmianę w każdym dniu, a potem znaleźć grafik na liście i edytować szkic.** — Archived 2026-11-26 → `context/archive/2026-11-05-weekly-schedule-draft/`. Lesson: —.
 - **S-06: Planista może zobaczyć w grafiku sumę godzin każdego pracownika względem normy wynikającej z jego wymiaru czasu pracy.** — Archived 2026-11-26 → `context/archive/2026-11-25-workload-vs-norm/`. Lesson: —.
+- **S-05: Planista może zobaczyć podczas układania krytyczne naruszenia (odpoczynek dobowy, odpoczynek tygodniowy, limit 8 godzin na dobę, pułap 48 godzin w tygodniu) oraz ostrzeżenia o przekroczeniu normy tygodniowej etatu i o brakach obsady, każde z czytelnym powodem i miejscem w grafiku.** — Archived 2026-11-26 → `context/archive/2026-11-25-live-rule-violations/`. Lesson: —.

@@ -1,10 +1,10 @@
 ---
 change_id: live-rule-violations
 title: Live rule violations
-status: impl_reviewed
+status: archived
 created: 2026-11-25
 updated: 2026-11-26
-archived_at: null
+archived_at: 2026-11-26T13:02:41Z
 ---
 
 ## Notes
