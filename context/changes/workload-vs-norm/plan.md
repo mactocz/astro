@@ -210,7 +210,7 @@ S-06 zależy od Fazy 1 planu S-05 (`live-rule-violations`): minuty zmian i etat 
 
 - [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — a232459
 - [x] 2.2 Smoke z istniejącymi i nowymi krokami stron przechodzi lokalnie: `npm run smoke` — a232459
-- [ ] 2.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
+- [x] 2.3 CI na pull requeście jest zielone (job `ci` i job `smoke`) — 4646c7e
 
 #### Manual
 
