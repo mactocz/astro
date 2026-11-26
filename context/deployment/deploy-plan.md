@@ -139,6 +139,20 @@ Pomiar z 2026-10-14 (17 do 28 ms, wynik `ok`) nie wywołał błędu, ale to pró
 Proponowany wyzwalacz powrotu do Paid: pierwszy wynik inny niż `ok` w `wrangler tail` (np. `exceededCpu`) albo błąd
 1102 w odpowiedzi. Pomiar powtórzyć po dodaniu pierwszej strony z grafikiem lub walidatora reguł.
 
+### Czas CPU strony obsadzania po S-05 (2026-11-26)
+
+Na produkcję wdrożono `master` (`80ff402`: poprawki przeglądu S-03, S-05 i S-06) po `npx supabase db push` migracji
+`20261125120000_schedule_summaries.sql`. Strona `/schedules/<id>/assign` renderuje wyspę po stronie serwera
+(`client:load`), więc reguły z `rules.ts` i sumy godzin liczą się w Workerze przy każdym załadowaniu strony.
+
+Pomiar z panelu Cloudflare (Workers & Pages, `shiftly`, Metrics): mediana (p50) czasu CPU **4,8 ms**. Nie zmierzono
+p99 ani pierwszego żądania w nowym izolacie (na stronach logowania było tam 17 do 28 ms przy wyniku `ok`), a rozmiar
+grafiku użytego w pomiarze nie został zapisany.
+
+Decyzja: mediana mieści się w limicie Workers Free (10 ms) z zapasem, więc architektura zostaje bez zmian. Wyzwalacz
+powrotu do Paid jak wyżej (pierwszy wynik inny niż `ok`, np. `exceededCpu`, albo błąd 1102). Pomiar p99 powtórzyć przy
+S-09 (generator), który doda obliczenia na tej samej ścieżce; jeśli wartości zbliżą się do 10 ms, przenieść
+obliczenia reguł z renderu serwerowego (`client:only`) osobną zmianą.
 ### Ustalenia poza planem
 
 - **Istnieje starszy Worker `10x-astro-starter`** (wdrożony 2026-09-01, 5 wersji, w tym 2 zmiany sekretów),

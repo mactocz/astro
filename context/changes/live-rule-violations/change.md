@@ -1,9 +1,9 @@
 ---
 change_id: live-rule-violations
 title: Live rule violations
-status: implementing
+status: implemented
 created: 2026-11-25
-updated: 2026-11-25
+updated: 2026-11-26
 archived_at: null
 ---
 

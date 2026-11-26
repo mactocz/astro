@@ -216,4 +216,4 @@ S-06 zależy od Fazy 1 planu S-05 (`live-rule-violations`): minuty zmian i etat 
 
 - [x] 2.4 W przeglądarce na desktopie: kliknięcie przypisujące zmianę zmienia sumę i różnicę w wierszu osoby od razu, wycofanie przy błędzie przywraca poprzednie liczby, kolumna jest czytelna i neutralna (bez progów i kolorów jako nośnika), akapit pod siatką jest zrozumiały, a obsługa klawiaturą i czytnik nie mają nowych pułapek — a232459
 - [x] 2.5 Na telefonie (lub emulacji): strona się ładuje, kolumna jest czytelna, tabela przewija się poziomo bez rozjeżdżania strony — a232459
-- [ ] 2.6 Po wdrożeniu (`npm run build` i `npx wrangler deploy`, bez migracji) kolumna "Godziny" pokazuje poprawne liczby na produkcji; nie uruchamiać `npm run smoke` na produkcji
+- [x] 2.6 Po wdrożeniu (`npm run build` i `npx wrangler deploy`, bez migracji) kolumna "Godziny" pokazuje poprawne liczby na produkcji; nie uruchamiać `npm run smoke` na produkcji — 80ff402

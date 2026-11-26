@@ -1,9 +1,9 @@
 ---
 change_id: workload-vs-norm
 title: Workload vs norm
-status: implementing
+status: implemented
 created: 2026-11-25
-updated: 2026-11-25
+updated: 2026-11-26
 archived_at: null
 ---
 

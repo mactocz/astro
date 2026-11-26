@@ -400,5 +400,5 @@ Równolegle jest planowany S-06 (`workload-vs-norm`, plan w `context/changes/wor
 
 #### Manual
 
-- [ ] 5.4 Po wdrożeniu (`npm run build` i `npx wrangler deploy`, bez migracji) wskazania pojawiają się i znikają na produkcji; nie uruchamiać `npm run smoke` na produkcji
-- [ ] 5.5 Pomiar CPU renderu strony obsadzania po wdrożeniu mieści się w limicie 10 ms na żądanie (albo wynik jest zapisany w `deploy-plan.md` razem z decyzją)
+- [x] 5.4 Po wdrożeniu (`npm run build` i `npx wrangler deploy`, bez migracji) wskazania pojawiają się i znikają na produkcji; nie uruchamiać `npm run smoke` na produkcji — 80ff402
+- [x] 5.5 Pomiar CPU renderu strony obsadzania po wdrożeniu mieści się w limicie 10 ms na żądanie (albo wynik jest zapisany w `deploy-plan.md` razem z decyzją) — 80ff402
