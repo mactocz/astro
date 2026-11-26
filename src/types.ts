@@ -178,6 +178,18 @@ export interface EmployeeOption {
   fte: Fte;
 }
 
+/**
+ * The hours of one employee in one schedule against the weekly norm of their FTE, in whole minutes. `normMinutes` is the
+ * norm rounded to the minute and `differenceMinutes` is `workedMinutes - normMinutes`, so it is negative below the norm.
+ * There is no status or threshold: the warning for exceeding the norm is the work-time rule, not this row.
+ */
+export interface WorkloadRow {
+  employeeId: string;
+  workedMinutes: number;
+  normMinutes: number;
+  differenceMinutes: number;
+}
+
 /** The state of the Auth account behind an employee: no account, one that never confirmed its invitation, or an active one. */
 export type InviteAccountState = "none" | "pending" | "active";
 
