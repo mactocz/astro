@@ -1,0 +1,116 @@
+---
+import PlannerLayout from "@/layouts/PlannerLayout.astro";
+import { listAbsences } from "@/lib/absences";
+import { listEmployees } from "@/lib/employees";
+import { toEmployeeOptions } from "@/lib/schedule-options";
+import { absenceTypeLabel, formatAbsenceRange } from "@/lib/services/absence";
+import type { Absence, AbsenceStatus } from "@/types";
+
+const { supabase } = Astro.locals;
+if (!supabase) {
+  // The access gate lets nobody through without a configured client, so this is a misconfiguration.
+  throw new Error("The Supabase client is missing; check SUPABASE_URL and SUPABASE_KEY.");
+}
+
+// listAbsences answers in the order of sortAbsences: the latest start first.
+const [absences, employees] = await Promise.all([listAbsences(supabase), listEmployees(supabase)]);
+
+// The people by name only ("Last name First name"): the list never shows an e-mail address. An absence always has its person
+// in the roster (the foreign key), so the placeholder is for a row that this session cannot match to one.
+const UNKNOWN_PERSON = "Nieznany pracownik";
+const names = new Map(toEmployeeOptions(employees).map(({ id, name }) => [id, name]));
+const personOf = (absence: Absence) => names.get(absence.employeeId) ?? UNKNOWN_PERSON;
+
+// The status as words: it is never carried by a colour alone.
+const STATUS_LABELS: Record<AbsenceStatus, string> = {
+  approved: "Zatwierdzona",
+  requested: "Wnioskowana",
+  rejected: "Odrzucona",
+};
+
+// The names of employees and the kinds of their absences (an L4 is health data): no cache may keep this page.
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<PlannerLayout title="Nieobecności">
+  <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
+    <h1 class="bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+      Nieobecności ({absences.length})
+    </h1>
+    <a
+      href="/absences/new"
+      class="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-500"
+    >
+      Dodaj nieobecność
+    </a>
+  </div>
+
+  {absences.length === 0 ? (
+    <p class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center text-blue-100/80 backdrop-blur-xl">
+      Nie wpisano jeszcze żadnej nieobecności.
+    </p>
+  ) : (
+    <>
+      <div class="hidden overflow-hidden rounded-2xl border border-white/10 bg-white/10 backdrop-blur-xl md:block">
+        <table class="w-full text-left text-sm">
+          <thead class="border-b border-white/10 text-blue-100/60">
+            <tr>
+              <th scope="col" class="px-4 py-3 font-medium">
+                Pracownik
+              </th>
+              <th scope="col" class="px-4 py-3 font-medium">
+                Rodzaj
+              </th>
+              <th scope="col" class="px-4 py-3 font-medium">
+                Dni
+              </th>
+              <th scope="col" class="px-4 py-3 font-medium">
+                Status
+              </th>
+              <th scope="col" class="px-4 py-3">
+                <span class="sr-only">Akcje</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-white/10">
+            {absences.map((absence) => (
+              <tr data-absence-id={absence.id}>
+                <td class="px-4 py-3 font-semibold break-words text-white">{personOf(absence)}</td>
+                <td class="px-4 py-3 text-blue-100/80">{absenceTypeLabel(absence.type)}</td>
+                <td class="px-4 py-3 whitespace-nowrap text-blue-100/80">{formatAbsenceRange(absence)}</td>
+                <td class="px-4 py-3 whitespace-nowrap text-blue-100/80">{STATUS_LABELS[absence.status]}</td>
+                <td class="px-4 py-3 text-right">
+                  <a
+                    href={`/absences/${absence.id}`}
+                    aria-label={`Edytuj: ${personOf(absence)}, ${absenceTypeLabel(absence.type)}, ${formatAbsenceRange(absence)}`}
+                    class="text-purple-300 transition-colors hover:text-purple-100 hover:underline"
+                  >
+                    Edytuj
+                  </a>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <ul class="space-y-3 md:hidden">
+        {absences.map((absence) => (
+          <li data-absence-id={absence.id} class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-xl">
+            <p class="font-semibold break-words text-white">{personOf(absence)}</p>
+            <p class="mt-1 text-sm text-blue-100/80">{absenceTypeLabel(absence.type)}</p>
+            <p class="mt-1 text-sm text-blue-100/80">{formatAbsenceRange(absence)}</p>
+            <p class="mt-1 text-sm text-blue-100/80">Status: {STATUS_LABELS[absence.status]}</p>
+            <a
+              href={`/absences/${absence.id}`}
+              aria-label={`Edytuj: ${personOf(absence)}, ${absenceTypeLabel(absence.type)}, ${formatAbsenceRange(absence)}`}
+              class="mt-3 inline-block py-1 text-sm text-purple-300 transition-colors hover:text-purple-100 hover:underline"
+            >
+              Edytuj
+            </a>
+          </li>
+        ))}
+      </ul>
+    </>
+  )}
+</PlannerLayout>

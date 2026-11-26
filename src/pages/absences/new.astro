@@ -1,0 +1,39 @@
+---
+import PlannerLayout from "@/layouts/PlannerLayout.astro";
+import AbsenceForm from "@/components/absences/AbsenceForm";
+import { listEmployees } from "@/lib/employees";
+import { toEmployeeOptions } from "@/lib/schedule-options";
+
+const { supabase } = Astro.locals;
+if (!supabase) {
+  // The access gate lets nobody through without a configured client, so this is a misconfiguration.
+  throw new Error("The Supabase client is missing; check SUPABASE_URL and SUPABASE_KEY.");
+}
+
+// The island gets the names and ids only (toEmployeeOptions), never an e-mail address.
+const employeeOptions = toEmployeeOptions(await listEmployees(supabase));
+
+// The form lists the names of the employees: no cache may keep this page.
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<PlannerLayout title="Dodaj nieobecność">
+  {employeeOptions.length > 0 ? (
+    <div class="mx-auto w-full max-w-lg rounded-2xl border border-white/10 bg-white/10 p-6 backdrop-blur-xl sm:p-8">
+      <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-2xl font-bold text-transparent">
+        Dodaj nieobecność
+      </h1>
+      <AbsenceForm employees={employeeOptions} client:load />
+    </div>
+  ) : (
+    <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
+      <h1 class="mb-4 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+        Dodaj nieobecność
+      </h1>
+      <p class="text-blue-100/80">Żeby wpisać nieobecność, potrzebujesz co najmniej jednego pracownika.</p>
+      <a href="/employees/new" class="mt-4 inline-block text-purple-300 hover:underline">
+        Dodaj pracownika
+      </a>
+    </div>
+  )}
+</PlannerLayout>

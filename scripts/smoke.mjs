@@ -7,7 +7,9 @@
 // assignments of what stays and refuses to drop those of a removed cell or person without a confirmation), that an
 // assignment keeps to its foreign keys and constraints and only a planner reads and changes it, that an absence keeps to
 // its constraints and column grants (no session writes its status, or the person of a row it changes), only a planner
-// reads and changes it and it goes with its employee, that the function mark_account_active records the activation of the
+// reads and changes it and it goes with its employee, that the absence API routes and pages open for the planner only (the
+// routes keep to the validation and their status codes, a removal is idempotent, and the list and the forms show what the
+// database holds, with no e-mail address), that the function mark_account_active records the activation of the
 // caller's own row only (an account without a role, an anonymous caller and another employee change nothing, the first
 // activation stays), that the employee, shift and schedule API
 // routes keep to the role gate, the validation and their status codes (the routes that add and remove one assignment of
@@ -1339,6 +1341,13 @@ let crudAbsenceId;
 let boundaryAbsenceId;
 let absenceCascadeEmployeeId;
 let cascadeAbsenceIds = [];
+// The rows of the route and page steps (see the block before the steps): the absence the planner creates, corrects and
+// removes through the app, its neighbour made through the app, and the two rows with a status that only the service role may
+// write. They are on the second API employee, who is outside `absenceScope`.
+let apiAbsenceId;
+let neighbourAbsenceId;
+let requestedApiAbsenceId;
+let rejectedApiAbsenceId;
 
 // What a session sends to insert an absence: the four columns it has a grant on, and nothing else. A status is what only the
 // service role may write.
@@ -1418,11 +1427,21 @@ const cascadeAbsenceBodies = () => [
     end_date: "2090-05-11",
   },
 ];
-// The id of every absence of this run, for the check after the final cleanup.
+// The id of every absence of this run, for the check after the final cleanup. The neighbour and the two rows with a status of
+// the route and page steps are still there until the employees go, so the cascade is what removes them.
 const absenceIdsOfTheRun = () =>
-  [ownAbsenceId, noRoleAbsenceId, requestedAbsenceId, crudAbsenceId, boundaryAbsenceId, ...cascadeAbsenceIds].filter(
-    isUuidText,
-  );
+  [
+    ownAbsenceId,
+    noRoleAbsenceId,
+    requestedAbsenceId,
+    crudAbsenceId,
+    boundaryAbsenceId,
+    ...cascadeAbsenceIds,
+    apiAbsenceId,
+    neighbourAbsenceId,
+    requestedApiAbsenceId,
+    rejectedApiAbsenceId,
+  ].filter(isUuidText);
 
 // A row of the table has exactly these seven columns: there is no text column, an L4 is health data.
 const ABSENCE_COLUMNS = ["created_at", "employee_id", "end_date", "id", "start_date", "status", "type"];
@@ -3371,6 +3390,711 @@ const plannerPageHidesEmails = (pattern, path) =>
     { status: 200, bodyIncludes: personName(person), bodyExcludes: person.email.toLowerCase() },
   ]);
 
+// The routes and pages of the absences (S-07), as the planner and the other roles meet them. The rows are all in 2090, where
+// no schedule of any run reaches, and they hang on the second API employee, who is outside the scope of the database steps
+// (`absenceScope`), so a row that a failed step leaves here cannot disturb those steps. A is the absence the planner
+// creates, corrects and removes through the app. Its neighbours are N, made through the app (with a status, an id and a
+// note in the body, none of which is stored), and R (requested) and J (rejected), written by the service role, because no
+// session may write a status. Every step that changes A is followed by a read of the whole set of that person in the
+// database and by a page that shows it, so a write that touches a neighbour shows. N, R and J stay until the final
+// cleanup removes them with their employee (on delete cascade), and the last step of the run proves that none is left.
+const unknownAbsenceId = "00000000-0000-4000-8000-000000000000";
+const unknownAbsenceUrl = `/api/absences/${unknownAbsenceId}`;
+const apiAbsenceUrl = () => `/api/absences/${apiAbsenceId}`;
+
+// A in the three states it passes through, as the routes take and answer them, and the days of N.
+const absenceStates = {
+  created: { type: "vacation", startDate: "2090-06-01", endDate: "2090-06-05" },
+  changed: { type: "sick_leave", startDate: "2090-06-02", endDate: "2090-06-03" },
+  moved: { type: "other", startDate: "2090-06-08", endDate: "2090-06-12" },
+};
+const neighbourState = { type: "other", startDate: "2090-07-13", endDate: "2090-07-13" };
+const absenceInput = (state) => ({ employeeId: secondApiEmployeeId, ...state });
+// The same as a row of the table, for the writes of the service role and for `isAbsences`.
+const absenceBody = (state) => ({
+  employee_id: secondApiEmployeeId,
+  type: state.type,
+  start_date: state.startDate,
+  end_date: state.endDate,
+});
+const requestedApiAbsenceBody = () => ({
+  ...absenceBody({ type: "sick_leave", startDate: "2090-08-03", endDate: "2090-08-07" }),
+  status: "requested",
+});
+const rejectedApiAbsenceBody = () => ({
+  ...absenceBody({ type: "vacation", startDate: "2090-09-07", endDate: "2090-09-09" }),
+  status: "rejected",
+});
+
+// Every absence of the second API employee as the table must hold it while A is in `state` (null: A is removed). A function
+// of a function, because the ids in the rows are only known once the create steps have run.
+const apiAbsenceRows = (state) => () => [
+  ...(state === null ? [] : [storedAbsence(apiAbsenceId, absenceBody(state))]),
+  storedAbsence(neighbourAbsenceId, absenceBody(neighbourState)),
+  storedAbsence(requestedApiAbsenceId, requestedApiAbsenceBody()),
+  storedAbsence(rejectedApiAbsenceId, rejectedApiAbsenceBody()),
+];
+const plannerReadsApiAbsences = (name, state, describe) => [
+  `${planner.label}: absences read ${name}`,
+  async () =>
+    absencesTable("GET", { token: await accessToken(planner), query: `?employee_id=eq.${secondApiEmployeeId}` }),
+  {
+    status: 200,
+    check: isAbsences(apiAbsenceRows(state)),
+    describe: `exactly ${describe}, each with the seven columns of the table`,
+  },
+];
+
+// The answer of the create and update routes: { absence } with exactly these seven fields, on the second API employee, always
+// approved, in `state` and with the id of the row (a function, because the id is only known once the create step has run).
+const ABSENCE_JSON_KEYS = ["createdAt", "employeeId", "endDate", "id", "startDate", "status", "type"];
+const isApiAbsence = (state, id) => (body) =>
+  sameItems(Object.keys(body), ["absence"]) &&
+  sameItems(Object.keys(body.absence), ABSENCE_JSON_KEYS) &&
+  isUuidText(body.absence.id) &&
+  body.absence.id === id() &&
+  typeof body.absence.createdAt === "string" &&
+  body.absence.employeeId === secondApiEmployeeId &&
+  body.absence.status === "approved" &&
+  body.absence.type === state.type &&
+  body.absence.startDate === state.startDate &&
+  body.absence.endDate === state.endDate;
+const answersAbsence = (state, id, describe) => ({
+  check: isApiAbsence(state, id),
+  describe: `{ absence } with the seven fields: ${describe}`,
+});
+
+// The 422 body names exactly the fields of `expected`, each with exactly its message, and nothing else. The messages are
+// written out here, so a validator that answers with another cause for a field does not pass.
+const absenceRangeText = "od 2020-01-01 do 2099-12-31";
+const absenceMessages = {
+  employeeId: "Wybierz pracownika.",
+  type: "Wybierz rodzaj nieobecności: urlop, zwolnienie lekarskie (L4) albo inną nieobecność.",
+  startDate: `Podaj poprawną datę początku nieobecności (RRRR-MM-DD, ${absenceRangeText}).`,
+  endDate: `Podaj poprawną datę końca nieobecności (RRRR-MM-DD, ${absenceRangeText}).`,
+  endDateBeforeStart: "Data końca nie może być wcześniejsza niż data początku.",
+};
+const hasAbsenceErrors = (expected) => (body) =>
+  sameItems(Object.keys(body), ["errors"]) &&
+  sameItems(Object.keys(body.errors), Object.keys(expected)) &&
+  Object.entries(expected).every(([field, message]) => body.errors[field] === message);
+const refusesAbsence = (expected) => ({
+  status: 422,
+  check: hasAbsenceErrors(expected),
+  describe: `errors for exactly the fields ${Object.keys(expected).join(", ")}, each with its message`,
+});
+const isOnlyError = (error) => (body) => body.error === error && Object.keys(body).length === 1;
+const unknownEmployeeRefused = {
+  status: 422,
+  check: isOnlyError("unknown_reference"),
+  describe: "the error unknown_reference and nothing else",
+};
+const notFoundRefused = {
+  status: 404,
+  check: isOnlyError("not_found"),
+  describe: "the error not_found and nothing else",
+};
+
+// What the actors without planner rights send: a well-formed body for a person that does not exist, so that nothing could be
+// stored even if the gate let it through (the route would answer 422 instead of 401 or 403; a DELETE would answer 200).
+const deniedAbsence = {
+  employeeId: unknownEmployeeId,
+  type: "vacation",
+  startDate: "2090-06-01",
+  endDate: "2090-06-02",
+};
+const deniedAbsenceCalls = (actor, status, reason) =>
+  [
+    ["POST", "/api/absences", { json: deniedAbsence }],
+    ["PUT", unknownAbsenceUrl, { json: deniedAbsence }],
+    ["DELETE", unknownAbsenceUrl, {}],
+  ].map(([method, path, options]) => [
+    `${actor.label}: ${method} ${path === unknownAbsenceUrl ? "/api/absences/<id>" : path}`,
+    () => request(actor, path, { method, ...options }),
+    {
+      status,
+      contentType: "application/json",
+      cacheControl: "no-store",
+      check: isError(reason),
+      describe: `the error ${reason}`,
+    },
+  ]);
+// The pages are turned away with the page of the denial, which says why (the sign-in prompt for the anonymous visitor, the
+// role for a signed-in one) and carries nothing of the page asked for (the planner layout has "Panel planisty").
+const deniedAbsencePages = (actor, status, cause) =>
+  ["/absences", "/absences/new", `/absences/${unknownAbsenceId}`].map((path) => [
+    `${actor.label}: GET ${path.replace(unknownAbsenceId, "<id>")} is turned away`,
+    () => request(actor, path),
+    { status, bodyIncludes: cause, bodyExcludes: "Panel planisty" },
+  ]);
+
+// Calls of the planner. `options` returns the `json`, `form` or `jsonText` option of the request, because the ids in it are
+// only known once earlier steps have run.
+const plannerCreatesAbsence = (name, options, remember, expected) => [
+  `${planner.label}: POST /api/absences ${name}`,
+  async () => {
+    const result = await request(planner, "/api/absences", { method: "POST", ...options() });
+    remember(parseJson(result.body)?.absence?.id);
+    return result;
+  },
+  { status: 201, contentType: "application/json", cacheControl: "no-store", ...expected },
+];
+const plannerPostsAbsence = (name, options, expected) => [
+  `${planner.label}: POST /api/absences ${name}`,
+  () => request(planner, "/api/absences", { method: "POST", ...options() }),
+  { contentType: "application/json", cacheControl: "no-store", ...expected },
+];
+const plannerPutsAbsence = (name, path, options, expected) => [
+  `${planner.label}: PUT ${name}`,
+  () => request(planner, path(), { method: "PUT", ...options() }),
+  { contentType: "application/json", cacheControl: "no-store", ...expected },
+];
+const plannerDeletesAbsence = (name, path, expected) => [
+  `${planner.label}: DELETE ${name}`,
+  () => request(planner, path(), { method: "DELETE" }),
+  { contentType: "application/json", cacheControl: "no-store", ...expected },
+];
+
+// The pages. The HTML is read as text, as the pages of the other lists and forms are: the islands are rendered on the server,
+// so the fields of the form are in the page before any script runs. An absence stands in the list twice, as a table row and
+// as a card of the narrow layout, and both carry its id.
+const sameList = (actual, expected) => JSON.stringify(actual) === JSON.stringify(expected);
+const absencePersonName = personName(secondApiEmployee);
+const EMPTY_ABSENCE_LIST = "Nie wpisano jeszcze żadnej nieobecności.";
+const absenceListItems = (html, id) =>
+  [...html.matchAll(new RegExp(`<(tr|li)\\b[^>]*\\bdata-absence-id="${id}"[^>]*>[\\s\\S]*?</\\1>`, "g"))].map(
+    (match) => match[0],
+  );
+const listedRowIds = (html) => [...html.matchAll(/<tr\b[^>]*\bdata-absence-id="([^"]+)"/g)].map((match) => match[1]);
+
+// What the list says of each row: the person, the type, the days (an en dash between the two days, the year once at the end),
+// and the status as words. A is listed in its three states; R and J carry the statuses that only the service role writes.
+const absenceTypeLabels = { vacation: "Urlop", sick_leave: "Zwolnienie lekarskie (L4)", other: "Inna nieobecność" };
+const absenceDays = {
+  created: `01.06${EN_DASH}05.06.2090`,
+  changed: `02.06${EN_DASH}03.06.2090`,
+  moved: `08.06${EN_DASH}12.06.2090`,
+};
+const listedA = (stateName) => ({
+  id: () => apiAbsenceId,
+  type: absenceTypeLabels[absenceStates[stateName].type],
+  days: absenceDays[stateName],
+  status: "Zatwierdzona",
+});
+const listedNeighbour = {
+  id: () => neighbourAbsenceId,
+  type: absenceTypeLabels.other,
+  days: "13.07.2090",
+  status: "Zatwierdzona",
+};
+const listedRequested = {
+  id: () => requestedApiAbsenceId,
+  type: absenceTypeLabels.sick_leave,
+  days: `03.08${EN_DASH}07.08.2090`,
+  status: "Wnioskowana",
+};
+const listedRejected = {
+  id: () => rejectedApiAbsenceId,
+  type: absenceTypeLabels.vacation,
+  days: `07.09${EN_DASH}09.09.2090`,
+  status: "Odrzucona",
+};
+const showsListedAbsence = (listed) => (html) => {
+  const items = absenceListItems(html, listed.id());
+  const row = items.find((item) => item.startsWith("<tr"));
+  const card = items.find((item) => item.startsWith("<li"));
+  const edit = [
+    {
+      href: `/absences/${listed.id()}`,
+      label: `Edytuj: ${absencePersonName}, ${listed.type}, ${listed.days}`,
+      text: "Edytuj",
+    },
+  ];
+  return (
+    items.length === 2 &&
+    row !== undefined &&
+    card !== undefined &&
+    sameList(cellsOf(row), [absencePersonName, listed.type, listed.days, listed.status, "Edytuj"]) &&
+    sameList(textsOf(card, "p"), [absencePersonName, listed.type, listed.days, `Status: ${listed.status}`]) &&
+    sameList(linksOf(row), edit) &&
+    sameList(linksOf(card), edit)
+  );
+};
+const listedExcerpt = (listed) => (html) => absenceListItems(html, listed.id()).join("\n") || "(no item with this id)";
+
+// The rows of the list, newest start first (the order of `sortAbsences`), as far as `ids` (a function that lists them in that
+// order) names them: the database returns them in the order they were written, which is the opposite one.
+const listsInStartOrder = (ids) => (html) =>
+  sameList(
+    listedRowIds(html).filter((id) => ids().includes(id)),
+    ids(),
+  );
+// The frame of the list: the heading counts the rows that the table has, the title, the link to the new form, and no message
+// that the list is empty while it has rows.
+const showsAbsenceListFrame = (html) => {
+  const headings = textsOf(html, "h1");
+  const count = /^Nieobecności \((\d+)\)$/.exec(headings[0] ?? "");
+  return (
+    headings.length === 1 &&
+    count !== null &&
+    Number(count[1]) === listedRowIds(html).length &&
+    listedRowIds(html).length > 0 &&
+    textsOf(html, "title")[0] === "Nieobecności" &&
+    linksOf(html).some((link) => link.href === "/absences/new" && link.text === "Dodaj nieobecność") &&
+    !html.includes(EMPTY_ABSENCE_LIST)
+  );
+};
+const hidesAbsenceEmails = (html) =>
+  [apiEmployee, secondApiEmployee].every((person) => !html.includes(person.email.toLowerCase()));
+
+// The lists of a form: the entries of a <select> (the value, the text and whether it is the selected one), or undefined when
+// the page has no <select> with this id.
+const selectOptionsOf = (html, id) => {
+  const select = elementsOf(html, "select").find((element) => attributeOf(tagsOf(element, "select")[0], "id") === id);
+  return select === undefined
+    ? undefined
+    : elementsOf(select, "option").map((option) => {
+        const [tag] = tagsOf(option, "option");
+        return { value: attributeOf(tag, "value"), label: textOf(option), selected: hasAttribute(tag, "selected") };
+      });
+};
+const plainOptions = (options) => options?.map(({ value, label }) => ({ value, label }));
+const absenceTypeOptions = [
+  { value: "", label: "Wybierz rodzaj nieobecności" },
+  ...Object.entries(absenceTypeLabels).map(([value, label]) => ({ value, label })),
+];
+const absenceFormLabels = ["Pracownik", "Rodzaj nieobecności", "Data początku", "Data końca"];
+const absenceRangeHint =
+  "Dozwolone daty: 2020-01-01 do 2099-12-31. Nieobecność obejmuje cały pierwszy i cały ostatni dzień.";
+const hasRangeHint = (html) =>
+  elementsOf(html, "p").some(
+    (element) => attributeOf(tagsOf(element, "p")[0], "id") === "absence-range" && textOf(element) === absenceRangeHint,
+  );
+// A date field: type date with the bounds of the schedule rules, the value it should hold, and the range hint that describes it.
+const isDateField = (html, id, value) => {
+  const tag = inputById(html, id);
+  return (
+    tag !== undefined &&
+    attributeOf(tag, "type") === "date" &&
+    attributeOf(tag, "min") === "2020-01-01" &&
+    attributeOf(tag, "max") === "2099-12-31" &&
+    (attributeOf(tag, "value") ?? "") === value &&
+    (attributeOf(tag, "aria-describedby") ?? "").split(" ").includes("absence-range")
+  );
+};
+const hasCancelLink = (html) => linksOf(html).some((link) => link.href === "/absences" && link.text === "Anuluj");
+const formExcerpt = (html) =>
+  JSON.stringify(
+    {
+      h1: textsOf(html, "h1"),
+      labels: textsOf(html, "label"),
+      person: selectOptionsOf(html, "employeeId") ?? inputById(html, "employeeId"),
+      type: selectOptionsOf(html, "type"),
+      startDate: inputById(html, "startDate"),
+      endDate: inputById(html, "endDate"),
+      buttons: textsOf(html, "button"),
+    },
+    null,
+    1,
+  );
+
+// The form that adds an absence: a list of the people (the two API employees among them, by name and id), a list of the three
+// types, two empty date fields with the range hint, and nothing picked yet.
+const showsNewAbsenceForm = (html) => {
+  const people = selectOptionsOf(html, "employeeId");
+  const types = selectOptionsOf(html, "type");
+  const plainPeople = plainOptions(people);
+  return (
+    sameList(textsOf(html, "h1"), ["Dodaj nieobecność"]) &&
+    textsOf(html, "title")[0] === "Dodaj nieobecność" &&
+    sameList(textsOf(html, "label"), absenceFormLabels) &&
+    inputById(html, "employeeId") === undefined &&
+    plainPeople !== undefined &&
+    sameList(plainPeople.slice(0, 1), [{ value: "", label: "Wybierz pracownika" }]) &&
+    [
+      [apiEmployeeId, apiEmployee],
+      [secondApiEmployeeId, secondApiEmployee],
+    ].every(([id, person]) =>
+      plainPeople.some((option) => option.value === id && option.label === personName(person)),
+    ) &&
+    sameList(plainOptions(types), absenceTypeOptions) &&
+    [...people, ...types].every((option) => !option.selected || option.value === "") &&
+    isDateField(html, "startDate", "") &&
+    isDateField(html, "endDate", "") &&
+    hasRangeHint(html) &&
+    textsOf(html, "button").includes("Zapisz") &&
+    hasCancelLink(html)
+  );
+};
+// The form that corrects A, in the state `stateName`: the person as read-only text (no list), the type selected, the two days,
+// the range hint, the button that saves, the button that starts the removal and not the question that follows it.
+const showsEditAbsenceForm = (stateName) => (html) => {
+  const state = absenceStates[stateName];
+  const person = inputById(html, "employeeId");
+  const types = selectOptionsOf(html, "type");
+  const buttons = textsOf(html, "button");
+  return (
+    sameList(textsOf(html, "h1"), ["Edytuj nieobecność"]) &&
+    textsOf(html, "title")[0] === "Edytuj nieobecność" &&
+    sameList(textsOf(html, "label"), absenceFormLabels) &&
+    person !== undefined &&
+    attributeOf(person, "type") === "text" &&
+    attributeOf(person, "value") === absencePersonName &&
+    hasAttribute(person, "readonly") &&
+    selectOptionsOf(html, "employeeId") === undefined &&
+    sameList(plainOptions(types), absenceTypeOptions) &&
+    sameList(
+      types.filter((option) => option.selected).map((option) => option.value),
+      [state.type],
+    ) &&
+    isDateField(html, "startDate", state.startDate) &&
+    isDateField(html, "endDate", state.endDate) &&
+    hasRangeHint(html) &&
+    buttons.includes("Zapisz") &&
+    buttons.includes("Usuń nieobecność") &&
+    !buttons.includes("Tak, usuń") &&
+    hasCancelLink(html)
+  );
+};
+// Only the person of the absence reaches the page, by name: no e-mail address and nobody else of the roster.
+const showsOnlyItsPerson = (html) => hidesAbsenceEmails(html) && !html.includes(personName(apiEmployee));
+const showsNoAbsence = (html) =>
+  sameList(textsOf(html, "h1"), ["Nie znaleziono nieobecności"]) &&
+  textsOf(html, "title")[0] === "Nie znaleziono nieobecności" &&
+  linksOf(html).some((link) => link.href === "/absences" && link.text === "Wróć do listy nieobecności") &&
+  inputById(html, "startDate") === undefined;
+// The card of the panel: one link to the list, headed "Nieobecności", that does not borrow the words the other three cards
+// are asserted by (so the assertions of those stay meaningful).
+const hasAbsencesCard = (html) => {
+  const cards = elementsOf(html, "a").filter((link) => attributeOf(tagsOf(link, "a")[0], "href") === "/absences");
+  return (
+    cards.length === 1 &&
+    sameList(textsOf(cards[0], "h2"), ["Nieobecności"]) &&
+    !/Pracownicy|Zmiany|Grafiki/.test(textOf(cards[0]))
+  );
+};
+
+// A page of the planner: always sent with `no-store` (the names and the kinds of absences are personal data, an L4 is
+// health data). `path` is a function, because the id in it is only known once the create step has run.
+const visitAbsencePage = (name, path, expected) => [
+  `${planner.label}: GET ${name}`,
+  () => request(planner, path()),
+  { cacheControl: "no-store", ...expected },
+];
+const absenceListPage = (describe, bodyCheck, excerpt) =>
+  visitAbsencePage(`/absences shows ${describe}`, () => "/absences", { status: 200, bodyCheck, describe, excerpt });
+const listsAbsence = (name, listed) =>
+  absenceListPage(
+    `${name} as a table row and as a card: the person, the type, the days, the status as words and the edit link`,
+    showsListedAbsence(listed),
+    listedExcerpt(listed),
+  );
+const absenceEditPage = (describe, stateName, bodyCheck, excerpt = formExcerpt) =>
+  visitAbsencePage(`/absences/<id> shows ${describe}`, () => `/absences/${apiAbsenceId}`, {
+    status: 200,
+    bodyCheck: bodyCheck ?? showsEditAbsenceForm(stateName),
+    describe,
+    excerpt,
+  });
+
+const absenceRouteSteps = [
+  // A and N through the app: the answer holds exactly the seven fields, approved, with an id the database gave (not the one
+  // of the body), and no note.
+  plannerCreatesAbsence(
+    "creates an absence",
+    () => ({ json: absenceInput(absenceStates.created) }),
+    (id) => {
+      apiAbsenceId = id;
+    },
+    answersAbsence(absenceStates.created, () => apiAbsenceId, "vacation on 2090-06-01 to 2090-06-05, approved"),
+  ),
+  plannerCreatesAbsence(
+    "creates a neighbour; the status, the id and the note of the body are not stored",
+    () => ({
+      json: { ...absenceInput(neighbourState), status: "rejected", id: unknownAbsenceId, note: "L4 do konca miesiaca" },
+    }),
+    (id) => {
+      neighbourAbsenceId = id;
+    },
+    {
+      check: (body) =>
+        isApiAbsence(neighbourState, () => neighbourAbsenceId)(body) && body.absence.id !== unknownAbsenceId,
+      describe: "{ absence } with the seven fields: other on 2090-07-13, approved, with an id of its own and no note",
+    },
+  ),
+  // R and J by the service role. The table is then read as the planner sees it: N is approved although its body said rejected.
+  serviceRoleInsertsAbsences(
+    "writes a requested absence for the second API employee",
+    () => [requestedApiAbsenceBody()],
+    ([id]) => {
+      requestedApiAbsenceId = id;
+    },
+    "the requested absence of the second API employee",
+  ),
+  serviceRoleInsertsAbsences(
+    "writes a rejected absence for the second API employee",
+    () => [rejectedApiAbsenceBody()],
+    ([id]) => {
+      rejectedApiAbsenceId = id;
+    },
+    "the rejected absence of the second API employee",
+  ),
+  plannerReadsApiAbsences(
+    "shows A, its neighbour N (approved) and R and J with their statuses",
+    absenceStates.created,
+    "the four absences of the second API employee: A as created, N approved, R requested and J rejected",
+  ),
+
+  // The list: every row stands in it twice, as a table row and as a card, with the person as "Last name First name", the
+  // days with an en dash, and the status as words. Nothing here is an e-mail address.
+  listsAbsence("A (created)", listedA("created")),
+  listsAbsence("N (approved, a single day)", listedNeighbour),
+  listsAbsence("R (requested)", listedRequested),
+  listsAbsence("J (rejected)", listedRejected),
+  absenceListPage(
+    "the rows J, R, N and A in that order: the latest start first, the opposite of the order they were written in",
+    listsInStartOrder(() => [rejectedApiAbsenceId, requestedApiAbsenceId, neighbourAbsenceId, apiAbsenceId]),
+    (html) => JSON.stringify(listedRowIds(html)),
+  ),
+  absenceListPage(
+    'the title and the only heading "Nieobecności (n)" with n the number of rows of the table, the link "Dodaj nieobecność" to /absences/new and no message that the list is empty',
+    showsAbsenceListFrame,
+    (html) => JSON.stringify({ h1: textsOf(html, "h1"), rows: listedRowIds(html).length }),
+  ),
+  absenceListPage("no e-mail address of the two API employees", hidesAbsenceEmails, (html) =>
+    JSON.stringify(textsOf(html, "td")),
+  ),
+  visitAbsencePage("/absences/new shows the form that adds an absence", () => "/absences/new", {
+    status: 200,
+    bodyCheck: showsNewAbsenceForm,
+    describe:
+      "the lists of the people and of the three types with nothing picked, two empty date fields from 2020-01-01 to 2099-12-31 with the range hint, and the buttons",
+    excerpt: formExcerpt,
+  }),
+  visitAbsencePage("/absences/new lists the people without an e-mail address", () => "/absences/new", {
+    status: 200,
+    bodyCheck: hidesAbsenceEmails,
+    describe: "no e-mail address of the two API employees",
+    excerpt: formExcerpt,
+  }),
+  absenceEditPage(
+    "the stored values of A: the person as read-only text, the type, the two days, the range hint and the removal button",
+    "created",
+  ),
+  absenceEditPage(
+    "only the person of the absence by name, no e-mail address and nobody else of the roster",
+    "created",
+    showsOnlyItsPerson,
+  ),
+  visitAbsencePage(
+    "/absences/<unknown UUID> shows the page of a missing absence",
+    () => `/absences/${unknownAbsenceId}`,
+    {
+      status: 404,
+      bodyCheck: showsNoAbsence,
+      describe: 'the heading "Nie znaleziono nieobecności", the link back to the list and no form',
+      excerpt: (html) => JSON.stringify({ h1: textsOf(html, "h1"), links: linksOf(html) }),
+    },
+  ),
+  visitAbsencePage("/absences/not-a-uuid shows the page of a missing absence", () => "/absences/not-a-uuid", {
+    status: 404,
+    bodyCheck: showsNoAbsence,
+    describe: 'the heading "Nie znaleziono nieobecności", the link back to the list and no form',
+    excerpt: (html) => JSON.stringify({ h1: textsOf(html, "h1"), links: linksOf(html) }),
+  }),
+  [
+    `${planner.label}: GET /planner shows the card "Nieobecności" that links to /absences`,
+    () => request(planner, "/planner"),
+    {
+      status: 200,
+      bodyCheck: hasAbsencesCard,
+      describe:
+        'exactly one link to /absences, headed "Nieobecności", whose text has none of the words Pracownicy, Zmiany and Grafiki',
+      excerpt: (html) => JSON.stringify(linksOf(html)),
+    },
+  ],
+
+  // What POST refuses, each for one cause: the 422 names exactly the fields that are wrong, each with its message. The table
+  // is read afterwards: nothing was stored.
+  plannerPostsAbsence(
+    "with a start before 2020",
+    () => ({ json: absenceInput({ ...absenceStates.created, startDate: "2019-12-31" }) }),
+    refusesAbsence({ startDate: absenceMessages.startDate }),
+  ),
+  plannerPostsAbsence(
+    "with an end after 2099",
+    () => ({ json: absenceInput({ ...absenceStates.created, endDate: "2100-01-01" }) }),
+    refusesAbsence({ endDate: absenceMessages.endDate }),
+  ),
+  plannerPostsAbsence(
+    "with a day that does not exist (30 February)",
+    () => ({ json: absenceInput({ ...absenceStates.created, startDate: "2090-02-30", endDate: "2090-03-02" }) }),
+    refusesAbsence({ startDate: absenceMessages.startDate }),
+  ),
+  plannerPostsAbsence(
+    "with an end before the start",
+    () => ({ json: absenceInput({ ...absenceStates.created, startDate: "2090-06-10", endDate: "2090-06-09" }) }),
+    refusesAbsence({ endDate: absenceMessages.endDateBeforeStart }),
+  ),
+  plannerPostsAbsence(
+    "with a type that is not on the list",
+    () => ({ json: absenceInput({ ...absenceStates.created, type: "holiday" }) }),
+    refusesAbsence({ type: absenceMessages.type }),
+  ),
+  plannerPostsAbsence(
+    "with an employee that is not a UUID",
+    () => ({ json: { ...absenceInput(absenceStates.created), employeeId: "nope" } }),
+    refusesAbsence({ employeeId: absenceMessages.employeeId }),
+  ),
+  plannerPostsAbsence(
+    "with an empty object: every field is refused",
+    () => ({ json: {} }),
+    refusesAbsence({
+      employeeId: absenceMessages.employeeId,
+      type: absenceMessages.type,
+      startDate: absenceMessages.startDate,
+      endDate: absenceMessages.endDate,
+    }),
+  ),
+  plannerPostsAbsence(
+    "with a well-formed employee that does not exist",
+    () => ({ json: { ...absenceInput(absenceStates.created), employeeId: unknownEmployeeId } }),
+    unknownEmployeeRefused,
+  ),
+  plannerPostsAbsence("with a form body", () => ({ form: absenceInput(absenceStates.created) }), {
+    status: 415,
+    check: isUnsupportedMediaType,
+    describe: "the error unsupported_media_type",
+  }),
+  plannerPostsAbsence("with a body that is not JSON", () => ({ jsonText: "{" }), {
+    status: 400,
+    check: isInvalidJson,
+    describe: "the error invalid_json",
+  }),
+  plannerReadsApiAbsences(
+    "is unchanged after the refused POSTs",
+    absenceStates.created,
+    "the four absences as before: the refused requests stored nothing",
+  ),
+
+  // PUT changes the type and the two days, and keeps the person and the status: the first call changes all three, the second
+  // names another person and a status in the body, which are ignored. After each call the table and the pages show A changed
+  // and its three neighbours as they were.
+  plannerPutsAbsence(
+    "/api/absences/<id> changes the type and the days",
+    apiAbsenceUrl,
+    () => ({ json: absenceInput(absenceStates.changed) }),
+    answersAbsence(absenceStates.changed, () => apiAbsenceId, "sick_leave on 2090-06-02 to 2090-06-03, approved"),
+  ),
+  plannerReadsApiAbsences(
+    "shows A changed and its three neighbours as they were",
+    absenceStates.changed,
+    "the four absences: A as changed, N, R and J untouched",
+  ),
+  plannerPutsAbsence(
+    "/api/absences/<id> with another employee and a status in the body keeps the person and the status",
+    apiAbsenceUrl,
+    () => ({ json: { ...absenceInput(absenceStates.moved), employeeId: apiEmployeeId, status: "rejected" } }),
+    answersAbsence(
+      absenceStates.moved,
+      () => apiAbsenceId,
+      "other on 2090-06-08 to 2090-06-12, still the second employee, approved",
+    ),
+  ),
+  plannerReadsApiAbsences(
+    "shows A moved, still on the second API employee and approved, and its three neighbours as they were",
+    absenceStates.moved,
+    "the four absences: A as moved (the person and the status as before), N, R and J untouched",
+  ),
+  plannerPutsAbsence(
+    "/api/absences/<id> with an employee, a type and a start that are wrong",
+    apiAbsenceUrl,
+    () => ({ json: { employeeId: "nope", type: "holiday", startDate: "2019-12-31", endDate: "2090-06-12" } }),
+    refusesAbsence({
+      employeeId: absenceMessages.employeeId,
+      type: absenceMessages.type,
+      startDate: absenceMessages.startDate,
+    }),
+  ),
+  plannerPutsAbsence(
+    "/api/absences/<unknown UUID>",
+    () => unknownAbsenceUrl,
+    () => ({ json: absenceInput(absenceStates.changed) }),
+    notFoundRefused,
+  ),
+  plannerPutsAbsence(
+    "/api/absences/not-a-uuid",
+    () => "/api/absences/not-a-uuid",
+    () => ({ json: absenceInput(absenceStates.changed) }),
+    notFoundRefused,
+  ),
+  plannerPutsAbsence(
+    "/api/absences/<id> with a form body",
+    apiAbsenceUrl,
+    () => ({ form: absenceInput(absenceStates.changed) }),
+    { status: 415, check: isUnsupportedMediaType, describe: "the error unsupported_media_type" },
+  ),
+  plannerPutsAbsence("/api/absences/<id> with a body that is not JSON", apiAbsenceUrl, () => ({ jsonText: "{" }), {
+    status: 400,
+    check: isInvalidJson,
+    describe: "the error invalid_json",
+  }),
+  plannerReadsApiAbsences(
+    "is unchanged after the refused PUTs",
+    absenceStates.moved,
+    "the four absences as before: A as moved, N, R and J untouched",
+  ),
+  listsAbsence("A (moved) with the new type and days", listedA("moved")),
+  listsAbsence("N unchanged next to it", listedNeighbour),
+  absenceEditPage("the values of A after the update", "moved"),
+
+  // DELETE is idempotent: an absence that is gone answers 200 as well, so the second call changes nothing. An id that is not
+  // a UUID is no absence and gets 404. The neighbours are read after every call.
+  plannerDeletesAbsence("/api/absences/not-a-uuid", () => "/api/absences/not-a-uuid", notFoundRefused),
+  plannerReadsApiAbsences(
+    "is unchanged after the DELETE of an id that is not a UUID",
+    absenceStates.moved,
+    "the four absences as before",
+  ),
+  plannerDeletesAbsence("/api/absences/<id> removes the absence", apiAbsenceUrl, wasWritten),
+  plannerReadsApiAbsences(
+    "shows N, R and J and not A after the DELETE",
+    null,
+    "the three neighbours N, R and J: only A is gone",
+  ),
+  plannerDeletesAbsence("/api/absences/<id> of the absence that is gone answers 200 again", apiAbsenceUrl, wasWritten),
+  plannerReadsApiAbsences("is unchanged after the repeated DELETE", null, "the three neighbours N, R and J, as before"),
+  plannerDeletesAbsence(
+    "/api/absences/<unknown UUID> answers 200 and removes nothing",
+    () => unknownAbsenceUrl,
+    wasWritten,
+  ),
+  plannerReadsApiAbsences(
+    "is unchanged after the DELETE of an absence that never existed",
+    null,
+    "the three neighbours N, R and J, as before",
+  ),
+  absenceListPage(
+    "the three neighbours J, R and N in that order and no row of A",
+    (html) =>
+      !listedRowIds(html).includes(apiAbsenceId) &&
+      absenceListItems(html, apiAbsenceId).length === 0 &&
+      listsInStartOrder(() => [rejectedApiAbsenceId, requestedApiAbsenceId, neighbourAbsenceId])(html) &&
+      [listedNeighbour, listedRequested, listedRejected].every((listed) => showsListedAbsence(listed)(html)),
+    (html) => JSON.stringify(listedRowIds(html)),
+  ),
+  visitAbsencePage(
+    "/absences/<id> of the removed absence shows the page of a missing one",
+    () => `/absences/${apiAbsenceId}`,
+    {
+      status: 404,
+      bodyCheck: showsNoAbsence,
+      describe: 'the heading "Nie znaleziono nieobecności", the link back to the list and no form',
+      excerpt: (html) => JSON.stringify({ h1: textsOf(html, "h1"), links: linksOf(html) }),
+    },
+  ),
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -3384,6 +4108,7 @@ const steps = [
   visit(anonymous, "/schedules/new", 401),
   // The gate answers before the page runs, so the id may be one that no schedule has: a planner would get a 404 there.
   visit(anonymous, `/schedules/${unknownScheduleId}/assign`, 401),
+  ...deniedAbsencePages(anonymous, 401, "Zaloguj się, aby uzyskać dostęp do tej strony."),
   [
     `${anonymous.label}: GET /api/employees`,
     () => request(anonymous, "/api/employees", { accept: "application/json" }),
@@ -3405,6 +4130,7 @@ const steps = [
     { status: 401, contentType: "application/json" },
   ],
   ...deniedAssignmentCalls(anonymous, 401, "unauthenticated"),
+  ...deniedAbsenceCalls(anonymous, 401, "unauthenticated"),
   [
     `${anonymous.label}: PUT /api/schedules/<id>`,
     () => request(anonymous, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -3431,12 +4157,14 @@ const steps = [
   visit(noRole, "/schedules", 403),
   visit(noRole, "/schedules/new", 403),
   visit(noRole, `/schedules/${unknownScheduleId}/assign`, 403),
+  ...deniedAbsencePages(noRole, 403, "Rola: brak roli"),
   [
     `${noRole.label}: POST /api/schedules`,
     () => request(noRole, "/api/schedules", { method: "POST", json: deniedApiSchedule }),
     { status: 403, contentType: "application/json" },
   ],
   ...deniedAssignmentCalls(noRole, 403, "forbidden"),
+  ...deniedAbsenceCalls(noRole, 403, "forbidden"),
   [
     `${noRole.label}: PUT /api/schedules/<id>`,
     () => request(noRole, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -3478,6 +4206,7 @@ const steps = [
   visit(employee, "/schedules/new", 403),
   visit(employee, `/schedules/${unknownScheduleId}`, 403),
   visit(employee, `/schedules/${unknownScheduleId}/assign`, 403),
+  ...deniedAbsencePages(employee, 403, "Rola: pracownik"),
   [
     `${employee.label}: POST /api/employees`,
     () => request(employee, "/api/employees", { method: "POST", json: apiEmployee }),
@@ -3509,6 +4238,7 @@ const steps = [
     { status: 403, contentType: "application/json" },
   ],
   ...deniedAssignmentCalls(employee, 403, "forbidden"),
+  ...deniedAbsenceCalls(employee, 403, "forbidden"),
   [
     `${employee.label}: PUT /api/schedules/<id>`,
     () => request(employee, unknownScheduleUrl, { method: "PUT", json: deniedApiSchedule }),
@@ -3707,6 +4437,8 @@ const steps = [
     check: isNotFound,
     describe: "the error not_found",
   }),
+  // The absence routes and pages (see absenceRouteSteps): they need the second API employee, which exists by now.
+  ...absenceRouteSteps,
   // The schedules API: a schedule is created and replaced through the app, the database shows exactly what was sent, and
   // every refused request leaves nothing behind. The schedule refers to the two shifts and the two employees above.
   [
@@ -6174,8 +6906,9 @@ const steps = [
     () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
     { statusClass: 2 },
   ],
-  // Three absences of the run still existed until the employees went (the others were removed by the steps themselves and
-  // are asked for as well, which does no harm), so only the cascade can have removed those.
+  // Six absences of the run still existed until the employees went (the others were removed by the steps themselves and
+  // are asked for as well, which does no harm), so only the cascade can have removed those: the three of the database steps
+  // and the neighbour and the two rows with a status of the route and page steps.
   [
     "service role: no absence of the smoke employees is left",
     () => absencesTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: `?id=in.(${absenceIdsOfTheRun().join(",")})` }),

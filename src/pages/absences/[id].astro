@@ -1,0 +1,70 @@
+---
+import PlannerLayout from "@/layouts/PlannerLayout.astro";
+import AbsenceForm from "@/components/absences/AbsenceForm";
+import DeleteAbsenceButton from "@/components/absences/DeleteAbsenceButton";
+import { getAbsence } from "@/lib/absences";
+import { getEmployee } from "@/lib/employees";
+import { toEmployeeOptions } from "@/lib/schedule-options";
+import { absenceTypeLabel, formatAbsenceRange } from "@/lib/services/absence";
+
+const { supabase } = Astro.locals;
+if (!supabase) {
+  // The access gate lets nobody through without a configured client, so this is a misconfiguration.
+  throw new Error("The Supabase client is missing; check SUPABASE_URL and SUPABASE_KEY.");
+}
+
+// getAbsence answers null for an id that is not a UUID, without querying the database.
+const { id } = Astro.params;
+const absence = id === undefined ? null : await getAbsence(supabase, id);
+// The form shows the person of the absence and nobody else, so the island gets that one person by name (toEmployeeOptions,
+// never an e-mail address) and not the whole roster.
+const employee = absence ? await getEmployee(supabase, absence.employeeId) : null;
+const people = employee ? toEmployeeOptions([employee]) : [];
+const summary = absence
+  ? `${people.at(0)?.name ?? "Nieznany pracownik"}, ${absenceTypeLabel(absence.type)}, ${formatAbsenceRange(absence)}`
+  : "";
+
+// The project has no 404 page, so a missing absence gets its own message with this status.
+if (!absence) {
+  Astro.response.status = 404;
+}
+// The page carries the name of the employee and the kind of the absence (an L4 is health data): no cache may keep it.
+Astro.response.headers.set("Cache-Control", "no-store");
+---
+
+<PlannerLayout title={absence ? "Edytuj nieobecność" : "Nie znaleziono nieobecności"}>
+  {absence ? (
+    <div class="mx-auto w-full max-w-lg rounded-2xl border border-white/10 bg-white/10 p-6 backdrop-blur-xl sm:p-8">
+      <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-2xl font-bold text-transparent">
+        Edytuj nieobecność
+      </h1>
+      <AbsenceForm
+        employees={people}
+        absence={{
+          id: absence.id,
+          employeeId: absence.employeeId,
+          type: absence.type,
+          startDate: absence.startDate,
+          endDate: absence.endDate,
+        }}
+        client:load
+      />
+      <section aria-labelledby="delete-heading" class="mt-8 border-t border-white/10 pt-6">
+        <h2 id="delete-heading" class="mb-1 text-sm font-medium text-blue-100/60">
+          Usuwanie
+        </h2>
+        <p class="mb-3 text-xs text-blue-100/50">Usuń wpis, który dodano przez pomyłkę.</p>
+        <DeleteAbsenceButton absenceId={absence.id} summary={summary} client:load />
+      </section>
+    </div>
+  ) : (
+    <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
+      <h1 class="mb-4 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+        Nie znaleziono nieobecności
+      </h1>
+      <a href="/absences" class="text-purple-300 hover:underline">
+        Wróć do listy nieobecności
+      </a>
+    </div>
+  )}
+</PlannerLayout>

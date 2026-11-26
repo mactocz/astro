@@ -435,13 +435,13 @@ Planowany równolegle jest S-08 (`schedule-approval`), implementowany po scaleni
 
 #### Automated
 
-- [ ] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 4.2 Smoke z krokami tras i stron przechodzi lokalnie: `npm run smoke`
+- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 4.2 Smoke z krokami tras i stron przechodzi lokalnie: `npm run smoke`
 
 #### Manual
 
-- [ ] 4.3 W przeglądarce na desktopie: dodanie, edycja i usunięcie nieobecności, komunikaty błędów pól, podpowiedź zakresu dat, karta w panelu, czytelność i klawiatura
-- [ ] 4.4 Na telefonie (lub emulacji): lista i formularz są czytelne, strona nie ma poziomego przewijania dokumentu
+- [x] 4.3 W przeglądarce na desktopie: dodanie, edycja i usunięcie nieobecności, komunikaty błędów pól, podpowiedź zakresu dat, karta w panelu, czytelność i klawiatura
+- [x] 4.4 Na telefonie (lub emulacji): lista i formularz są czytelne, strona nie ma poziomego przewijania dokumentu
 
 ### Phase 5: Obsadzanie z nieobecnościami
 
