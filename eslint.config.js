@@ -90,6 +90,58 @@ const adminClientConfig = defineConfig({
   },
 });
 
+// The rules in `src/lib/services/` read dates in UTC. The tests run in workerd, whose time zone is UTC, and the spy of
+// `localDateMethodsCalledBy` (src/lib/testing/local-time.ts) only sees the local getters and setters of `Date`, so the
+// forms below would pass every test and give another day on a machine in another zone: a date built from components
+// (`new Date(y, m, d)`) and a date-time string without `Z` or an offset, which is read as local time. A string that
+// reaches `new Date` through a variable cannot be seen by a selector; the tests have to cover that case.
+const NEW_DATE = "NewExpression[callee.name='Date']";
+// A time of day at the very end of a string, after a `T` or a space: no `Z` and no offset follows it. An offset such as
+// `+02:00` is not matched, because no `T` or space stands before its digits.
+const TIME_OF_DAY_AT_END = String.raw`[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$`;
+const DATE_TIME_WITHOUT_OFFSET_MESSAGE =
+  "A date-time string without `Z` or an offset is read in the local time zone: end it with `Z` or an offset, or build the date with `Date.UTC`";
+const localTimeSyntax = [
+  {
+    selector: `${NEW_DATE}:matches([arguments.length>=2], [arguments.0.type='SpreadElement'])`,
+    message: "`new Date(y, m, d)` reads its components in the local time zone: use `new Date(Date.UTC(y, m, d))`",
+  },
+  // The same string as a literal, as a template literal (its last part) and as the right side of a `+`.
+  { selector: `${NEW_DATE} > Literal[value=/${TIME_OF_DAY_AT_END}/]`, message: DATE_TIME_WITHOUT_OFFSET_MESSAGE },
+  {
+    selector: `${NEW_DATE} > TemplateLiteral > TemplateElement[tail=true][value.cooked=/${TIME_OF_DAY_AT_END}/]`,
+    message: DATE_TIME_WITHOUT_OFFSET_MESSAGE,
+  },
+  {
+    selector: `${NEW_DATE} > BinaryExpression[operator='+'][right.value=/${TIME_OF_DAY_AT_END}/]`,
+    message: DATE_TIME_WITHOUT_OFFSET_MESSAGE,
+  },
+];
+const dateParseSyntax = {
+  selector: "CallExpression[callee.object.name='Date'][callee.property.name='parse']",
+  message:
+    "`Date.parse` reads a string without `Z` or an offset in the local time zone: build the date with `Date.UTC` or `new Date` of a string that ends with `Z` or an offset",
+};
+// The files that order or age rows by the `timestamptz` strings PostgREST returns, which always carry an offset, so
+// `Date.parse` is safe there. The rest of the syntax above stays forbidden in them.
+const DATE_PARSE_FILES = [
+  "src/lib/services/employee.ts",
+  "src/lib/services/invitation.ts",
+  "src/lib/services/schedule.ts",
+  "src/lib/services/shift.ts",
+];
+// Test files are left out: they build the fixtures, and `new Date(0)` or `Date.parse` of a `Z` string is legitimate there.
+const localTimeConfig = defineConfig(
+  {
+    files: ["src/lib/services/**/*.ts"],
+    ignores: ["**/*.test.ts"],
+    rules: { "no-restricted-syntax": ["error", ...localTimeSyntax, dateParseSyntax] },
+  },
+  // A later object with the same rule replaces the options of the earlier one for these files, so the list is repeated
+  // without the `Date.parse` entry instead of being switched off.
+  { files: DATE_PARSE_FILES, rules: { "no-restricted-syntax": ["error", ...localTimeSyntax] } },
+);
+
 const scriptsConfig = defineConfig({
   files: ["scripts/**/*.mjs"],
   extends: [tseslint.configs.disableTypeChecked],
@@ -105,6 +157,7 @@ export default defineConfig(
   eslintPluginAstro.configs["flat/jsx-a11y-recommended"],
   astroConfig,
   adminClientConfig,
+  localTimeConfig,
   scriptsConfig,
   eslintPluginPrettier,
 );

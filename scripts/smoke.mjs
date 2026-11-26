@@ -13,19 +13,20 @@
 // the body confirms the removal), that the view behind the schedule list counts the people and the required staffing of
 // each schedule, hides them from everyone but a planner and takes no write, that the employee, shift and schedule pages
 // open for the planner only (the schedule list, form and assignment page show what the database holds, down to which
-// shift button of which person is on and which violations of the work-time rules the page lists for it: a schedule of four
-// people, one for each rule scenario, is read down to the counter, every item with its reason, the marks of the day cells and
-// what goes when one assignment is taken off, and, on schedules of their own, the hours of each person against the weekly
-// norm of their FTE, down to the text of the column "Godziny", also in a week with a holiday; and the pages
-// that list employees for the schedule form and the assignment grid carry no e-mail address), that the invitation mails link to the set-password page, the whole invitation flow (invite,
-// invite again, password reset, a foreign account, the tokens from the admin API instead of the mails, the new
-// employee's session, the activation time that the first password set records and a reset keeps, and the locked
-// e-mail), what the pages of that flow show (the account column and invite button of the employee list, the locked
-// e-mail field of the edit page, the password form of the set-password page; read from the HTML the server renders),
-// and that public registration stays closed. Zero dependencies on purpose. It creates real accounts and removes its own
-// accounts, employee, shift and schedule rows with the service-role key, so it only runs against a LOCAL Supabase, and
-// the app under test must read the same stack (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation
-// route reads it from there. Values come from `supabase status -o env`.
+// shift button of which person is on and which violations of the work-time rules the page lists for it: a schedule of
+// four people, one for each rule scenario, is read down to the counter, every item with its reason, the marks of the
+// day cells and what goes when one assignment is taken off, and, on schedules of their own, the hours of each person
+// against the weekly norm of their FTE, down to the text of the column "Godziny", also in a week with a holiday; and
+// the pages that list employees for the schedule form and the assignment grid carry no e-mail address), that the
+// invitation mails link to the set-password page, the whole invitation flow (invite, invite again, password reset, a
+// foreign account, the tokens from the admin API instead of the mails, the new employee's session, the activation time
+// that the first password set records and a reset keeps, and the locked e-mail), what the pages of that flow show (the
+// account column and invite button of the employee list, the locked e-mail field of the edit page, the password form of
+// the set-password page; read from the HTML the server renders), and that public registration stays closed. Zero
+// dependencies on purpose. It creates real accounts and removes its own accounts, employee, shift and schedule rows
+// with the service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
+// (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from there. Values come from
+// `supabase status -o env`.
 // Run against a live server:
 //   BASE_URL=http://localhost:4321 SUPABASE_URL=<API_URL> SUPABASE_KEY=<ANON_KEY> SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
 //     node scripts/smoke.mjs
@@ -5261,10 +5262,12 @@ const steps = [
     () => ({ startDate: emptyScheduleStartDate, label: emptyScheduleLabel, employeeCount: 0, totalRequired: 0 }),
     "the schedule without cells and people: 0 people, 0 required",
   ),
-  // The list asks for the newest first and a limit; four schedules of this run exist, so a limit of 2 must cut. The first step
-  // is the query of the list, over every schedule there is; the second keeps to the schedules of this run, where the order is
-  // known: the two of 2026-11-15 come first, the one created later (the schedule of the database steps) before the one
-  // created earlier (the API schedule), and the schedules of 2026-11-11 and 2026-11-09 are cut off.
+  // The list asks for the newest first and a limit. The first step is the query of the list, over every schedule there is;
+  // it relies on there being at least two of them, so that a limit of 2 must cut (this run alone has more, the schedules
+  // of the rules and hours steps among them). The second keeps to the schedules of this run, where the order is known: it
+  // relies on the two newest start dates being those of the schedule of the database steps and of the API schedule, both
+  // 2026-11-15, the one created later (the database steps) before the one created earlier (the API schedule); every other
+  // schedule of this run starts earlier (2026-11-11, 2026-11-10, 2026-11-09 and 2026-11-02), so the limit cuts them off.
   [
     `${planner.label}: schedule_summaries read ordered newest first with a limit of 2 returns two rows`,
     async () =>

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { holidaysInWeek } from "@/lib/services/calendar";
 import { formatDuration } from "@/lib/services/shift";
 import {
   exceedsNorm,
   normMinutes,
   shiftInterval,
   weeklyNorm,
+  weeklyNormWithHolidays,
   workedMinutesByEmployee,
   type ShiftTimes,
   type WeeklyNorm,
@@ -337,6 +339,60 @@ describe("weeklyNorm", () => {
   });
 });
 
+describe("weeklyNormWithHolidays", () => {
+  const FRACTIONS: Fte[] = [
+    { numerator: 1, denominator: 1 },
+    { numerator: 3, denominator: 4 },
+    { numerator: 1, denominator: 7 },
+    { numerator: 3, denominator: 7 },
+  ];
+  // Weeks with none, one, two and three holidays, a Sunday holiday and the turn of the year.
+  const START_DATES = ["2026-11-02", "2026-11-10", "2026-05-02", "2024-12-23", "2025-12-22", "2099-12-31"];
+
+  it("gives the same norm as weeklyNorm from the holidays of the week, for every FTE and every kind of week", () => {
+    for (const startDate of START_DATES) {
+      const holidays = holidaysInWeek(startDate);
+      for (const fte of FRACTIONS) {
+        expect(weeklyNormWithHolidays(holidays, fte), `${startDate} ${fte.numerator}/${fte.denominator}`).toStrictEqual(
+          weeklyNorm(startDate, fte),
+        );
+      }
+    }
+  });
+
+  it("gives each norm its own copy of the holidays, so that the norms of one week do not share them", () => {
+    const holidays = Object.freeze(["2026-11-11"]);
+
+    const first = weeklyNormWithHolidays(holidays, { numerator: 3, denominator: 4 });
+    const second = weeklyNormWithHolidays(holidays, { numerator: 1, denominator: 2 });
+    first.holidays.length = 0;
+
+    expect(second.holidays).toStrictEqual(["2026-11-11"]);
+    expect(holidays).toStrictEqual(["2026-11-11"]);
+    expect(first.holidays).not.toBe(second.holidays);
+  });
+
+  it("takes 8 h off the full week for each holiday it is given, and leaves the FTE as a fraction", () => {
+    const norm = weeklyNormWithHolidays(["2026-12-24", "2026-12-25", "2026-12-26"], { numerator: 3, denominator: 7 });
+
+    expect(norm).toStrictEqual({
+      baseMinutes: 960,
+      fte: { numerator: 3, denominator: 7 },
+      holidays: ["2026-12-24", "2026-12-25", "2026-12-26"],
+    });
+    expect(normMinutes(norm)).toBe(411);
+  });
+
+  it.each<[string, Fte]>([
+    ["a zero numerator", { numerator: 0, denominator: 2 }],
+    ["a numerator above the denominator", { numerator: 3, denominator: 2 }],
+    ["a numerator with a fraction", { numerator: 1.5, denominator: 2 }],
+    ["a denominator that is infinite", { numerator: 1, denominator: Infinity }],
+  ])("throws a RangeError for %s", (_label, fte) => {
+    expect(() => weeklyNormWithHolidays([], fte)).toThrow(RangeError);
+  });
+});
+
 describe("exceedsNorm", () => {
   const normOf = (startDate: string, numerator: number, denominator: number) =>
     weeklyNorm(startDate, { numerator, denominator });
@@ -515,6 +571,7 @@ describe("the time zone", () => {
       normMinutes(week);
       exceedsNorm(1441, week);
       weeklyNorm("2099-12-31", { numerator: 1, denominator: 1 });
+      weeklyNormWithHolidays(holidaysInWeek("2099-12-31"), { numerator: 1, denominator: 1 });
     });
 
     expect(called).toStrictEqual([]);

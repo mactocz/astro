@@ -5,6 +5,7 @@ import { assignmentKey, useAssignments } from "@/components/hooks/useAssignments
 import { useViolations } from "@/components/hooks/useViolations";
 import { useWorkload, type WorkloadText } from "@/components/hooks/useWorkload";
 import { ViolationList } from "@/components/schedules/ViolationList";
+import { unavailableShift } from "@/lib/schedule-options";
 import { employeeDayKey } from "@/lib/services/assignment";
 import { summarizeViolations } from "@/lib/services/rules";
 import { PERIOD_DAYS, dayColumns } from "@/lib/services/schedule";
@@ -46,19 +47,14 @@ const HOURS_NOTE =
 
 const cellKey = (shiftId: string, dayOffset: number): string => `${shiftId}/${dayOffset}`;
 
-// A shift that has staffing in the schedule but is no longer on the list: it keeps its buttons, so nobody is hidden.
-function unavailableShift(id: string): ShiftOption {
-  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "", startMinute: 0, endMinute: 0 };
-}
-
 // The name and the hours, which tell apart two shifts that share a name. A shift that is gone has no hours to show.
 function shiftTitle(shift: ShiftOption): string {
   return shift.times ? `${shift.name} ${shift.times}` : shift.name;
 }
 
-// The shifts that have staffing on at least one day, in the order of the shift list (a shift that is gone last), and for
-// each day the ones among them that have staffing that day. Only those get a button, so nobody can be put on a shift that
-// does not run on that day.
+// The shifts that have staffing on at least one day, in the order of the shift list (a shift that is gone last, as the
+// placeholder `unavailableShift`: it keeps its buttons, so nobody is hidden), and for each day the ones among them that have
+// staffing that day. Only those get a button, so nobody can be put on a shift that does not run on that day.
 function shiftLayout(shifts: readonly ShiftOption[], staffing: readonly StaffingCell[]) {
   const staffedIds = new Set(staffing.map((cell) => cell.shiftId));
   const offered = new Set(shifts.map((shift) => shift.id));
@@ -126,11 +122,16 @@ function CellMarker({ violations }: { violations: readonly Violation[] }) {
 }
 
 // What the "Wskazania" column says about a person: all their violations in words ("2 krytyczne, 1 ostrzeżenie"), or "brak".
-function PersonViolations({ violations }: { violations: readonly Violation[] | undefined }) {
+// When the rules could not be counted it says so ("nie policzono"), never "brak": an empty count would be compliance that
+// nobody checked.
+function PersonViolations({ violations, failed }: { violations: readonly Violation[] | undefined; failed: boolean }) {
+  if (failed) {
+    return <span className="text-blue-100/70">nie policzono</span>;
+  }
   const counts = summarizeViolations(violations ?? []);
   const text = formatViolationCounts(counts);
   if (text === "") {
-    return <span className="text-blue-100/40">brak</span>;
+    return <span className="text-blue-100/60">brak</span>;
   }
   return <span className={cn("font-medium", counts.critical > 0 ? "text-red-200" : "text-amber-200")}>{text}</span>;
 }
@@ -263,7 +264,7 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                   );
                 })}
                 <td className="min-w-32 border-t border-white/10 px-2 py-2 text-left align-top text-xs">
-                  <PersonViolations violations={violations.byEmployee[employee.id]} />
+                  <PersonViolations violations={violations.byEmployee[employee.id]} failed={violations.failed} />
                 </td>
                 <td className="min-w-36 border-t border-white/10 px-2 py-2 text-left align-top text-xs">
                   <PersonHours hours={workload[employee.id]} />
@@ -276,7 +277,7 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
 
       <p className="mt-2 text-xs text-blue-100/50">{HOURS_NOTE}</p>
 
-      <ViolationList violations={violations.violations} counts={violations.counts} />
+      <ViolationList violations={violations.violations} counts={violations.counts} failed={violations.failed} />
 
       <section aria-labelledby="coverage-heading" className="mt-6">
         <h2 id="coverage-heading" className="mb-1 text-lg font-semibold text-white">

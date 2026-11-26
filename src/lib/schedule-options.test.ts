@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toEmployeeOptions, toShiftOptions } from "@/lib/schedule-options";
+import { toEmployeeOptions, toShiftOptions, unavailableShift } from "@/lib/schedule-options";
 import type { Employee, Fte, Shift } from "@/types";
 
 // An employee with everything the roster holds. The options must keep only the id, the name and the FTE: the page hands
@@ -147,5 +147,36 @@ describe("toShiftOptions", () => {
 
     expect(structuredClone(input)).toStrictEqual(before);
     expect(options).not.toBe(input);
+  });
+});
+
+describe("unavailableShift", () => {
+  const ID = "0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90";
+
+  it("gives the placeholder the grids show: the id, the name (niedostępne) and no hours", () => {
+    expect(unavailableShift(ID)).toStrictEqual({
+      id: ID,
+      name: "(niedostępne)",
+      times: "",
+      endsNextDay: false,
+      duration: "",
+      startMinute: 0,
+      endMinute: 0,
+    });
+  });
+
+  it("gives an object with the same seven keys as a shift option", () => {
+    const [option] = toShiftOptions([shift("s-1", "Poranna", 360, 840)]);
+
+    expect(Object.keys(unavailableShift(ID)).sort()).toStrictEqual(Object.keys(option).sort());
+  });
+
+  it("takes the id it is given, so that two shifts that are gone stay apart", () => {
+    expect(unavailableShift("s-1").id).toBe("s-1");
+    expect(unavailableShift("s-2").id).toBe("s-2");
+  });
+
+  it("gives a new object each time", () => {
+    expect(unavailableShift(ID)).not.toBe(unavailableShift(ID));
   });
 });

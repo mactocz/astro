@@ -196,13 +196,13 @@ S-06 zależy od Fazy 1 planu S-05 (`live-rule-violations`): minuty zmian i etat 
 
 #### Automated
 
-- [x] 1.1 Testy obciążenia przechodzą w workerd: `npm test` — 99bc869
-- [x] 1.2 Linting przechodzi: `npm run lint` — 99bc869
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 99bc869
+- [x] 1.1 Testy obciążenia przechodzą w workerd: `npm test` — 5f240e7
+- [x] 1.2 Linting przechodzi: `npm run lint` — 5f240e7
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 5f240e7
 
 #### Manual
 
-- [x] 1.4 Format tekstu godzin i różnicy (`32 h z 40 h`, `mniej o 8 h`, `więcej o 2 h 30 min`, `równo z normą`) i reguła zaokrąglania normy ułamkowej zostały przejrzane i zatwierdzone przez autora — 99bc869
+- [x] 1.4 Format tekstu godzin i różnicy (`32 h z 40 h`, `mniej o 8 h`, `więcej o 2 h 30 min`, `równo z normą`) i reguła zaokrąglania normy ułamkowej zostały przejrzane i zatwierdzone przez autora — 5f240e7
 
 ### Phase 2: Kolumna "Godziny", smoke i wdrożenie
 
@@ -216,4 +216,4 @@ S-06 zależy od Fazy 1 planu S-05 (`live-rule-violations`): minuty zmian i etat 
 
 - [x] 2.4 W przeglądarce na desktopie: kliknięcie przypisujące zmianę zmienia sumę i różnicę w wierszu osoby od razu, wycofanie przy błędzie przywraca poprzednie liczby, kolumna jest czytelna i neutralna (bez progów i kolorów jako nośnika), akapit pod siatką jest zrozumiały, a obsługa klawiaturą i czytnik nie mają nowych pułapek — a232459
 - [x] 2.5 Na telefonie (lub emulacji): strona się ładuje, kolumna jest czytelna, tabela przewija się poziomo bez rozjeżdżania strony — a232459
-- [ ] 2.6 Po wdrożeniu (`npm run build` i `npx wrangler deploy`, bez migracji) kolumna "Godziny" pokazuje poprawne liczby na produkcji; nie uruchamiać `npm run smoke` na produkcji
+- [x] 2.6 Po wdrożeniu (`npm run build` i `npx wrangler deploy`, bez migracji) kolumna "Godziny" pokazuje poprawne liczby na produkcji; nie uruchamiać `npm run smoke` na produkcji — 80ff402

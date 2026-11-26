@@ -1,4 +1,11 @@
 // Test-only helper for the rule that dates are read in UTC. Not imported from application code.
+//
+// What the spy cannot see: it only counts calls of the local-time getters and setters listed below. A date built from
+// local components (`new Date(y, m, d)`) or from a string without an offset (`new Date("2026-11-10T00:00:00")`,
+// `Date.parse` of one) calls none of them, and the test runtime runs in UTC, so such code would pass every test and go
+// wrong only in another time zone; the deprecated `getYear` and `setYear` are not watched either. The ESLint rule
+// `no-restricted-syntax` for `src/lib/services/` (`eslint.config.js`) covers those constructions, not a date-time
+// string that only reaches `new Date` through a variable.
 import { vi } from "vitest";
 
 // The methods of `Date` that read or write the local time zone. The workerd test runtime runs in UTC, so a rule that used

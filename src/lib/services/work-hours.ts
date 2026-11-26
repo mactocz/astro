@@ -75,7 +75,16 @@ export function workedMinutesByEmployee(
  * rejects, and for an `fte` that is not a fraction of whole numbers with 1 <= numerator <= denominator.
  */
 export function weeklyNorm(startDate: string, fte: Fte): WeeklyNorm {
-  const holidays = holidaysInWeek(startDate);
+  return weeklyNormWithHolidays(holidaysInWeek(startDate), fte);
+}
+
+/**
+ * The same norm as `weeklyNorm`, from the holidays of the week that the caller already has (`holidaysInWeek`: the holidays
+ * on a day other than Sunday in the seven days, which are not checked here), so that a caller with many employees looks
+ * them up once for the week and not once for each one. Each norm gets its own copy of `holidays`. Throws a RangeError for
+ * an `fte` that is not a fraction of whole numbers with 1 <= numerator <= denominator.
+ */
+export function weeklyNormWithHolidays(holidays: readonly string[], fte: Fte): WeeklyNorm {
   const { numerator, denominator } = fte;
   if (!Number.isInteger(numerator) || !Number.isInteger(denominator) || numerator < 1 || numerator > denominator) {
     throw new RangeError(`Not a valid FTE: ${JSON.stringify(fte)}`);
@@ -83,7 +92,7 @@ export function weeklyNorm(startDate: string, fte: Fte): WeeklyNorm {
   return {
     baseMinutes: FULL_WEEK_MINUTES - HOLIDAY_MINUTES * holidays.length,
     fte: { numerator, denominator },
-    holidays,
+    holidays: [...holidays],
   };
 }
 

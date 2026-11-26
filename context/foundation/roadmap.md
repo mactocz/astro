@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-11-25
+updated: 2026-11-26
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -45,10 +45,10 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | F-02 | rules-verification-harness  | (foundation) testy automatyczne lokalnie i w CI                   | —             | Guardrails (wynik walidacji powtarzalny); NFR (wynik kontroli < 3 s) | done |
 | S-01 | employee-roster             | dodać i edytować pracownika z etatem, bez konta                   | F-01          | FR-001, FR-003                                   | done |
 | S-02 | shift-dictionary            | zdefiniować i edytować zmiany we wspólnym słowniku                | F-01          | FR-013                                           | done |
-| S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | in-progress |
+| S-03 | weekly-schedule-draft       | utworzyć grafik tygodniowy z obsadą na zmianę i znaleźć go na liście | S-01, S-02 | FR-008, FR-009, FR-013, FR-019                   | done |
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | done |
 | S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | in-progress |
-| S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | in-progress |
+| S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | done |
 | S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | proposed |
 | S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | proposed |
 | S-09 | schedule-generation         | wygenerować propozycję grafiku bez nadpisywania wpisów ręcznych   | S-05, S-07, F-02 | FR-009, FR-011, US-01                         | proposed |
@@ -150,7 +150,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Blockers:** —
 - **Unknowns:** —
 - **Risk:** Model okresu tygodniowego i obsady jest podstawą wszystkich reguł; generowanie celowo wydzielone (S-09), żeby ten wycinek nie rozrósł się o algorytm. Decyzja D6 (`work-time-rules.md`, 2026-10-16): grafik tygodniowy zostaje, a UI i dokumentacja informują, że nie zastępuje formalnego rozkładu czasu pracy (art. 129 § 3: co najmniej miesiąc, przekazany z tygodniowym wyprzedzeniem). Brak blokowania i usuwania pracowników w S-01 (FR-015 zaparkowane) oznacza, że pracownik, który odszedł, zostaje na liście wyboru; wycinek musi to znieść albo FR-015 trzeba wtedy odparkować.
-- **Status:** in-progress
+- **Status:** done
 
 ### S-04: Ręczne obsadzanie zmian
 
@@ -191,7 +191,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
   - Norma dla pełnego i niepełnego etatu — rozstrzygnięte 2026-10-16: wzór z art. 130 Kodeksu pracy, okres rozliczeniowy = miesiąc kalendarzowy, niepełny etat proporcjonalnie, święta wyliczane z ustawy (D2, D4, D5 w `context/foundation/work-time-rules.md`). — Owner: user. Block: no.
   - Jak zestawiać grafik tygodniowy z miesięcznym okresem rozliczeniowym, gdy tydzień obejmuje dwa miesiące? — rozstrzygnięte 2026-11-25 w planowaniu: kolumna pokazuje normę tygodniową siedmiu dni grafiku (40 godzin pomniejszone o 8 godzin za święto w dzień inny niż niedziela, proporcjonalnie do etatu), bez czytania innych grafików i bez normy miesięcznej; implementacja po Fazie 1 S-05, zob. `context/changes/workload-vs-norm/plan.md`. — Owner: user. Block: no.
 - **Risk:** Mierzalna równomierność obciążenia jest decyzją PRD (bez progu i bez blokady), więc wycinek jest mały; proporcję dla niepełnego etatu potwierdza tylko źródło wtórne (biznes.gov.pl), więc kod ma trzymać ją w jednym miejscu, łatwym do poprawki.
-- **Status:** in-progress
+- **Status:** done
 
 ### S-07: Wpisywanie nieobecności
 
@@ -367,3 +367,5 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **S-01: Planista może dodać pracownika (z wymiarem czasu pracy, bez zakładania konta) i edytować jego dane, w tym etat.** — Archived 2026-10-28 → `context/archive/2026-10-21-employee-roster/`. Lesson: —.
 - **S-02: Planista może zdefiniować zmiany (nazwa, godziny rozpoczęcia i zakończenia) raz we wspólnym słowniku i je edytować.** — Archived 2026-11-04 → `context/archive/2026-10-29-shift-dictionary/`. Lesson: —.
 - **S-04: Planista może ręcznie przypisywać pracowników do zmian w grafiku roboczym i poprawiać te wpisy.** — Archived 2026-11-25 → `context/archive/2026-11-24-manual-shift-assignment/`. Lesson: —.
+- **S-03: Planista może utworzyć grafik tygodniowy: wybrać okres (tydzień od daty początkowej), zmiany i pracowników oraz określić wymaganą liczbę osób na zmianę w każdym dniu, a potem znaleźć grafik na liście i edytować szkic.** — Archived 2026-11-26 → `context/archive/2026-11-05-weekly-schedule-draft/`. Lesson: —.
+- **S-06: Planista może zobaczyć w grafiku sumę godzin każdego pracownika względem normy wynikającej z jego wymiaru czasu pracy.** — Archived 2026-11-26 → `context/archive/2026-11-25-workload-vs-norm/`. Lesson: —.

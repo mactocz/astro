@@ -31,12 +31,19 @@ export function useWorkload({
 
   return useMemo(() => {
     const roster = new Set(employeeIds);
-    const rows = summarizeWorkload({
-      startDate,
-      assignments: list,
-      shifts,
-      employees: employees.filter((employee) => roster.has(employee.id)),
-    });
-    return Object.fromEntries(rows.map((row): [string, WorkloadText] => [row.employeeId, formatWorkload(row)]));
+    try {
+      const rows = summarizeWorkload({
+        startDate,
+        assignments: list,
+        shifts,
+        employees: employees.filter((employee) => roster.has(employee.id)),
+      });
+      return Object.fromEntries(rows.map((row): [string, WorkloadText] => [row.employeeId, formatWorkload(row)]));
+    } catch {
+      // A bad start date or FTE makes the norm throw. The database constraints keep that out of reach today; if it ever
+      // happens the column stays empty (never a number that was not computed) and the list of violations says that
+      // the rules could not be computed either, so the rest of the island keeps working.
+      return {};
+    }
   }, [startDate, employeeIds, shifts, employees, list]);
 }
