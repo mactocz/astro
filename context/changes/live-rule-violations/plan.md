@@ -394,8 +394,8 @@ Równolegle jest planowany S-06 (`workload-vs-norm`, plan w `context/changes/wor
 
 #### Automated
 
-- [ ] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 5.2 Smoke z krokami wskazań przechodzi lokalnie: `npm run smoke`
+- [x] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 5.2 Smoke z krokami wskazań przechodzi lokalnie: `npm run smoke`
 - [ ] 5.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
 
 #### Manual
