@@ -25,3 +25,15 @@ export function toEmployeeOptions(employees: readonly Employee[]): EmployeeOptio
     fte: { numerator: employee.fte.numerator, denominator: employee.fte.denominator },
   }));
 }
+
+/**
+ * The placeholder for a shift that a schedule still refers to but the dictionary no longer lists: it keeps its row or its
+ * buttons on the page, so that nothing in the schedule is hidden. For display only. It has no hours: `times` and `duration`
+ * are empty and both minutes are 0, which is a zero-length shift that `validateShiftInput` and the database refuse. It must
+ * never be passed to the work-time rules, which take the shifts of the dictionary only (an assignment to a shift that is
+ * not on their list is left out of the time rules on purpose); with it in the list, a 00:00-00:00 segment would give false
+ * violations.
+ */
+export function unavailableShift(id: string): ShiftOption {
+  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "", startMinute: 0, endMinute: 0 };
+}

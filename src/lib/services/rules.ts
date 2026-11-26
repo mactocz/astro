@@ -1,4 +1,5 @@
 import { summarizeCoverage } from "@/lib/services/assignment";
+import { holidaysInWeek } from "@/lib/services/calendar";
 import { formatFteLabel } from "@/lib/services/fte";
 import { PERIOD_DAYS, compareText, dayColumns, formatPeriod } from "@/lib/services/schedule";
 import { MINUTES_PER_DAY, formatDuration, formatShiftTimes, formatTime } from "@/lib/services/shift";
@@ -6,7 +7,7 @@ import {
   exceedsNorm,
   normMinutes,
   shiftInterval,
-  weeklyNorm,
+  weeklyNormWithHolidays,
   workedMinutesByEmployee,
   type ShiftTimes,
 } from "@/lib/services/work-hours";
@@ -16,6 +17,7 @@ import type {
   StaffingCell,
   Violation,
   ViolationAnchor,
+  ViolationCounts,
   ViolationRule,
   ViolationSeverity,
 } from "@/types";
@@ -42,17 +44,21 @@ export const WEEKLY_REST_SHIFT_CHANGE_MINUTES = 1440;
 /** The seven days of a schedule in minutes. */
 export const WEEK_MINUTES = PERIOD_DAYS * MINUTES_PER_DAY;
 
-/** The rules in the order a result lists them. */
-export const RULE_ORDER: readonly ViolationRule[] = [
-  "daily_rest",
-  "daily_hours",
-  "weekly_hours",
-  "weekly_rest",
-  "weekly_norm",
-  "understaffed",
-];
+/**
+ * The place of each rule in the order a result lists them, the lowest first. A table with a key for every rule, so that a
+ * rule added to `ViolationRule` and left out here does not compile (it would sort before all the others otherwise).
+ */
+export const RULE_RANK = {
+  daily_rest: 0,
+  daily_hours: 1,
+  weekly_hours: 2,
+  weekly_rest: 3,
+  weekly_norm: 4,
+  understaffed: 5,
+} as const satisfies Record<ViolationRule, number>;
 
-const SEVERITY_ORDER: readonly ViolationSeverity[] = ["critical", "warning"];
+// The same for the severity: critical first.
+const SEVERITY_RANK = { critical: 0, warning: 1 } as const satisfies Record<ViolationSeverity, number>;
 
 // What stands in a key and in an anchor for "no employee".
 const NO_EMPLOYEE = "-";
@@ -83,14 +89,16 @@ export function anchorKey({ dayOffset, shiftId, employeeId }: ViolationAnchor): 
 /**
  * The key of a violation: `<rule>|<employee id or ->|<anchor keys>`, the anchor keys in code-unit order and joined with
  * commas. It holds ids and the day offset of an anchor only, no number computed from the data, no index and no time, so
- * the same finding has the same key whatever the order of the input or the hours of the shifts.
+ * the same finding has the same key whatever the order of the input or the hours of the shifts. `keyAnchors` are the
+ * anchors that identify the finding: all of its anchors, except for `daily_hours`, which is identified by the assignment
+ * that opens its window (see `dailyHours`).
  */
 export function violationKey(
   rule: ViolationRule,
   employeeId: string | null,
-  anchors: readonly ViolationAnchor[],
+  keyAnchors: readonly ViolationAnchor[],
 ): string {
-  const keys = anchors.map((anchor) => anchorKey(anchor)).sort(compareText);
+  const keys = keyAnchors.map((anchor) => anchorKey(anchor)).sort(compareText);
   return `${rule}|${employeeId ?? NO_EMPLOYEE}|${keys.join(",")}`;
 }
 
@@ -106,14 +114,14 @@ function compareEmployees(a: string | null, b: string | null): number {
 }
 
 /**
- * The canonical order of violations: the severity (critical first), the rule (`RULE_ORDER`), the employee (by id, a cell
+ * The canonical order of violations: the severity (critical first), the rule (`RULE_RANK`), the employee (by id, a cell
  * without one last), then the key. Plain code-unit order for the text, never a collator, so that the same findings come in
  * the same order whatever the locale and the order of the input.
  */
 export function compareViolations(a: Violation, b: Violation): number {
   return (
-    SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) ||
-    RULE_ORDER.indexOf(a.rule) - RULE_ORDER.indexOf(b.rule) ||
+    SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+    RULE_RANK[a.rule] - RULE_RANK[b.rule] ||
     compareEmployees(a.employeeId, b.employeeId) ||
     compareText(a.key, b.key)
   );
@@ -203,7 +211,8 @@ function prepare(input: RuleInput): Context {
   };
 }
 
-// A violation. The anchors are sorted, so the same finding always has the same list and key.
+// A violation. The anchors are sorted, so the same finding always has the same list and key. The key is made of `keyAnchors`,
+// which are the anchors unless the finding is identified by fewer of them than it reaches.
 function violationOf(
   severity: ViolationSeverity,
   rule: ViolationRule,
@@ -213,10 +222,11 @@ function violationOf(
   actual: number,
   limit: number,
   unit: Violation["unit"],
+  keyAnchors: readonly ViolationAnchor[] = anchors,
 ): Violation {
   const sorted = [...anchors].sort((a, b) => compareText(anchorKey(a), anchorKey(b)));
   return {
-    key: violationKey(rule, employeeId, sorted),
+    key: violationKey(rule, employeeId, keyAnchors),
     severity,
     rule,
     employeeId,
@@ -236,8 +246,9 @@ function criticalViolation(
   reason: string,
   actual: number,
   limit: number,
+  keyAnchors: readonly ViolationAnchor[] = anchors,
 ): Violation {
-  return violationOf("critical", rule, employeeId, anchors, reason, actual, limit, "minutes");
+  return violationOf("critical", rule, employeeId, anchors, reason, actual, limit, "minutes", keyAnchors);
 }
 
 function dailyRest({ timelines, nameOf, describe }: Context): Violation[] {
@@ -278,7 +289,9 @@ function dailyRest({ timelines, nameOf, describe }: Context): Violation[] {
 
 // The window of a day opens at the start of each shift and lasts 24 hours. The work in it is what the person actually works
 // there: a shift from the day before that reaches into the window counts for the part inside it, and the shifts add up
-// (two shifts that overlap are two shifts of work, and are reported as an overlap by the rest rule).
+// (two shifts that overlap are two shifts of work, and are reported as an overlap by the rest rule). The anchors are all the
+// assignments that reach into the window, but the key is made of the one that opens it: the same finding keeps its key when
+// another shift is added to the window.
 function dailyHours({ timelines, nameOf, dayLabel }: Context): Violation[] {
   const violations: Violation[] = [];
   for (const { employeeId, segments } of timelines) {
@@ -313,6 +326,7 @@ function dailyHours({ timelines, nameOf, dayLabel }: Context): Violation[] {
           `${nameOf(employeeId)}: w dobie liczonej od ${opening} przepracowane ${formatDuration(worked)}, dopuszczalne najwyżej ${formatDuration(DAILY_HOURS_MINUTES)}.${note}`,
           worked,
           DAILY_HOURS_MINUTES,
+          [anchorOf(origin)],
         ),
       );
     }
@@ -446,8 +460,10 @@ function formatHolidays(holidays: readonly string[]): string {
 }
 
 // The hours of a week against the norm of the FTE. The comparison is exact (`exceedsNorm`), and the limit shown is the norm
-// rounded to the minute. A person who is not in the list of employees has no FTE, so they are skipped; one with no hours
-// cannot exceed a norm.
+// rounded to the minute. When the work equals that rounded limit and still exceeds the exact norm, the reason says so, as the
+// two numbers it shows would be equal otherwise. A person who is not in the list of employees has no FTE, so they are
+// skipped; one with no hours cannot exceed a norm. The holidays of the week are the same for everybody, so they are looked
+// up once.
 function weeklyNormWarnings(
   { startDate, assignments, shifts, employees }: RuleInput,
   { period }: Context,
@@ -457,25 +473,27 @@ function weeklyNormWarnings(
   const people = new Map(
     employees.map((employee): [string, RuleInput["employees"][number]] => [employee.id, employee]),
   );
+  const holidays = holidaysInWeek(startDate);
   const violations: Violation[] = [];
   for (const { id, name, fte } of people.values()) {
     const minutes = worked.get(id);
     if (minutes === undefined) {
       continue;
     }
-    const norm = weeklyNorm(startDate, fte);
+    const norm = weeklyNormWithHolidays(holidays, fte);
     if (!exceedsNorm(minutes, norm)) {
       continue;
     }
     const limit = normMinutes(norm);
     const lowered = norm.holidays.length > 0 ? ` po pomniejszeniu o ${formatHolidays(norm.holidays)}` : "";
+    const fraction = minutes === limit ? " (przekroczona o ułamek minuty)" : "";
     violations.push(
       violationOf(
         "warning",
         "weekly_norm",
         id,
         [],
-        `${name}: w tygodniu grafiku (${period}) łączny czas pracy ${formatDuration(minutes)}, norma tygodniowa (${formatFteLabel(norm.fte)}) to ${formatDuration(limit)}${lowered}.`,
+        `${name}: w tygodniu grafiku (${period}) łączny czas pracy ${formatDuration(minutes)}, norma tygodniowa (${formatFteLabel(norm.fte)}) to ${formatDuration(limit)}${lowered}${fraction}.`,
         minutes,
         limit,
         "minutes",
@@ -517,8 +535,9 @@ export function dailyRestViolations(input: RuleInput): Violation[] {
 /**
  * The hours in a day (art. 129 with art. 128 § 3): at most 8 h (480 minutes; 481 is not allowed) of work in the 24 hours
  * from the start of any shift. A window that opens inside one already reported for the person is skipped, so a group of
- * overlapping windows is one violation. The anchors are the assignments that reach into the window. A shift longer than 8 h
- * adds the sentence that the equivalent working-time system (art. 135) is not supported. Critical.
+ * overlapping windows is one violation. The anchors are the assignments that reach into the window, and the key is made of
+ * the one that opens it, so that another shift in the same window changes the anchors and not the key. A shift longer than
+ * 8 h adds the sentence that the equivalent working-time system (art. 135) is not supported. Critical.
  */
 export function dailyHoursViolations(input: RuleInput): Violation[] {
   return dailyHours(prepare(input));
@@ -549,7 +568,8 @@ export function weeklyRestViolations(input: RuleInput): Violation[] {
  * The weekly norm (art. 130, in the form of a week of the schedule): a person on the list of employees whose work in the
  * seven days of the schedule is above 40 h times the FTE, less 8 h times the FTE for each holiday on a day other than Sunday,
  * gets a warning. The comparison is exact (3/7 of 40 h is 1028.57 minutes, so 1029 exceeds it and 1028 does not); `limit`
- * is the norm rounded to the minute. A person who is not in `employees` is skipped. No anchors. A warning, not a critical
+ * is the norm rounded to the minute, and when the work equals it (1029) the reason adds that the norm is exceeded by a
+ * fraction of a minute. A person who is not in `employees` is skipped. No anchors. A warning, not a critical
  * violation: the norm of the law is monthly and averaged, so one week above it is not a breach by itself.
  */
 export function weeklyNormViolations(input: RuleInput): Violation[] {
@@ -584,7 +604,7 @@ export function evaluateSchedule(input: RuleInput): Violation[] {
 }
 
 /** How many violations are critical and how many are warnings, for the counter of the view. */
-export function summarizeViolations(violations: readonly Violation[]): { critical: number; warning: number } {
+export function summarizeViolations(violations: readonly Violation[]): ViolationCounts {
   return {
     critical: violations.filter(({ severity }) => severity === "critical").length,
     warning: violations.filter(({ severity }) => severity === "warning").length,

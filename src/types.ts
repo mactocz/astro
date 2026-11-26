@@ -137,7 +137,9 @@ export interface ViolationAnchor {
 export interface Violation {
   /**
    * Stable identity: `<rule>|<employee id or ->|<anchor keys>`, with no number computed from the data, no index and no
-   * time in it, so the same finding has the same key whatever the order of the input.
+   * time in it, so the same finding has the same key whatever the order of the input. The anchor keys are those of
+   * `anchors`, except for `daily_hours`: its key holds the opening assignment of the window only, so another shift that
+   * reaches into the same window lengthens `anchors` and leaves the key as it was.
    */
   key: string;
   severity: ViolationSeverity;
@@ -153,6 +155,12 @@ export interface Violation {
   /** The limit the value is held against, in the `unit`. */
   limit: number;
   unit: "minutes" | "people";
+}
+
+/** How many violations are critical and how many are warnings, for the counter of the view. */
+export interface ViolationCounts {
+  critical: number;
+  warning: number;
 }
 
 /** A shift as the schedule pages offer it: the times already formatted, plus the minutes the work-time rules use. */

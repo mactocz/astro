@@ -5,6 +5,7 @@ import { useScheduleForm } from "@/components/hooks/useScheduleForm";
 import { EmployeePicker } from "@/components/schedules/EmployeePicker";
 import { StaffingGrid } from "@/components/schedules/StaffingGrid";
 import { Button } from "@/components/ui/button";
+import { unavailableShift } from "@/lib/schedule-options";
 import {
   PERIOD_DAYS,
   SCHEDULE_LABEL_MAX_LENGTH,
@@ -37,18 +38,14 @@ function periodPreview(startDate: string): string | null {
   return parseIsoDate(startDate) ? `Okres: ${formatPeriod(startDate)}, ${PERIOD_DAYS} dni` : null;
 }
 
-// A shift that is in the stored schedule but no longer on the list: it keeps its row, so a save does not drop its cells.
-function unavailableShift(id: string): ShiftOption {
-  return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "", startMinute: 0, endMinute: 0 };
-}
-
 export default function ScheduleForm({ shifts, employees, schedule, assignmentCount = 0 }: Props) {
   const form = useScheduleForm({ schedule, employees, assignmentCount });
   const { values, fieldErrors, serverError, pending, removal } = form;
 
   const inGrid = new Set(values.shiftIds);
   const offered = new Set(shifts.map((shift) => shift.id));
-  // The rows follow the order of the shift list, whatever the order they were added in.
+  // The rows follow the order of the shift list, whatever the order they were added in. A shift that is in the stored schedule
+  // but no longer on the list keeps its row (the placeholder), so a save does not drop its cells.
   const rows = [
     ...shifts.filter((shift) => inGrid.has(shift.id)),
     ...values.shiftIds.filter((id) => !offered.has(id)).map(unavailableShift),

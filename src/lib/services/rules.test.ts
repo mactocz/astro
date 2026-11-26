@@ -3,7 +3,7 @@ import {
   DAILY_HOURS_MINUTES,
   DAILY_REST_MINUTES,
   DAY_WINDOW_MINUTES,
-  RULE_ORDER,
+  RULE_RANK,
   WEEKLY_HOURS_MINUTES,
   WEEKLY_REST_MINUTES,
   WEEKLY_REST_SHIFT_CHANGE_MINUTES,
@@ -106,6 +106,9 @@ function workedCase(minutes: number, extra: Partial<RuleInput> = {}): RuleInput 
   return input(assignments, { shifts: [...SHIFTS, ...shifts], ...extra });
 }
 
+// Every rule, in the order of its rank.
+const ALL_RULES = (Object.keys(RULE_RANK) as ViolationRule[]).sort((a, b) => RULE_RANK[a] - RULE_RANK[b]);
+
 const reasonsOf = (violations: readonly Violation[]) => violations.map(({ reason }) => reason);
 const keysOf = (violations: readonly Violation[]) => violations.map(({ key }) => key);
 const rulesOf = (violations: readonly Violation[]) => violations.map(({ rule }) => rule);
@@ -130,8 +133,8 @@ describe("the thresholds", () => {
     expect(WEEK_MINUTES).toBe(10080);
   });
 
-  it("list the rules in the order of a result", () => {
-    expect(RULE_ORDER).toStrictEqual([
+  it("rank the rules in the order of a result, each with a rank of its own", () => {
+    expect(ALL_RULES).toStrictEqual([
       "daily_rest",
       "daily_hours",
       "weekly_hours",
@@ -139,6 +142,7 @@ describe("the thresholds", () => {
       "weekly_norm",
       "understaffed",
     ]);
+    expect(new Set(Object.values(RULE_RANK)).size).toBe(ALL_RULES.length);
   });
 });
 
@@ -426,7 +430,8 @@ describe("dailyHoursViolations", () => {
 
     expect(violations).toStrictEqual([
       {
-        key: `daily_hours|${ANNA}|0:${DAY}:${ANNA},1:${MORNING}:${ANNA}`,
+        // The key is the assignment that opens the window; the anchors hold both shifts that reach into it.
+        key: `daily_hours|${ANNA}|0:${DAY}:${ANNA}`,
         severity: "critical",
         rule: "daily_hours",
         employeeId: ANNA,
@@ -503,6 +508,27 @@ describe("dailyHoursViolations", () => {
       expect(violations).toHaveLength(1);
       expect(violations[0].actual).toBe(900);
       expect(anchorsOf(violations[0])).toStrictEqual([`0:g1:${ANNA}`, `0:g2:${ANNA}`, `0:g3:${ANNA}`]);
+    });
+
+    it("keeps its key when another shift is added to the window, and only the list of anchors grows", () => {
+      // 04:00-09:00 and 10:00-15:00 make 10 h in the window that opens at 04:00; the third shift (16:00-21:00) joins it.
+      const two = dailyHoursViolations(input(monday.slice(0, 2), { shifts }));
+      const three = dailyHoursViolations(input(monday, { shifts }));
+
+      expect(keysOf(two)).toStrictEqual([`daily_hours|${ANNA}|0:g1:${ANNA}`]);
+      expect(keysOf(three)).toStrictEqual(keysOf(two));
+      expect(two.map(anchorsOf)).toStrictEqual([[`0:g1:${ANNA}`, `0:g2:${ANNA}`]]);
+      expect(three.map(anchorsOf)).toStrictEqual([[`0:g1:${ANNA}`, `0:g2:${ANNA}`, `0:g3:${ANNA}`]]);
+      expect([two[0].actual, three[0].actual]).toStrictEqual([600, 900]);
+    });
+
+    it("is keyed by the opening assignment whatever the order of the input, and by another one in another window", () => {
+      const reversed = dailyHoursViolations(input([...monday].reverse(), { shifts: [...shifts].reverse() }));
+      const later = dailyHoursViolations(input([assignment("g2", 0, ANNA), assignment("g3", 0, ANNA)], { shifts }));
+
+      expect(keysOf(reversed)).toStrictEqual([`daily_hours|${ANNA}|0:g1:${ANNA}`]);
+      // Without the first shift the window opens at 10:00 and holds 10 h: a finding of its own, with its own key.
+      expect(keysOf(later)).toStrictEqual([`daily_hours|${ANNA}|0:g2:${ANNA}`]);
     });
 
     it("is reported again when the next group starts after the 24 h of the first", () => {
@@ -901,7 +927,7 @@ describe("weeklyNormViolations", () => {
     ]);
   });
 
-  it.each<{ fte: Fte; worked: number; reason: string }>([
+  it.each<{ fte: Fte; worked: number; startDate?: string; reason: string }>([
     {
       fte: fte(3, 4),
       worked: 1801,
@@ -913,16 +939,54 @@ describe("weeklyNormViolations", () => {
       reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 20 h 1 min, norma tygodniowa (1/2 etatu) to 20 h.`,
     },
     {
-      // The norm is rounded to the minute for people: 17 h 9 min, and the work is above it by less than a minute.
+      // The norm is rounded to the minute for people: 17 h 9 min, and the work equals it but is above the exact norm
+      // (1028.57 minutes) by a fraction of a minute, which the reason says.
       fte: fte(3, 7),
       worked: 1029,
-      reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 17 h 9 min, norma tygodniowa (3/7 etatu) to 17 h 9 min.`,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 17 h 9 min, norma tygodniowa (3/7 etatu) to 17 h 9 min (przekroczona o ułamek minuty).`,
     },
-  ])("names the FTE of $fte.numerator/$fte.denominator in the reason", ({ fte: employeeFte, worked, reason }) => {
-    expect(reasonsOf(weeklyNormViolations(workedCase(worked, { employees: onlyAnna(employeeFte) })))).toStrictEqual([
-      reason,
-    ]);
-  });
+    {
+      // 1/7 of 40 h is 342.86 minutes, shown as 5 h 43 min (343): the work equals the rounded norm again.
+      fte: fte(1, 7),
+      worked: 343,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 5 h 43 min, norma tygodniowa (1/7 etatu) to 5 h 43 min (przekroczona o ułamek minuty).`,
+    },
+    {
+      // A minute above the rounded norm: the two numbers differ, so there is nothing to explain.
+      fte: fte(1, 7),
+      worked: 344,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 5 h 44 min, norma tygodniowa (1/7 etatu) to 5 h 43 min.`,
+    },
+    {
+      // The norm rounds down (1/7 of 32 h is 274.29 minutes, shown as 274): 275 is above both, no remark.
+      fte: fte(1, 7),
+      worked: 275,
+      startDate: "2026-11-10",
+      reason:
+        "Wiśniewska Anna: w tygodniu grafiku (10.11–16.11.2026) łączny czas pracy 4 h 35 min, norma tygodniowa (1/7 etatu) to 4 h 34 min po pomniejszeniu o święto 11.11.",
+    },
+    {
+      // The remark comes after the holidays that lowered the norm (3/7 of 32 h is 822.86 minutes, shown as 823).
+      fte: fte(3, 7),
+      worked: 823,
+      startDate: "2026-11-10",
+      reason:
+        "Wiśniewska Anna: w tygodniu grafiku (10.11–16.11.2026) łączny czas pracy 13 h 43 min, norma tygodniowa (3/7 etatu) to 13 h 43 min po pomniejszeniu o święto 11.11 (przekroczona o ułamek minuty).",
+    },
+    {
+      // A norm that is a whole number of minutes (1/5 of 40 h is 480): the limit is exact, so there is never a remark.
+      fte: fte(1, 5),
+      worked: 481,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 8 h 1 min, norma tygodniowa (1/5 etatu) to 8 h.`,
+    },
+  ])(
+    "names the FTE of $fte.numerator/$fte.denominator in the reason, with the remark on a fraction of a minute only when the numbers are equal",
+    ({ fte: employeeFte, worked, startDate, reason }) => {
+      const rules = workedCase(worked, { employees: onlyAnna(employeeFte), startDate: startDate ?? START_DATE });
+
+      expect(reasonsOf(weeklyNormViolations(rules))).toStrictEqual([reason]);
+    },
+  );
 
   // The norm of a week is lowered by 8 h times the FTE for each holiday on a day other than Sunday, and the reason names them.
   it.each<{ startDate: string; employeeFte: Fte; norm: number; reason: string }>([
@@ -1213,7 +1277,7 @@ describe("evaluateSchedule", () => {
         unit: "minutes",
       },
       {
-        key: `daily_hours|${ANNA}|0:${EVENING}:${ANNA},1:${MORNING}:${ANNA}`,
+        key: `daily_hours|${ANNA}|0:${EVENING}:${ANNA}`,
         severity: "critical",
         reason: "Wiśniewska Anna: w dobie liczonej od pon. 02.11, 14:00 przepracowane 16 h, dopuszczalne najwyżej 8 h.",
         actual: 960,
@@ -1485,9 +1549,7 @@ describe("the rules together", () => {
 
     expect(together).toStrictEqual(apart);
     expect([...together].sort(compareViolations)).toStrictEqual(together);
-    expect(rulesOf(together)).toStrictEqual(
-      [...rulesOf(together)].sort((a, b) => RULE_ORDER.indexOf(a) - RULE_ORDER.indexOf(b)),
-    );
+    expect(rulesOf(together)).toStrictEqual([...rulesOf(together)].sort((a, b) => RULE_RANK[a] - RULE_RANK[b]));
   });
 
   it("list each rule in the order of the employee id, then of the key", () => {
@@ -1508,7 +1570,7 @@ describe("the rules together", () => {
     const changed = criticalOf({ ...roster, shifts: later });
 
     expect(new Set(keysOf(violations)).size).toBe(violations.length);
-    expect(keysOf(violations).every((key) => RULE_ORDER.some((rule) => key.startsWith(`${rule}|`)))).toBe(true);
+    expect(keysOf(violations).every((key) => ALL_RULES.some((rule) => key.startsWith(`${rule}|`)))).toBe(true);
     expect(keysOf(changed)).toStrictEqual(keysOf(violations));
     expect(changed).not.toStrictEqual(violations);
     expect(
@@ -1520,7 +1582,7 @@ describe("the rules together", () => {
     const violations = evaluateSchedule(roster);
     const firstWarning = violations.findIndex(({ severity }) => severity === "warning");
 
-    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(RULE_ORDER));
+    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(ALL_RULES));
     expect(violations.slice(0, firstWarning).every(({ severity }) => severity === "critical")).toBe(true);
     expect(violations.slice(firstWarning).every(({ severity }) => severity === "warning")).toBe(true);
     expect(violations.filter(({ rule }) => rule === "weekly_norm").map(({ employeeId }) => employeeId)).toStrictEqual([
@@ -1593,7 +1655,7 @@ describe("repeatability of the rules", () => {
     const violations = evaluateSchedule(base);
 
     expect(new Set(rulesOf(criticalOf(base))).size).toBe(4);
-    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(RULE_ORDER));
+    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(ALL_RULES));
     expect(violations.filter(({ rule }) => rule === "understaffed")).toHaveLength(4);
     expect(new Set(keysOf(violations)).size).toBe(violations.length);
   });

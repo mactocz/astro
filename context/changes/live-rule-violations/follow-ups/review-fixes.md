@@ -14,3 +14,7 @@ Poprawki zakolejkowane w triage przeglądu implementacji (`reviews/impl-review.m
 | F8 | Wspólny pomocnik `unavailableShift` zamiast dwóch kopii | `src/lib/schedule-options.ts`, `AssignmentGrid.tsx`, `ScheduleForm.tsx` | nigdy nie trafia do reguł |
 | F9 | Klucz `daily_hours` kluczowany otwierającą zmianą okna (lista kotwic zostaje pełna) | `src/lib/services/rules.ts` (+test) | zaktualizować testy kluczy |
 | F10 | Kontrast `/60`, zdanie w CLAUDE.md o niedoborze, komentarze smoke, wspólny typ `ViolationCounts` w `types.ts`, krótki test `fte.ts` | `ViolationList.tsx`, `AssignmentGrid.tsx`, `CLAUDE.md`, `scripts/smoke.mjs`, `src/types.ts`, `violation-view.ts`, `rules.ts`, nowy `fte.test.ts` | punkt 6 (test ścieżki klienckiej) zostaje jako znane ograniczenie |
+
+## Status
+
+F1 do F10 zrealizowane na gałęzi `change/review-fixes-s05` (2026-11-26), jednym commitem. Bramki: `astro sync`, lint (z nową regułą z F3), `astro check` (0/0/0), `npm test` (1597), build i pełny smoke (684 kroki). Kontrola celowego uszkodzenia (klucz `daily_hours`, ranga reguł, dopisek ułamka minuty, norma ze świętami liczonymi raz, `safeEvaluate`, wspólna atrapa zmiany) wywróciła właściwe testy; reguła ESLint zgłasza zabronione `new Date(y, m, d)` i `Date.parse` w serwisach. Poza kolejką: `useWorkload` dostał to samo zabezpieczenie przed `RangeError` co `useViolations` (uwaga agenta F7), a kolumna "Wskazania" pokazuje "nie policzono" zamiast "brak", gdy reguł nie dało się policzyć.

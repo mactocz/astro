@@ -1,15 +1,12 @@
 import { employeeDayKey } from "@/lib/services/assignment";
-import type { Violation } from "@/types";
+import type { Violation, ViolationCounts } from "@/types";
 
 // What the assignment view says about the violations of the live check (S-05): the counts in words, and which violation sits
 // in which cell and row of the people's table. Pure functions, so that the Polish plural forms and the grouping are tested
 // like the rules themselves, and the view only lays the result out.
 
-/** How many violations are critical and how many are warnings. The same shape as `summarizeViolations` returns. */
-export interface ViolationCounts {
-  critical: number;
-  warning: number;
-}
+// The counts that `summarizeViolations` returns, defined in `@/types`; the view components import the type from here.
+export type { ViolationCounts } from "@/types";
 
 /** What stands in the counter of the list when there is nothing to report. */
 export const NO_VIOLATIONS_TEXT = "Brak wskazań";
