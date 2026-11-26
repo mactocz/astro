@@ -27,10 +27,8 @@ export function reduceFte(fte: Fte): Fte {
   return { numerator: fte.numerator / divisor, denominator: fte.denominator / divisor };
 }
 
-/** "pełny etat" for 1/1, otherwise the fraction, e.g. "3/4 etatu". */
-export function formatFteLabel(fte: Fte): string {
-  return fte.numerator === 1 && fte.denominator === 1 ? "pełny etat" : `${fte.numerator}/${fte.denominator} etatu`;
-}
+// Lives in its own module so that code that must stay free of zod (the live rules in the browser and the Worker) can use it.
+export { formatFteLabel } from "@/lib/services/fte";
 
 /** The collapsed name, or undefined when it is empty, too long or holds a control character (tab and newline too). */
 function parseName(value: unknown): string | undefined {

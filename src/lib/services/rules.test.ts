@@ -10,11 +10,14 @@ import {
   WEEK_MINUTES,
   anchorKey,
   compareViolations,
-  criticalViolations,
   dailyHoursViolations,
   dailyRestViolations,
+  evaluateSchedule,
+  summarizeViolations,
+  understaffedViolations,
   violationKey,
   weeklyHoursViolations,
+  weeklyNormViolations,
   weeklyRestViolations,
   type RuleInput,
 } from "@/lib/services/rules";
@@ -84,12 +87,36 @@ function chain(employeeId: string, from: number, to: number, tag: string) {
   return { shifts, assignments };
 }
 
+// The shifts and the assignments that give a person exactly `minutes` of work: shifts of 600 minutes at most, one a day from
+// the first day on (so up to 4200 minutes). The other rules have their say about these shifts, which are meant for the norm.
+function work(employeeId: string, minutes: number) {
+  const shifts: ShiftTimes[] = [];
+  const assignments: AssignmentInput[] = [];
+  for (let left = minutes; left > 0; left -= 600) {
+    const id = `${employeeId}-work-${shifts.length}`;
+    shifts.push(customShift(id, `Praca ${shifts.length}`, 360, (360 + Math.min(left, 600)) % MINUTES_PER_DAY));
+    assignments.push(assignment(id, assignments.length, employeeId));
+  }
+  return { shifts, assignments };
+}
+
+// Anna (a full-time employee, unless `extra` says otherwise) works exactly `minutes` in the week.
+function workedCase(minutes: number, extra: Partial<RuleInput> = {}): RuleInput {
+  const { shifts, assignments } = work(ANNA, minutes);
+  return input(assignments, { shifts: [...SHIFTS, ...shifts], ...extra });
+}
+
 const reasonsOf = (violations: readonly Violation[]) => violations.map(({ reason }) => reason);
 const keysOf = (violations: readonly Violation[]) => violations.map(({ key }) => key);
 const rulesOf = (violations: readonly Violation[]) => violations.map(({ rule }) => rule);
 
 function anchorsOf(violation: Violation): string[] {
   return violation.anchors.map(anchorKey);
+}
+
+// The four critical rules together: what `evaluateSchedule` gives without its two warnings.
+function criticalOf(rules: RuleInput): Violation[] {
+  return evaluateSchedule(rules).filter(({ severity }) => severity === "critical");
 }
 
 describe("the thresholds", () => {
@@ -829,19 +856,559 @@ describe("weeklyRestViolations", () => {
   });
 });
 
+describe("weeklyNormViolations", () => {
+  const fte = (numerator: number, denominator: number): Fte => ({ numerator, denominator });
+  const onlyAnna = (anna: Fte) => [{ id: ANNA, name: "Wiśniewska Anna", fte: anna }];
+
+  it.each<{ fte: Fte; worked: number; violates: boolean; limit: number }>([
+    { fte: FULL, worked: 2399, violates: false, limit: 2400 },
+    { fte: FULL, worked: 2400, violates: false, limit: 2400 },
+    { fte: FULL, worked: 2401, violates: true, limit: 2400 },
+    { fte: fte(3, 4), worked: 1800, violates: false, limit: 1800 },
+    { fte: fte(3, 4), worked: 1801, violates: true, limit: 1800 },
+    { fte: fte(1, 2), worked: 1200, violates: false, limit: 1200 },
+    { fte: fte(1, 2), worked: 1201, violates: true, limit: 1200 },
+    // 3/7 of 40 h is 1028.57 minutes: the norm shows as 1029, but the comparison is exact, so 1029 exceeds it and 1028 does not.
+    { fte: fte(3, 7), worked: 1028, violates: false, limit: 1029 },
+    { fte: fte(3, 7), worked: 1029, violates: true, limit: 1029 },
+    { fte: fte(3, 7), worked: 1030, violates: true, limit: 1029 },
+  ])(
+    "says $violates for $worked minutes of an employee with the FTE $fte.numerator/$fte.denominator",
+    ({ fte: employeeFte, worked, violates, limit }) => {
+      const violations = weeklyNormViolations(workedCase(worked, { employees: onlyAnna(employeeFte) }));
+
+      expect(violations.map(({ actual }) => actual)).toStrictEqual(violates ? [worked] : []);
+      expect(violations.map((violation) => violation.limit)).toStrictEqual(violates ? [limit] : []);
+      expect(violations.map(({ rule, severity, unit }) => [rule, severity, unit])).toStrictEqual(
+        violates ? [["weekly_norm", "warning", "minutes"]] : [],
+      );
+    },
+  );
+
+  it("is a warning of the whole week of one person: a stable key, no anchors and a Polish reason with the FTE", () => {
+    expect(weeklyNormViolations(workedCase(2401))).toStrictEqual([
+      {
+        key: `weekly_norm|${ANNA}|`,
+        severity: "warning",
+        rule: "weekly_norm",
+        employeeId: ANNA,
+        anchors: [],
+        reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 40 h 1 min, norma tygodniowa (pełny etat) to 40 h.`,
+        actual: 2401,
+        limit: 2400,
+        unit: "minutes",
+      },
+    ]);
+  });
+
+  it.each<{ fte: Fte; worked: number; reason: string }>([
+    {
+      fte: fte(3, 4),
+      worked: 1801,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 30 h 1 min, norma tygodniowa (3/4 etatu) to 30 h.`,
+    },
+    {
+      fte: fte(1, 2),
+      worked: 1201,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 20 h 1 min, norma tygodniowa (1/2 etatu) to 20 h.`,
+    },
+    {
+      // The norm is rounded to the minute for people: 17 h 9 min, and the work is above it by less than a minute.
+      fte: fte(3, 7),
+      worked: 1029,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy 17 h 9 min, norma tygodniowa (3/7 etatu) to 17 h 9 min.`,
+    },
+  ])("names the FTE of $fte.numerator/$fte.denominator in the reason", ({ fte: employeeFte, worked, reason }) => {
+    expect(reasonsOf(weeklyNormViolations(workedCase(worked, { employees: onlyAnna(employeeFte) })))).toStrictEqual([
+      reason,
+    ]);
+  });
+
+  // The norm of a week is lowered by 8 h times the FTE for each holiday on a day other than Sunday, and the reason names them.
+  it.each<{ startDate: string; employeeFte: Fte; norm: number; reason: string }>([
+    {
+      // Wednesday 11.11 is a holiday.
+      startDate: "2026-11-10",
+      employeeFte: FULL,
+      norm: 1920,
+      reason:
+        "Wiśniewska Anna: w tygodniu grafiku (10.11–16.11.2026) łączny czas pracy 32 h 1 min, norma tygodniowa (pełny etat) to 32 h po pomniejszeniu o święto 11.11.",
+    },
+    {
+      startDate: "2026-11-10",
+      employeeFte: fte(3, 4),
+      norm: 1440,
+      reason:
+        "Wiśniewska Anna: w tygodniu grafiku (10.11–16.11.2026) łączny czas pracy 24 h 1 min, norma tygodniowa (3/4 etatu) to 24 h po pomniejszeniu o święto 11.11.",
+    },
+    {
+      // Friday 25.12 and Saturday 26.12.
+      startDate: "2026-12-25",
+      employeeFte: FULL,
+      norm: 1440,
+      reason:
+        "Wiśniewska Anna: w tygodniu grafiku (25.12–31.12.2026) łączny czas pracy 24 h 1 min, norma tygodniowa (pełny etat) to 24 h po pomniejszeniu o święta 25.12 i 26.12.",
+    },
+    {
+      // Thursday 24.12 (a day off from 2025), then 25.12 and 26.12.
+      startDate: "2026-12-24",
+      employeeFte: FULL,
+      norm: 960,
+      reason:
+        "Wiśniewska Anna: w tygodniu grafiku (24.12–30.12.2026) łączny czas pracy 16 h 1 min, norma tygodniowa (pełny etat) to 16 h po pomniejszeniu o święta 24.12, 25.12 i 26.12.",
+    },
+    {
+      // The only holiday of the week, 1.11, is a Sunday: the norm stays 40 h and the reason has no holiday.
+      startDate: "2026-10-26",
+      employeeFte: FULL,
+      norm: 2400,
+      reason:
+        "Wiśniewska Anna: w tygodniu grafiku (26.10–01.11.2026) łączny czas pracy 40 h 1 min, norma tygodniowa (pełny etat) to 40 h.",
+    },
+  ])(
+    "lowers the norm to $norm minutes for the week from $startDate and says why",
+    ({ startDate, employeeFte, norm, reason }) => {
+      const at = (worked: number) => workedCase(worked, { startDate, employees: onlyAnna(employeeFte) });
+
+      expect(weeklyNormViolations(at(norm))).toStrictEqual([]);
+      const violations = weeklyNormViolations(at(norm + 1));
+      expect(violations.map(({ actual, limit }) => [actual, limit])).toStrictEqual([[norm + 1, norm]]);
+      expect(reasonsOf(violations)).toStrictEqual([reason]);
+    },
+  );
+
+  it("gives the critical weekly hours and the weekly norm warning together for a person above 48 h", () => {
+    const all = evaluateSchedule(workedCase(2881));
+
+    expect(
+      all
+        .filter(({ rule }) => rule === "weekly_hours" || rule === "weekly_norm")
+        .map(({ rule, severity, actual, limit }) => [rule, severity, actual, limit]),
+    ).toStrictEqual([
+      ["weekly_hours", "critical", 2881, 2880],
+      ["weekly_norm", "warning", 2881, 2400],
+    ]);
+  });
+
+  it("gives only the warning for a person at exactly 48 h, who is above the norm and within the limit", () => {
+    const all = evaluateSchedule(workedCase(2880));
+
+    expect(all.map(({ rule }) => rule).filter((rule) => rule === "weekly_hours")).toStrictEqual([]);
+    expect(all.map(({ rule }) => rule).filter((rule) => rule === "weekly_norm")).toStrictEqual(["weekly_norm"]);
+  });
+
+  it("skips a person who is not on the list of employees, because there is no FTE to take the norm of", () => {
+    const stranger = workedCase(3000, { employees: [{ id: BARTEK, name: "Kowalski Bartek", fte: FULL }] });
+
+    expect(weeklyNormViolations(stranger)).toStrictEqual([]);
+    expect(weeklyNormViolations(workedCase(3000, { employees: [] }))).toStrictEqual([]);
+    // The rules that need no FTE still see the person, by id.
+    expect(weeklyHoursViolations(stranger).map(({ employeeId }) => employeeId)).toStrictEqual([ANNA]);
+  });
+
+  it("judges each person by their own FTE", () => {
+    const anna = work(ANNA, 2401);
+    const bartek = work(BARTEK, 1200);
+    const cezary = work(CEZARY, 1801);
+
+    const violations = weeklyNormViolations(
+      input([...anna.assignments, ...bartek.assignments, ...cezary.assignments], {
+        shifts: [...SHIFTS, ...anna.shifts, ...bartek.shifts, ...cezary.shifts],
+        employees: [
+          { id: CEZARY, name: "Nowak Cezary", fte: fte(3, 4) },
+          { id: BARTEK, name: "Kowalski Bartek", fte: fte(1, 2) },
+          { id: ANNA, name: "Wiśniewska Anna", fte: FULL },
+        ],
+      }),
+    );
+
+    // Bartek works exactly the 20 h of half a post. The list is by employee id.
+    expect(violations.map(({ employeeId, actual, limit }) => [employeeId, actual, limit])).toStrictEqual([
+      [ANNA, 2401, 2400],
+      [CEZARY, 1801, 1800],
+    ]);
+  });
+
+  it("counts the same assignment once and leaves out a shift that has no hours", () => {
+    const week = [0, 1, 2, 3, 4].map((dayOffset) => assignment(DAY, dayOffset, ANNA));
+
+    expect(weeklyNormViolations(input([...week, ...week, assignment(UNKNOWN, 5, ANNA)]))).toStrictEqual([]);
+    expect(weeklyNormViolations(input([...week, assignment(MORNING, 5, ANNA)]))).toHaveLength(1);
+  });
+
+  it("gives nothing for an employee with no work, and judges an employee listed twice once", () => {
+    expect(weeklyNormViolations(input([]))).toStrictEqual([]);
+    expect(weeklyNormViolations(workedCase(2401, { employees: [...onlyAnna(FULL), ...onlyAnna(FULL)] }))).toHaveLength(
+      1,
+    );
+  });
+});
+
+describe("understaffedViolations", () => {
+  const cell = (requiredCount: number, shiftId = MORNING, dayOffset = 0) => ({ shiftId, dayOffset, requiredCount });
+  const people = [ANNA, BARTEK, CEZARY, "extra-1"];
+  const placed = (count: number, shiftId = MORNING, dayOffset = 0) =>
+    people.slice(0, count).map((employeeId) => assignment(shiftId, dayOffset, employeeId));
+
+  it.each<{ assigned: number; missing: number }>([
+    { assigned: 0, missing: 3 },
+    { assigned: 1, missing: 2 },
+    { assigned: 2, missing: 1 },
+    { assigned: 3, missing: 0 },
+    { assigned: 4, missing: 0 },
+  ])("says $missing missing for $assigned people on a cell that needs 3", ({ assigned, missing }) => {
+    const violations = understaffedViolations(input(placed(assigned), { staffing: [cell(3)] }));
+
+    expect(violations).toStrictEqual(
+      missing === 0
+        ? []
+        : [
+            {
+              key: `understaffed|-|0:${MORNING}:-`,
+              severity: "warning",
+              rule: "understaffed",
+              employeeId: null,
+              anchors: [{ shiftId: MORNING, dayOffset: 0, employeeId: null }],
+              reason: `Brak obsady: zmiana Poranna (pon. 02.11, 06:00–14:00): przypisano ${assigned} z 3, brakuje ${missing}.`,
+              actual: assigned,
+              limit: 3,
+              unit: "people",
+            },
+          ],
+    );
+  });
+
+  it("is never a violation for a surplus: a cell in surplus next to a cell in shortage leaves only the shortage", () => {
+    const staffing = [cell(1, MORNING, 0), cell(2, EVENING, 3)];
+    const assignments = [...placed(3, MORNING, 0), ...placed(1, EVENING, 3)];
+
+    const violations = understaffedViolations(input(assignments, { staffing }));
+
+    expect(violations.map(anchorsOf)).toStrictEqual([[`3:${EVENING}:-`]]);
+    expect(evaluateSchedule(input(placed(3), { staffing: [cell(1)] })).map(({ rule }) => rule)).not.toContain(
+      "understaffed",
+    );
+  });
+
+  it("gives a warning for every cell when there is no assignment at all, in the order of the key", () => {
+    const staffing = [cell(2, NIGHT, 1), cell(1, MORNING, 2), cell(3, MORNING, 0)];
+
+    const violations = understaffedViolations(input([], { staffing }));
+
+    expect(keysOf(violations)).toStrictEqual([
+      `understaffed|-|0:${MORNING}:-`,
+      `understaffed|-|1:${NIGHT}:-`,
+      `understaffed|-|2:${MORNING}:-`,
+    ]);
+    expect(violations.map(({ actual, limit }) => [actual, limit])).toStrictEqual([
+      [0, 3],
+      [0, 2],
+      [0, 1],
+    ]);
+    expect(reasonsOf(violations)).toStrictEqual([
+      "Brak obsady: zmiana Poranna (pon. 02.11, 06:00–14:00): przypisano 0 z 3, brakuje 3.",
+      "Brak obsady: zmiana Nocna (wt. 03.11, 22:00–06:00): przypisano 0 z 2, brakuje 2.",
+      "Brak obsady: zmiana Poranna (śr. 04.11, 06:00–14:00): przypisano 0 z 1, brakuje 1.",
+    ]);
+  });
+
+  it("gives nothing for a schedule with no staffing, and nothing for a complete one", () => {
+    expect(understaffedViolations(input(placed(2)))).toStrictEqual([]);
+    expect(understaffedViolations(input(placed(2), { staffing: [cell(2)] }))).toStrictEqual([]);
+  });
+
+  it("counts the same person twice on a cell as one, and not the people on other cells", () => {
+    const assignments = [assignment(MORNING, 0, ANNA), assignment(MORNING, 0, ANNA), assignment(MORNING, 1, BARTEK)];
+
+    expect(reasonsOf(understaffedViolations(input(assignments, { staffing: [cell(2)] })))).toStrictEqual([
+      "Brak obsady: zmiana Poranna (pon. 02.11, 06:00–14:00): przypisano 1 z 2, brakuje 1.",
+    ]);
+  });
+
+  it("names a shift that is not in the list of shifts by its id, with the day only, and still counts the people", () => {
+    const violations = understaffedViolations(
+      input([assignment(UNKNOWN, 3, ANNA)], { staffing: [cell(2, UNKNOWN, 3)] }),
+    );
+
+    expect(reasonsOf(violations)).toStrictEqual([
+      `Brak obsady: zmiana ${UNKNOWN} (czw. 05.11): przypisano 1 z 2, brakuje 1.`,
+    ]);
+    expect(violations.map(anchorsOf)).toStrictEqual([[`3:${UNKNOWN}:-`]]);
+  });
+});
+
+describe("evaluateSchedule", () => {
+  // Anna breaks the daily rest and the hours of a day (an evening shift, then a morning one), Bartek works the seven days
+  // (the weekly hours, the weekly rest and the norm) and Cezary, at 3/4 of a post, works five days above his norm. The
+  // staffing has a cell that is short, one that is complete, one in surplus and one without any assignment.
+  const scenario = input(
+    [
+      assignment(EVENING, 0, ANNA),
+      assignment(MORNING, 1, ANNA),
+      ...[0, 1, 2, 3, 4, 5, 6].map((dayOffset) => assignment(DAY, dayOffset, BARTEK)),
+      ...[1, 2, 3, 4, 5].map((dayOffset) => assignment(DAY, dayOffset, CEZARY)),
+    ],
+    {
+      staffing: [
+        { shiftId: DAY, dayOffset: 0, requiredCount: 3 },
+        { shiftId: DAY, dayOffset: 1, requiredCount: 2 },
+        { shiftId: DAY, dayOffset: 2, requiredCount: 1 },
+        { shiftId: NIGHT, dayOffset: 4, requiredCount: 1 },
+      ],
+      employees: [
+        { id: ANNA, name: "Wiśniewska Anna", fte: FULL },
+        { id: BARTEK, name: "Kowalski Bartek", fte: FULL },
+        { id: CEZARY, name: "Nowak Cezary", fte: { numerator: 3, denominator: 4 } },
+      ],
+    },
+  );
+
+  it("gives no violation for a complete schedule in which everybody keeps every rule", () => {
+    const keeping = input(
+      [
+        ...[0, 1, 2, 3, 4].map((dayOffset) => assignment(DAY, dayOffset, ANNA)),
+        ...[0, 1, 2, 3, 4].map((dayOffset) => assignment(MORNING, dayOffset, BARTEK)),
+        assignment(EVENING, 0, CEZARY),
+        assignment(EVENING, 1, CEZARY),
+      ],
+      {
+        staffing: [
+          ...[0, 1, 2, 3, 4].map((dayOffset) => ({ shiftId: DAY, dayOffset, requiredCount: 1 })),
+          ...[0, 1, 2, 3, 4].map((dayOffset) => ({ shiftId: MORNING, dayOffset, requiredCount: 1 })),
+          { shiftId: EVENING, dayOffset: 0, requiredCount: 1 },
+          { shiftId: EVENING, dayOffset: 1, requiredCount: 1 },
+        ],
+        employees: [
+          { id: ANNA, name: "Wiśniewska Anna", fte: FULL },
+          { id: BARTEK, name: "Kowalski Bartek", fte: FULL },
+          { id: CEZARY, name: "Nowak Cezary", fte: { numerator: 1, denominator: 2 } },
+        ],
+      },
+    );
+
+    expect(evaluateSchedule(keeping)).toStrictEqual([]);
+    expect(evaluateSchedule(input([]))).toStrictEqual([]);
+  });
+
+  it("gives every rule on the scenario, critical ones first, with the key and the reason of each", () => {
+    const violations = evaluateSchedule(scenario);
+
+    expect(
+      violations.map(({ key, severity, reason, actual, limit, unit }) => ({
+        key,
+        severity,
+        reason,
+        actual,
+        limit,
+        unit,
+      })),
+    ).toStrictEqual([
+      {
+        key: `daily_rest|${ANNA}|0:${EVENING}:${ANNA},1:${MORNING}:${ANNA}`,
+        severity: "critical",
+        reason:
+          "Wiśniewska Anna: przerwa 8 h między zmianami Wieczorna (pon. 02.11, 14:00–22:00) i Poranna (wt. 03.11, 06:00–14:00), wymagane co najmniej 11 h.",
+        actual: 480,
+        limit: 660,
+        unit: "minutes",
+      },
+      {
+        key: `daily_hours|${ANNA}|0:${EVENING}:${ANNA},1:${MORNING}:${ANNA}`,
+        severity: "critical",
+        reason: "Wiśniewska Anna: w dobie liczonej od pon. 02.11, 14:00 przepracowane 16 h, dopuszczalne najwyżej 8 h.",
+        actual: 960,
+        limit: 480,
+        unit: "minutes",
+      },
+      {
+        key: `weekly_hours|${BARTEK}|`,
+        severity: "critical",
+        reason: `Kowalski Bartek: w tygodniu grafiku (${PERIOD}) łączny czas pracy 56 h, dopuszczalne najwyżej 48 h.`,
+        actual: 3360,
+        limit: 2880,
+        unit: "minutes",
+      },
+      {
+        key: `weekly_rest|${BARTEK}|`,
+        severity: "critical",
+        reason: `Kowalski Bartek: w tygodniu grafiku (${PERIOD}) najdłuższa przerwa trwa 16 h (od niedz. 08.11, 16:00 do końca grafiku i od początku grafiku do pon. 02.11, 08:00), wymagany odpoczynek tygodniowy co najmniej 35 h.`,
+        actual: 960,
+        limit: 2100,
+        unit: "minutes",
+      },
+      {
+        key: `weekly_norm|${BARTEK}|`,
+        severity: "warning",
+        reason: `Kowalski Bartek: w tygodniu grafiku (${PERIOD}) łączny czas pracy 56 h, norma tygodniowa (pełny etat) to 40 h.`,
+        actual: 3360,
+        limit: 2400,
+        unit: "minutes",
+      },
+      {
+        key: `weekly_norm|${CEZARY}|`,
+        severity: "warning",
+        reason: `Nowak Cezary: w tygodniu grafiku (${PERIOD}) łączny czas pracy 40 h, norma tygodniowa (3/4 etatu) to 30 h.`,
+        actual: 2400,
+        limit: 1800,
+        unit: "minutes",
+      },
+      {
+        key: `understaffed|-|0:${DAY}:-`,
+        severity: "warning",
+        reason: "Brak obsady: zmiana Dzienna (pon. 02.11, 08:00–16:00): przypisano 1 z 3, brakuje 2.",
+        actual: 1,
+        limit: 3,
+        unit: "people",
+      },
+      {
+        key: `understaffed|-|4:${NIGHT}:-`,
+        severity: "warning",
+        reason: "Brak obsady: zmiana Nocna (pt. 06.11, 22:00–06:00): przypisano 0 z 1, brakuje 1.",
+        actual: 0,
+        limit: 1,
+        unit: "people",
+      },
+    ]);
+    // The complete cell (Tuesday) and the one in surplus (Wednesday) give nothing.
+    expect(violations.filter(({ rule }) => rule === "understaffed").map(anchorsOf)).toStrictEqual([
+      [`0:${DAY}:-`],
+      [`4:${NIGHT}:-`],
+    ]);
+  });
+
+  it("lists the critical violations before the warnings, the rules in their order, then the employees and the keys", () => {
+    const violations = evaluateSchedule(scenario);
+
+    expect([...violations].sort(compareViolations)).toStrictEqual(violations);
+    expect(violations.map(({ severity }) => severity)).toStrictEqual([
+      "critical",
+      "critical",
+      "critical",
+      "critical",
+      "warning",
+      "warning",
+      "warning",
+      "warning",
+    ]);
+    expect(rulesOf(violations)).toStrictEqual([
+      "daily_rest",
+      "daily_hours",
+      "weekly_hours",
+      "weekly_rest",
+      "weekly_norm",
+      "weekly_norm",
+      "understaffed",
+      "understaffed",
+    ]);
+  });
+
+  it("is the four critical rules and the two warnings of the single rules, merged", () => {
+    const apart = [
+      ...dailyRestViolations(scenario),
+      ...dailyHoursViolations(scenario),
+      ...weeklyHoursViolations(scenario),
+      ...weeklyRestViolations(scenario),
+      ...weeklyNormViolations(scenario),
+      ...understaffedViolations(scenario),
+    ].sort(compareViolations);
+
+    expect(evaluateSchedule(scenario)).toStrictEqual(apart);
+  });
+
+  it("has one key for each violation, across all the rules and both severities", () => {
+    for (const rules of [scenario, workedCase(3300), input([assignment(DAY, 0, ANNA)], { staffing: [] })]) {
+      const violations = evaluateSchedule(rules);
+
+      expect(new Set(keysOf(violations)).size).toBe(violations.length);
+    }
+    expect(new Set(rulesOf(evaluateSchedule(scenario))).size).toBe(6);
+  });
+
+  it("is a new array each time, which nobody else holds", () => {
+    const first = evaluateSchedule(scenario);
+    first.length = 0;
+
+    const second = evaluateSchedule(scenario);
+
+    expect(second).toHaveLength(8);
+    expect(second).not.toBe(first);
+    expect(evaluateSchedule(scenario)).not.toBe(second);
+  });
+
+  it("gives the same list for any order of the assignments, the shifts, the employees and the staffing", () => {
+    const variants = [1, 2, 3, 4, 5, 6].map((seed) => ({
+      ...scenario,
+      assignments: seededShuffle(scenario.assignments, seed),
+      shifts: seededShuffle(scenario.shifts, seed + 100),
+      employees: seededShuffle(scenario.employees, seed + 200),
+      staffing: seededShuffle(scenario.staffing, seed + 300),
+    }));
+
+    expect(expectDeterministic(evaluateSchedule, scenario, { variants })).toHaveLength(8);
+  });
+});
+
+describe("summarizeViolations", () => {
+  const violation = (severity: Violation["severity"]): Violation => ({
+    key: severity,
+    severity,
+    rule: "weekly_norm",
+    employeeId: null,
+    anchors: [],
+    reason: "r",
+    actual: 0,
+    limit: 0,
+    unit: "minutes",
+  });
+
+  it("counts the critical violations and the warnings of a result", () => {
+    // Seven days of the 8 h shift: the weekly hours and the weekly rest are critical, the norm is a warning.
+    const week = [0, 1, 2, 3, 4, 5, 6].map((dayOffset) => assignment(DAY, dayOffset, ANNA));
+
+    const violations = evaluateSchedule(input(week));
+
+    expect(rulesOf(violations)).toStrictEqual(["weekly_hours", "weekly_rest", "weekly_norm"]);
+    expect(summarizeViolations(violations)).toStrictEqual({ critical: 2, warning: 1 });
+  });
+
+  it.each<{ label: string; violations: Violation[]; counts: { critical: number; warning: number } }>([
+    { label: "none", violations: [], counts: { critical: 0, warning: 0 } },
+    {
+      label: "critical ones only",
+      violations: [violation("critical"), violation("critical")],
+      counts: { critical: 2, warning: 0 },
+    },
+    { label: "warnings only", violations: [violation("warning")], counts: { critical: 0, warning: 1 } },
+    {
+      label: "both, in any order",
+      violations: [violation("warning"), violation("critical"), violation("warning")],
+      counts: { critical: 1, warning: 2 },
+    },
+  ])("gives $counts.critical critical and $counts.warning warning for $label", ({ violations, counts }) => {
+    expect(summarizeViolations(violations)).toStrictEqual(counts);
+  });
+
+  it("leaves the list it counts unchanged", () => {
+    const violations = Object.freeze([Object.freeze(violation("warning")), Object.freeze(violation("critical"))]);
+
+    expect(summarizeViolations(violations)).toStrictEqual({ critical: 1, warning: 1 });
+    expect(violations.map(({ severity }) => severity)).toStrictEqual(["warning", "critical"]);
+  });
+});
+
 describe("the shifts that have no hours", () => {
   const rotation = [assignment(DAY, 0, ANNA), assignment(MORNING, 1, ANNA)];
   const unknownEveryDay = [0, 1, 2, 3, 4, 5, 6].map((dayOffset) => assignment(UNKNOWN, dayOffset, ANNA));
 
   it("are left out by every time rule: a person with nothing else has no violation", () => {
-    expect(criticalViolations(input(unknownEveryDay))).toStrictEqual([]);
+    expect(criticalOf(input(unknownEveryDay))).toStrictEqual([]);
   });
 
   it("do not change what the other assignments of the person give", () => {
     const withUnknown = input([...unknownEveryDay.slice(0, 3), ...rotation, ...unknownEveryDay.slice(3)]);
 
-    expect(criticalViolations(withUnknown)).toStrictEqual(criticalViolations(input(rotation)));
-    expect(criticalViolations(input(rotation))).not.toStrictEqual([]);
+    expect(criticalOf(withUnknown)).toStrictEqual(criticalOf(input(rotation)));
+    expect(criticalOf(input(rotation))).not.toStrictEqual([]);
   });
 });
 
@@ -858,8 +1425,8 @@ describe("the people", () => {
   });
 
   it("with no shifts are left out, however many people the schedule has", () => {
-    expect(criticalViolations(input([], { employees: EMPLOYEES }))).toStrictEqual([]);
-    expect(criticalViolations(input([assignment(DAY, 0, ANNA)], { employees: [] }))).toStrictEqual([]);
+    expect(criticalOf(input([], { employees: EMPLOYEES }))).toStrictEqual([]);
+    expect(criticalOf(input([assignment(DAY, 0, ANNA)], { employees: [] }))).toStrictEqual([]);
   });
 });
 
@@ -892,7 +1459,7 @@ describe("the rules together", () => {
   );
 
   it("find every rule on the roster, for the right people", () => {
-    const violations = criticalViolations(roster);
+    const violations = criticalOf(roster);
     const rulesOfPerson = (employeeId: string) =>
       violations.filter((violation) => violation.employeeId === employeeId).map(({ rule }) => rule);
 
@@ -908,7 +1475,7 @@ describe("the rules together", () => {
   });
 
   it("are the four rules together in the canonical order", () => {
-    const together = criticalViolations(roster);
+    const together = criticalOf(roster);
     const apart = [
       ...dailyRestViolations(roster),
       ...dailyHoursViolations(roster),
@@ -933,12 +1500,12 @@ describe("the rules together", () => {
   });
 
   it("have one key each, and the same finding of the roster has the same key whatever the hours of the shifts", () => {
-    const violations = criticalViolations(roster);
+    const violations = criticalOf(roster);
     // Bartek's break is 9 h instead of 8 h, and Anna's rotation has other numbers too: the findings stay the same.
     const later = SHIFTS.map((shift) =>
       shift.id === MORNING ? { ...shift, startMinute: 420, endMinute: 900 } : shift,
     );
-    const changed = criticalViolations({ ...roster, shifts: later });
+    const changed = criticalOf({ ...roster, shifts: later });
 
     expect(new Set(keysOf(violations)).size).toBe(violations.length);
     expect(keysOf(violations).every((key) => RULE_ORDER.some((rule) => key.startsWith(`${rule}|`)))).toBe(true);
@@ -947,6 +1514,22 @@ describe("the rules together", () => {
     expect(
       dailyRestViolations({ ...roster, shifts: later }).find(({ employeeId }) => employeeId === BARTEK)?.actual,
     ).toBe(540);
+  });
+
+  it("have all six rules with the warnings after every critical violation, for Anna and for the staffing cells", () => {
+    const violations = evaluateSchedule(roster);
+    const firstWarning = violations.findIndex(({ severity }) => severity === "warning");
+
+    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(RULE_ORDER));
+    expect(violations.slice(0, firstWarning).every(({ severity }) => severity === "critical")).toBe(true);
+    expect(violations.slice(firstWarning).every(({ severity }) => severity === "warning")).toBe(true);
+    expect(violations.filter(({ rule }) => rule === "weekly_norm").map(({ employeeId }) => employeeId)).toStrictEqual([
+      ANNA,
+    ]);
+    expect(violations.filter(({ rule }) => rule === "understaffed").map(anchorsOf)).toStrictEqual([
+      [`0:${DAY}:-`],
+      [`3:${NIGHT}:-`],
+    ]);
   });
 
   it("have the same keys on all of the weekly cases: one key per violation and no key twice", () => {
@@ -972,8 +1555,16 @@ describe("repeatability of the rules", () => {
         .map((dayOffset) => assignment(shiftId, dayOffset, employeeId)),
     ),
   );
+  // Four cells are short, one is complete, one is in surplus and one is of a shift without hours.
   const base = input([...placed, placed[0], placed[7], assignment(UNKNOWN, 1, ANNA), assignment(UNKNOWN, 4, CEZARY)], {
-    staffing: [{ shiftId: DAY, dayOffset: 0, requiredCount: 1 }],
+    staffing: [
+      { shiftId: DAY, dayOffset: 0, requiredCount: 3 },
+      { shiftId: MORNING, dayOffset: 1, requiredCount: 3 },
+      { shiftId: NIGHT, dayOffset: 4, requiredCount: 2 },
+      { shiftId: EVENING, dayOffset: 3, requiredCount: 1 },
+      { shiftId: LONG, dayOffset: 2, requiredCount: 1 },
+      { shiftId: UNKNOWN, dayOffset: 5, requiredCount: 2 },
+    ],
   });
   const variants = seeds.map((seed) => ({
     ...base,
@@ -984,19 +1575,27 @@ describe("repeatability of the rules", () => {
   }));
 
   it.each<[string, (rules: RuleInput) => Violation[]]>([
-    ["all four rules", criticalViolations],
+    ["every rule", evaluateSchedule],
+    ["the four critical rules", criticalOf],
     ["the daily rest", dailyRestViolations],
     ["the daily hours", dailyHoursViolations],
     ["the weekly hours", weeklyHoursViolations],
     ["the weekly rest", weeklyRestViolations],
+    ["the weekly norm", weeklyNormViolations],
+    ["the staffing", understaffedViolations],
   ])("gives the same result for %s on repeated calls and for any order of the input", (_name, rule) => {
     const violations = expectDeterministic(rule, base, { variants });
 
     expect(violations.length).toBeGreaterThan(0);
   });
 
-  it("finds the four rules on this input, so that the check above compares something", () => {
-    expect(new Set(rulesOf(criticalViolations(base))).size).toBe(4);
+  it("finds all six rules on this input, so that the check above compares something", () => {
+    const violations = evaluateSchedule(base);
+
+    expect(new Set(rulesOf(criticalOf(base))).size).toBe(4);
+    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(RULE_ORDER));
+    expect(violations.filter(({ rule }) => rule === "understaffed")).toHaveLength(4);
+    expect(new Set(keysOf(violations)).size).toBe(violations.length);
   });
 });
 
@@ -1032,16 +1631,26 @@ describe("the input", () => {
     const before = structuredClone(source);
 
     const results = [
-      criticalViolations(source),
+      evaluateSchedule(source),
       dailyRestViolations(source),
       dailyHoursViolations(source),
       weeklyHoursViolations(source),
       weeklyRestViolations(source),
+      weeklyNormViolations(source),
+      understaffedViolations(source),
     ];
 
     expect(structuredClone(source)).toStrictEqual(before);
     // The rules had something to report, so the check above ran them over real findings.
-    expect(results.map((violations) => violations.length > 0)).toStrictEqual([true, true, true, true, true]);
+    expect(results.map((violations) => violations.length > 0)).toStrictEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
   });
 });
 
@@ -1049,12 +1658,25 @@ describe("the time zone", () => {
   it("calls no method of Date that reads or writes the local time", () => {
     const week = [0, 1, 2, 3, 4, 5, 6].map((dayOffset) => assignment(DAY, dayOffset, ANNA));
     const called = localDateMethodsCalledBy(() => {
-      criticalViolations(
+      criticalOf(
         input([...week, assignment(NIGHT_LONG, 6, BARTEK), assignment(MORNING, 5, BARTEK)], {
           startDate: "2026-12-29",
         }),
       );
-      criticalViolations(input(week, { startDate: "2099-12-31" }));
+      criticalOf(input(week, { startDate: "2099-12-31" }));
+    });
+
+    expect(called).toStrictEqual([]);
+  });
+
+  it("calls none of them for the weekly norm and the staffing either, in weeks with holidays and at the edge of the years", () => {
+    const called = localDateMethodsCalledBy(() => {
+      for (const startDate of ["2026-11-10", "2026-12-24", "2026-12-29", "2099-12-31"]) {
+        evaluateSchedule(
+          workedCase(3000, { startDate, staffing: [{ shiftId: MORNING, dayOffset: 2, requiredCount: 2 }] }),
+        );
+        summarizeViolations(weeklyNormViolations(workedCase(2401, { startDate })));
+      }
     });
 
     expect(called).toStrictEqual([]);

@@ -1,6 +1,15 @@
+import { summarizeCoverage } from "@/lib/services/assignment";
+import { formatFteLabel } from "@/lib/services/fte";
 import { PERIOD_DAYS, compareText, dayColumns, formatPeriod } from "@/lib/services/schedule";
 import { MINUTES_PER_DAY, formatDuration, formatShiftTimes, formatTime } from "@/lib/services/shift";
-import { shiftInterval, type ShiftTimes } from "@/lib/services/work-hours";
+import {
+  exceedsNorm,
+  normMinutes,
+  shiftInterval,
+  weeklyNorm,
+  workedMinutesByEmployee,
+  type ShiftTimes,
+} from "@/lib/services/work-hours";
 import type {
   AssignmentInput,
   Fte,
@@ -11,10 +20,12 @@ import type {
   ViolationSeverity,
 } from "@/types";
 
-// The critical work-time rules of the live check (S-05): rest between shifts, hours in a day, hours in a week and the weekly
-// rest. Pure functions on whole minutes, with no time zone in them: a shift is an interval on the timeline of one person,
+// The work-time rules of the live check (S-05). Critical: rest between shifts, hours in a day, hours in a week and the weekly
+// rest. Warnings: the hours of a week against the norm of the FTE and a shortage of staff on a cell of the staffing grid.
+// Pure functions on whole minutes, with no time zone in them: a shift is an interval on the timeline of one person,
 // counted in minutes from midnight of the first day of the schedule. The rules judge one schedule only, so the rest on
-// either side of it (the previous and the next week) is not checked.
+// either side of it (the previous and the next week) is not checked. `evaluateSchedule` is the one entry point that puts
+// all of them together.
 
 /** The least rest between two shifts of a person (art. 132): 11 h, the limit itself is allowed. */
 export const DAILY_REST_MINUTES = 660;
@@ -51,8 +62,9 @@ const LONG_SHIFT_NOTE = `Zmiana dłuższa niż ${formatDuration(DAILY_HOURS_MINU
 /**
  * What the rules read: the first day of the schedule, its staffing grid, the assignments, the hours of the shifts and the
  * employees (name and FTE). The arrays are only read. An assignment to a shift that is not in `shifts` has no hours, so the
- * time rules leave it out; an employee that is not in `employees` is shown by id. `startDate` must be a date that
- * `parseIsoDate` accepts: the rules throw a RangeError for another.
+ * time rules leave it out; an employee that is not in `employees` is shown by id and, having no FTE, is left out of the
+ * weekly norm. The staffing grid has one cell per shift and day. `startDate` must be a date that `parseIsoDate` accepts and
+ * an FTE a fraction that `weeklyNorm` accepts: the rules throw a RangeError for another.
  */
 export interface RuleInput {
   /** The first day as `YYYY-MM-DD`. */
@@ -133,6 +145,8 @@ interface Context {
   dayLabel: (dayOffset: number) => string;
   /** "Poranna (pon. 02.11, 06:00–14:00)". */
   describe: (segment: Segment) => string;
+  /** The same for a shift id and a day; a shift that has no hours is shown by its id, with the day only. */
+  describeCell: (shiftId: string, dayOffset: number) => string;
 }
 
 const anchorOf = ({ shift, dayOffset, employeeId }: Segment): ViolationAnchor => ({
@@ -152,6 +166,8 @@ function prepare(input: RuleInput): Context {
   const names = new Map(input.employees.map(({ id, name }): [string, string] => [id, name]));
   const labels = new Map(dayColumns(input.startDate).map(({ offset, label }): [number, string] => [offset, label]));
   const dayLabel = (dayOffset: number): string => labels.get(dayOffset) ?? `dzień ${dayOffset}`;
+  const describeShift = (shift: ShiftTimes, dayOffset: number): string =>
+    `${shift.name} (${dayLabel(dayOffset)}, ${formatShiftTimes(shift)})`;
 
   const seen = new Set<string>();
   const byEmployee = new Map<string, Segment[]>();
@@ -179,11 +195,40 @@ function prepare(input: RuleInput): Context {
       .map(([employeeId, segments]) => ({ employeeId, segments: segments.sort(compareSegments) })),
     nameOf: (employeeId) => names.get(employeeId) ?? employeeId,
     dayLabel,
-    describe: ({ shift, dayOffset }) => `${shift.name} (${dayLabel(dayOffset)}, ${formatShiftTimes(shift)})`,
+    describe: ({ shift, dayOffset }) => describeShift(shift, dayOffset),
+    describeCell: (shiftId, dayOffset) => {
+      const shift = shiftsById.get(shiftId);
+      return shift === undefined ? `${shiftId} (${dayLabel(dayOffset)})` : describeShift(shift, dayOffset);
+    },
   };
 }
 
-// A critical violation in minutes. The anchors are sorted, so the same finding always has the same list and key.
+// A violation. The anchors are sorted, so the same finding always has the same list and key.
+function violationOf(
+  severity: ViolationSeverity,
+  rule: ViolationRule,
+  employeeId: string | null,
+  anchors: readonly ViolationAnchor[],
+  reason: string,
+  actual: number,
+  limit: number,
+  unit: Violation["unit"],
+): Violation {
+  const sorted = [...anchors].sort((a, b) => compareText(anchorKey(a), anchorKey(b)));
+  return {
+    key: violationKey(rule, employeeId, sorted),
+    severity,
+    rule,
+    employeeId,
+    anchors: sorted,
+    reason,
+    actual,
+    limit,
+    unit,
+  };
+}
+
+// A critical violation in minutes, about one person.
 function criticalViolation(
   rule: ViolationRule,
   employeeId: string,
@@ -192,18 +237,7 @@ function criticalViolation(
   actual: number,
   limit: number,
 ): Violation {
-  const sorted = [...anchors].sort((a, b) => compareText(anchorKey(a), anchorKey(b)));
-  return {
-    key: violationKey(rule, employeeId, sorted),
-    severity: "critical",
-    rule,
-    employeeId,
-    anchors: sorted,
-    reason,
-    actual,
-    limit,
-    unit: "minutes",
-  };
+  return violationOf("critical", rule, employeeId, anchors, reason, actual, limit, "minutes");
 }
 
 function dailyRest({ timelines, nameOf, describe }: Context): Violation[] {
@@ -402,6 +436,75 @@ function weeklyRest({ timelines, nameOf, dayLabel, period }: Context): Violation
   return violations.sort(compareViolations);
 }
 
+// "święto 11.11", "święta 11.11 i 12.11" or "święta 24.12, 25.12 i 26.12": the dates of the holidays of a week (never more
+// than seven days apart, so with no year).
+function formatHolidays(holidays: readonly string[]): string {
+  const dates = holidays.map((date) => `${date.slice(8, 10)}.${date.slice(5, 7)}`);
+  const last = dates[dates.length - 1];
+  const list = dates.length === 1 ? last : `${dates.slice(0, -1).join(", ")} i ${last}`;
+  return `${dates.length === 1 ? "święto" : "święta"} ${list}`;
+}
+
+// The hours of a week against the norm of the FTE. The comparison is exact (`exceedsNorm`), and the limit shown is the norm
+// rounded to the minute. A person who is not in the list of employees has no FTE, so they are skipped; one with no hours
+// cannot exceed a norm.
+function weeklyNormWarnings(
+  { startDate, assignments, shifts, employees }: RuleInput,
+  { period }: Context,
+): Violation[] {
+  const worked = new Map(Object.entries(workedMinutesByEmployee(assignments, shifts)));
+  // One entry for each id, so that a repeated employee is judged once.
+  const people = new Map(
+    employees.map((employee): [string, RuleInput["employees"][number]] => [employee.id, employee]),
+  );
+  const violations: Violation[] = [];
+  for (const { id, name, fte } of people.values()) {
+    const minutes = worked.get(id);
+    if (minutes === undefined) {
+      continue;
+    }
+    const norm = weeklyNorm(startDate, fte);
+    if (!exceedsNorm(minutes, norm)) {
+      continue;
+    }
+    const limit = normMinutes(norm);
+    const lowered = norm.holidays.length > 0 ? ` po pomniejszeniu o ${formatHolidays(norm.holidays)}` : "";
+    violations.push(
+      violationOf(
+        "warning",
+        "weekly_norm",
+        id,
+        [],
+        `${name}: w tygodniu grafiku (${period}) łączny czas pracy ${formatDuration(minutes)}, norma tygodniowa (${formatFteLabel(norm.fte)}) to ${formatDuration(limit)}${lowered}.`,
+        minutes,
+        limit,
+        "minutes",
+      ),
+    );
+  }
+  return violations.sort(compareViolations);
+}
+
+// One warning for each staffing cell with fewer people assigned than it needs. A surplus is not a violation. A cell of a
+// shift that has no hours is judged as well: the headcount needs no hours.
+function understaffedWarnings({ staffing, assignments }: RuleInput, { describeCell }: Context): Violation[] {
+  return summarizeCoverage(staffing, assignments)
+    .filter(({ missing }) => missing > 0)
+    .map(({ shiftId, dayOffset, required, assigned, missing }) =>
+      violationOf(
+        "warning",
+        "understaffed",
+        null,
+        [{ shiftId, dayOffset, employeeId: null }],
+        `Brak obsady: zmiana ${describeCell(shiftId, dayOffset)}: przypisano ${assigned} z ${required}, brakuje ${missing}.`,
+        assigned,
+        required,
+        "people",
+      ),
+    )
+    .sort(compareViolations);
+}
+
 /**
  * The daily rest (art. 132): between two shifts of one person, counted from the latest end so far to the next start, at
  * least 11 h (660 minutes; 660 is allowed, 659 is not). A gap below zero is an overlap of the two shifts and has its own
@@ -442,10 +545,48 @@ export function weeklyRestViolations(input: RuleInput): Violation[] {
   return weeklyRest(prepare(input));
 }
 
-/** The four critical rules together, in the canonical order (`compareViolations`). */
-export function criticalViolations(input: RuleInput): Violation[] {
+/**
+ * The weekly norm (art. 130, in the form of a week of the schedule): a person on the list of employees whose work in the
+ * seven days of the schedule is above 40 h times the FTE, less 8 h times the FTE for each holiday on a day other than Sunday,
+ * gets a warning. The comparison is exact (3/7 of 40 h is 1028.57 minutes, so 1029 exceeds it and 1028 does not); `limit`
+ * is the norm rounded to the minute. A person who is not in `employees` is skipped. No anchors. A warning, not a critical
+ * violation: the norm of the law is monthly and averaged, so one week above it is not a breach by itself.
+ */
+export function weeklyNormViolations(input: RuleInput): Violation[] {
+  return weeklyNormWarnings(input, prepare(input));
+}
+
+/**
+ * The staffing (a shortage of staff): one warning for each cell of the staffing grid with fewer different people assigned
+ * than it requires (`summarizeCoverage`). The anchor is the cell (its `employeeId` is null), `actual` the number assigned and
+ * `limit` the number required, in people. A cell that is complete or has a surplus gives nothing: a surplus is not a
+ * violation.
+ */
+export function understaffedViolations(input: RuleInput): Violation[] {
+  return understaffedWarnings(input, prepare(input));
+}
+
+/**
+ * Every rule on one schedule: the four critical ones and the two warnings, in one new array in the canonical order
+ * (`compareViolations`: critical first, then the rule, the employee and the key). The result does not depend on the order
+ * of the input, which is only read.
+ */
+export function evaluateSchedule(input: RuleInput): Violation[] {
   const context = prepare(input);
-  return [...dailyRest(context), ...dailyHours(context), ...weeklyHours(context), ...weeklyRest(context)].sort(
-    compareViolations,
-  );
+  return [
+    ...dailyRest(context),
+    ...dailyHours(context),
+    ...weeklyHours(context),
+    ...weeklyRest(context),
+    ...weeklyNormWarnings(input, context),
+    ...understaffedWarnings(input, context),
+  ].sort(compareViolations);
+}
+
+/** How many violations are critical and how many are warnings, for the counter of the view. */
+export function summarizeViolations(violations: readonly Violation[]): { critical: number; warning: number } {
+  return {
+    critical: violations.filter(({ severity }) => severity === "critical").length,
+    warning: violations.filter(({ severity }) => severity === "warning").length,
+  };
 }
