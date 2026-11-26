@@ -180,14 +180,20 @@ describe("validateShiftInput name", () => {
     ["an apostrophe", "O'Brien", "O'Brien"],
     ["outer spaces", "  Nocna  ", "Nocna"],
     ["a double space", "Nocna  zmiana", "Nocna zmiana"],
-    ["a no-break space", "Nocna  zmiana", "Nocna zmiana"],
+    ["a no-break space", "Nocna\u00A0 zmiana", "Nocna zmiana"],
     ["the maximum length", "a".repeat(SHIFT_NAME_MAX_LENGTH), "a".repeat(SHIFT_NAME_MAX_LENGTH)],
     ["the maximum length in emoji", "😀".repeat(SHIFT_NAME_MAX_LENGTH), "😀".repeat(SHIFT_NAME_MAX_LENGTH)],
-    ["an invisible character next to a letter", "Noc​na", "Noc​na"],
+    ["an invisible character next to a letter", "Noc\u200Bna", "Noc\u200Bna"],
+    ["an emoji with a variation selector", "\u2764\uFE0F", "\u2764\uFE0F"],
+    ["a variation selector after a letter", "a\uFE0F", "a\uFE0F"],
+    // Decomposed (NFD) Polish text, as some keyboards and systems type it: its combining marks belong to letters.
+    ["a decomposed Polish letter with an ogonek", "\u0141a\u0328ka", "\u0141a\u0328ka"],
+    ["a decomposed Polish word", "Z\u0307o\u0301\u0142c\u0301", "Z\u0307o\u0301\u0142c\u0301"],
+    ["decomposed Polish text with a double space", "Za\u0328  s\u0301", "Za\u0328 s\u0301"],
     [
       "an emoji sequence joined with zero-width joiners",
-      "\u{1F468}‍\u{1F469}‍\u{1F467}",
-      "\u{1F468}‍\u{1F469}‍\u{1F467}",
+      "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}",
+      "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}",
     ],
   ])("accepts %s", (_label, input, expected) => {
     expect(validValue({ name: input }).name).toBe(expected);
@@ -208,14 +214,49 @@ describe("validateShiftInput name", () => {
     ["a leading tab", "\tNocna"],
     ["a delete character", "Nocna\u007f"],
     ["a C1 control character", "Nocna\u0085"],
-    ["only a zero-width space", "​"],
-    ["only a Hangul filler", "ㅤ"],
-    ["only a braille blank", "⠀"],
-    ["only spaces and zero-width spaces", " ​ ​ "],
+    ["only a zero-width space", "\u200B"],
+    ["only a Hangul filler", "\u3164"],
+    ["only a braille blank", "\u2800"],
+    ["only spaces and zero-width spaces", " \u200B \u200B "],
+    ["only the Hangul choseong and jungseong fillers", "\u115F\u1160"],
+    ["only a halfwidth Hangul filler", "\uFFA0"],
+    ["only a combining grapheme joiner", "\u034F"],
+    ["only a variation selector", "\uFE0F"],
+    ["only a Mongolian variation selector", "\u180B"],
+    ["only a variation selector of the supplement", "\u{E0100}"],
+    ["only the Khmer inherent vowels", "\u17B4\u17B5"],
+    ["only spaces and invisible marks of every kind", " \u034F \uFE0F \u200D \u180C "],
     ["a lone high surrogate", "Noc\uD800"],
     ["a lone low surrogate", "\uDC00Noc"],
   ])("rejects %s", (_label, input) => {
     expectOnlyError({ name: input }, "name");
+  });
+
+  // The bidirectional controls reorder the text around them, so they are refused anywhere in a name, not only as the
+  // only thing in it.
+  it.each<[string, number]>([
+    ["the Arabic letter mark (U+061C)", 0x061c],
+    ["the left-to-right mark (U+200E)", 0x200e],
+    ["the right-to-left mark (U+200F)", 0x200f],
+    ["the left-to-right embedding (U+202A)", 0x202a],
+    ["the right-to-left embedding (U+202B)", 0x202b],
+    ["the pop directional formatting (U+202C)", 0x202c],
+    ["the left-to-right override (U+202D)", 0x202d],
+    ["the right-to-left override (U+202E)", 0x202e],
+    ["the left-to-right isolate (U+2066)", 0x2066],
+    ["the right-to-left isolate (U+2067)", 0x2067],
+    ["the first strong isolate (U+2068)", 0x2068],
+    ["the pop directional isolate (U+2069)", 0x2069],
+  ])("rejects %s in a name, alone or next to text", (_label, codePoint) => {
+    const control = String.fromCodePoint(codePoint);
+
+    expectOnlyError({ name: control }, "name");
+    expectOnlyError({ name: `Noc${control}na` }, "name");
+    expectOnlyError({ name: `${control}Nocna` }, "name");
+  });
+
+  it("uses the same message for a bidirectional control as for a control character", () => {
+    expect(errorsOf({ name: "Noc\u202Ena" }).name).toBe(errorsOf({ name: "Noc\tna" }).name);
   });
 });
 

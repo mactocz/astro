@@ -1,4 +1,5 @@
 import { isUuid } from "@/lib/postgrest";
+import { CONTROL_CHARS, hasVisibleText } from "@/lib/services/text-chars";
 import type { ScheduleFieldErrors, ScheduleInput, StaffingCell } from "@/types";
 
 export const SCHEDULE_LABEL_MAX_LENGTH = 60;
@@ -11,6 +12,11 @@ export const SCHEDULE_MIN_DATE = "2020-01-01";
 export const SCHEDULE_MAX_DATE = "2099-12-31";
 /** A grid never has more cells than 50 shifts over 7 days. */
 export const STAFFING_MAX_CELLS = 350;
+/**
+ * The most entries an employee list may have, repeats included. It is checked before any entry is read, so a body with
+ * a huge list costs a length check and not the parsing, de-duplication and sorting of every id.
+ */
+export const EMPLOYEE_IDS_MAX = 1000;
 
 const MIN_YEAR = 2020;
 const MAX_YEAR = 2099;
@@ -26,6 +32,7 @@ const FIELD_ERRORS = {
   staffingCell: `Każdy wpis obsady musi wskazywać zmianę, dzień (0–${PERIOD_DAYS - 1}) i liczbę osób (1–${STAFFING_MAX}).`,
   staffingDuplicate: "Ta sama zmiana nie może mieć dwóch wpisów obsady na ten sam dzień.",
   employeesEmpty: "Wybierz co najmniej jednego pracownika.",
+  employeesTooMany: `Za dużo pracowników (najwyżej ${EMPLOYEE_IDS_MAX}).`,
   employeesInvalid: "Lista pracowników zawiera niepoprawny identyfikator.",
 } as const;
 
@@ -33,13 +40,6 @@ const FIELD_ERRORS = {
 const WEEKDAYS = ["niedz.", "pon.", "wt.", "śr.", "czw.", "pt.", "sob."] as const;
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
-const CONTROL_CHARS = /\p{Cc}/u;
-// No glyph of their own: format characters (zero-width space, joiners, direction marks) and the blank fillers that look
-// like letters. A label made only of them and spaces would show up as an empty cell. A joiner inside a visible label
-// (an emoji sequence, say) stays allowed.
-// The fillers are written as escapes (Hangul choseong and jungseong filler, braille blank, Hangul filler, halfwidth Hangul
-// filler) because they cannot be told apart in an editor.
-const INVISIBLE_CHARS = /[\p{Cf}ᅟᅠ⠀ㅤﾠ]/gu;
 
 interface DateParts {
   year: number;
@@ -166,7 +166,7 @@ function parseStartDate(value: unknown): Parsed<string> {
 
 /**
  * The collapsed label (null when absent or empty), or an error when it is not a string, is too long, holds a control
- * character (tab and newline too) or a lone surrogate, or has nothing visible in it.
+ * character (tab and newline too), a bidirectional control or a lone surrogate, or has nothing visible in it.
  */
 function parseLabel(value: unknown): Parsed<string | null> {
   if (value === undefined || value === null) {
@@ -184,11 +184,14 @@ function parseLabel(value: unknown): Parsed<string | null> {
   if (Array.from(label).length > SCHEDULE_LABEL_MAX_LENGTH) {
     return failure(FIELD_ERRORS.label);
   }
-  return label.replace(INVISIBLE_CHARS, "").trim() === "" ? failure(FIELD_ERRORS.label) : { ok: true, value: label };
+  return hasVisibleText(label) ? { ok: true, value: label } : failure(FIELD_ERRORS.label);
 }
 
-// Plain code-unit order rather than a collator: an id is not text for people, and this never depends on locale data.
-function compareIds(a: string, b: string): number {
+/**
+ * Plain code-unit order rather than a collator: an id is not text for people, and this never depends on locale data. The
+ * one text comparison of the schedule rules, so that every list is ordered the same way.
+ */
+export function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
@@ -213,8 +216,15 @@ function parseCell(entry: unknown): StaffingCell | undefined {
   return { shiftId: shiftId.toLowerCase(), dayOffset: dayOffset === 0 ? 0 : dayOffset, requiredCount };
 }
 
-function compareCells(a: StaffingCell, b: StaffingCell): number {
-  return compareIds(a.shiftId, b.shiftId) || a.dayOffset - b.dayOffset;
+/**
+ * Orders cells by shift id, then day. Takes anything with these two keys, so a staffing cell and a cell of an assignment
+ * both fit.
+ */
+export function compareCells(
+  a: { shiftId: string; dayOffset: number },
+  b: { shiftId: string; dayOffset: number },
+): number {
+  return compareText(a.shiftId, b.shiftId) || a.dayOffset - b.dayOffset;
 }
 
 /** The cells sorted by shift id, then day, or an error for an empty or oversized grid, a bad cell or a repeated cell. */
@@ -238,10 +248,16 @@ function parseStaffing(value: unknown): Parsed<StaffingCell[]> {
   return repeated ? failure(FIELD_ERRORS.staffingDuplicate) : { ok: true, value: cells };
 }
 
-/** The ids in lower case, sorted and without repeats (a repeat is dropped quietly), or an error for none or a bad id. */
+/**
+ * The ids in lower case, sorted and without repeats (a repeat is dropped quietly), or an error for none, too many (repeats
+ * count, and the length is checked before any id is read) or a bad id.
+ */
 function parseEmployeeIds(value: unknown): Parsed<string[]> {
   if (!Array.isArray(value) || value.length === 0) {
     return failure(FIELD_ERRORS.employeesEmpty);
+  }
+  if (value.length > EMPLOYEE_IDS_MAX) {
+    return failure(FIELD_ERRORS.employeesTooMany);
   }
   const ids = new Set<string>();
   for (const entry of value as unknown[]) {
@@ -250,7 +266,7 @@ function parseEmployeeIds(value: unknown): Parsed<string[]> {
     }
     ids.add(entry.toLowerCase());
   }
-  return { ok: true, value: [...ids].sort(compareIds) };
+  return { ok: true, value: [...ids].sort(compareText) };
 }
 
 /**
@@ -306,8 +322,44 @@ export function sortSchedules<T extends { id: string; startDate: string; created
   return [...schedules].sort(
     (a, b) =>
       // A date as YYYY-MM-DD orders the same as text and as time.
-      compareIds(b.startDate, a.startDate) ||
+      compareText(b.startDate, a.startDate) ||
       Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
-      compareIds(a.id, b.id),
+      compareText(a.id, b.id),
   );
+}
+
+// What `save_schedule` raises, as PostgREST reports it: PT404 for a schedule that is not there (or not visible), 23503 for
+// a foreign key violation (a shift or an employee that does not exist) and PT409 for a save that would drop assignments,
+// whose `details` holds how many.
+const SAVE_NOT_FOUND = "PT404";
+const SAVE_FOREIGN_KEY_VIOLATION = "23503";
+const SAVE_REMOVAL_UNCONFIRMED = "PT409";
+
+/**
+ * What a failed save of a schedule means, from the code and the details of the PostgREST error. A PT409 is
+ * `removal_unconfirmed` only when its details read (`Number.parseInt`) as a whole number from 1 up, the count of
+ * assignments the save would remove: a count that is missing, zero, negative or not a number cannot be shown to the
+ * planner to confirm, so it is `failed` like any code this does not know.
+ */
+export function classifySaveFailure(
+  code: string | undefined,
+  details: string | null | undefined,
+):
+  | { kind: "not_found" }
+  | { kind: "unknown_reference" }
+  | { kind: "removal_unconfirmed"; removed: number }
+  | { kind: "failed" } {
+  if (code === SAVE_NOT_FOUND) {
+    return { kind: "not_found" };
+  }
+  if (code === SAVE_FOREIGN_KEY_VIOLATION) {
+    return { kind: "unknown_reference" };
+  }
+  if (code === SAVE_REMOVAL_UNCONFIRMED) {
+    const removed = Number.parseInt(details ?? "", 10);
+    if (!Number.isNaN(removed) && removed >= 1) {
+      return { kind: "removal_unconfirmed", removed };
+    }
+  }
+  return { kind: "failed" };
 }

@@ -1,4 +1,4 @@
-import { CalendarDays, Tag, TriangleAlert } from "lucide-react";
+import { CalendarDays, CircleAlert, Tag, TriangleAlert } from "lucide-react";
 import { FormField } from "@/components/auth/FormField";
 import { ServerError } from "@/components/auth/ServerError";
 import { useScheduleForm } from "@/components/hooks/useScheduleForm";
@@ -27,7 +27,10 @@ interface Props {
 }
 
 const hintClass = "mt-1 text-xs text-blue-100/50";
+const RANGE_HINT_ID = "startDate-range";
 const MOVE_NOTE_ID = "startDate-assignments";
+const OUTCOME_UNKNOWN_NOTE =
+  "Nie wiadomo, czy grafik został zapisany: nie przyszła odpowiedź z serwera. Zapis jest wyłączony, żeby nie utworzyć drugiego takiego samego grafiku. Najpierw sprawdź listę grafików.";
 
 // The line under the date field: the seven days the typed date starts, or null while it is not a valid date.
 function periodPreview(startDate: string): string | null {
@@ -69,9 +72,13 @@ export default function ScheduleForm({ shifts, employees, schedule, assignmentCo
             error={fieldErrors.startDate}
             min={SCHEDULE_MIN_DATE}
             max={SCHEDULE_MAX_DATE}
-            describedBy={form.assignmentsMove ? MOVE_NOTE_ID : undefined}
+            describedBy={form.assignmentsMove ? `${RANGE_HINT_ID} ${MOVE_NOTE_ID}` : RANGE_HINT_ID}
             icon={<CalendarDays className="size-4" />}
           />
+          {/* Not the field's `hint`, which it hides while it shows an error: that error does not say the range. */}
+          <p id={RANGE_HINT_ID} className={hintClass}>
+            {`Dozwolone daty: ${SCHEDULE_MIN_DATE} do ${SCHEDULE_MAX_DATE}.`}
+          </p>
           <p aria-live="polite" className="mt-1 text-sm text-blue-100/80">
             {periodPreview(values.startDate)}
           </p>
@@ -127,6 +134,20 @@ export default function ScheduleForm({ shifts, employees, schedule, assignmentCo
 
       <ServerError message={serverError} />
 
+      {form.outcomeUnknown ? (
+        // The request to create the schedule got no answer. Another one could add it a second time, so the save stays off
+        // until the planner has looked at the list. Only the sentence is the alert, as in the warning below.
+        <div className="space-y-2 rounded-lg border border-red-500/30 bg-red-900/30 px-3 py-2 text-sm text-red-300">
+          <p role="alert" className="flex items-start gap-2">
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
+            {OUTCOME_UNKNOWN_NOTE}
+          </p>
+          <a href="/schedules" className="inline-block text-sm text-purple-300 hover:underline">
+            Przejdź do listy grafików
+          </a>
+        </div>
+      ) : null}
+
       {removal ? (
         // A warning, not an error: nothing is wrong with the form, the save only needs a yes. Only the sentence is the alert,
         // so a screen reader does not read the buttons out with it; the safe button takes the focus.
@@ -161,7 +182,7 @@ export default function ScheduleForm({ shifts, employees, schedule, assignmentCo
       <div className="flex items-center gap-4 pt-2">
         <Button
           type="submit"
-          disabled={pending}
+          disabled={pending || form.outcomeUnknown}
           className="rounded-lg bg-purple-600 px-4 py-2 font-medium text-white transition-colors hover:bg-purple-500"
         >
           {pending ? "Zapisywanie..." : "Zapisz"}

@@ -1,7 +1,7 @@
 ---
 import PlannerLayout from "@/layouts/PlannerLayout.astro";
 import ScheduleNotice from "@/components/schedules/ScheduleNotice.astro";
-import { listSchedules } from "@/lib/schedules";
+import { listSchedules, SCHEDULE_LIST_LIMIT } from "@/lib/schedules";
 import { formatPeriod } from "@/lib/services/schedule";
 
 const { supabase } = Astro.locals;
@@ -10,7 +10,9 @@ if (!supabase) {
   throw new Error("The Supabase client is missing; check SUPABASE_URL and SUPABASE_KEY.");
 }
 
-const schedules = await listSchedules(supabase);
+const { schedules, truncated } = await listSchedules(supabase);
+// Older schedules than the limit are left out of the list; the page says so instead of looking complete.
+const truncatedNote = truncated ? `Pokazano ${SCHEDULE_LIST_LIMIT} najnowszych grafików.` : null;
 
 // The day a schedule was created, as the planner's calendar shows it (Polish time), not the UTC day of the timestamp.
 const createdFormat = new Intl.DateTimeFormat("pl-PL", {
@@ -139,6 +141,8 @@ Astro.response.headers.set("Cache-Control", "no-store");
           </li>
         ))}
       </ul>
+
+      {truncatedNote && <p class="mt-4 text-sm text-blue-100/60">{truncatedNote}</p>}
     </>
   )}
 </PlannerLayout>

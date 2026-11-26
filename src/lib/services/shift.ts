@@ -1,3 +1,4 @@
+import { CONTROL_CHARS, hasVisibleText } from "@/lib/services/text-chars";
 import type { Shift, ShiftFieldErrors, ShiftInput } from "@/types";
 
 export const SHIFT_NAME_MAX_LENGTH = 50;
@@ -11,11 +12,6 @@ const FIELD_ERRORS = {
   endTimeSameAsStart: "Godzina zakończenia musi być inna niż godzina rozpoczęcia.",
 } as const;
 
-const CONTROL_CHARS = /\p{Cc}/u;
-// No glyph of their own: format characters (zero-width space, joiners, direction marks) and the blank fillers that look
-// like letters. A name made only of them and spaces would show up as an empty row. A joiner inside a visible name (an
-// emoji sequence, say) stays allowed.
-const INVISIBLE_CHARS = /[\p{Cf}ᅟᅠ⠀ㅤﾠ]/gu;
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 /** Minutes after midnight for exactly `GG:MM` (two digits each, 00:00 to 23:59, no spaces), otherwise undefined. */
@@ -61,8 +57,10 @@ export function formatShiftTimes(shift: { startMinute: number; endMinute: number
 }
 
 /**
- * The collapsed name, or undefined when it is empty, too long, holds a control character (tab and newline too) or a
- * lone surrogate, or has nothing visible in it.
+ * The collapsed name, or undefined when it is empty, too long, holds a control character (tab and newline too), a
+ * bidirectional control or a lone surrogate, or has nothing visible in it. The characters with no glyph of their own
+ * (zero-width space, joiners, blank fillers) are allowed inside a visible name, an emoji sequence, say; a name made only
+ * of them and spaces would show up as an empty row.
  */
 function parseName(value: unknown): string | undefined {
   // Checked on the raw string: trimming first would let a trailing newline or tab slip through. A lone surrogate is not
@@ -75,7 +73,7 @@ function parseName(value: unknown): string | undefined {
   if (length < 1 || length > SHIFT_NAME_MAX_LENGTH) {
     return undefined;
   }
-  return name.replace(INVISIBLE_CHARS, "").trim() === "" ? undefined : name;
+  return hasVisibleText(name) ? name : undefined;
 }
 
 /** The minutes after midnight for a `GG:MM` string (see `parseTime`), or undefined for anything else. */

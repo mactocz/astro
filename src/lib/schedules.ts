@@ -1,29 +1,28 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { isUuid, logDatabaseError } from "@/lib/postgrest";
-import { sortSchedules, totalRequired } from "@/lib/services/schedule";
-import type { Schedule, ScheduleInput, ScheduleSummary, StaffingCell } from "@/types";
+import { classifySaveFailure, compareCells, compareText, sortSchedules } from "@/lib/services/schedule";
+import type { Schedule, ScheduleInput, ScheduleSummary } from "@/types";
 
 // The only module that knows the table and column names of a schedule. Every function runs on the client it is given,
-// i.e. on the signed-in user's session, so row-level security decides what is visible and writable. The list asks for
-// the number of employees as an embedded count and for the required counts of the grid, which the app adds up.
-const LIST_SELECT = "id, start_date, label, created_at, schedule_employees(count), schedule_staffing(required_count)";
+// i.e. on the signed-in user's session, so row-level security decides what is visible and writable. The list reads the
+// view schedule_summaries (security invoker, so the policies of the tables under it apply), which holds one flat row per
+// schedule with the number of its employees and the sum of its required counts already worked out by the database. It is
+// read newest first and cut at SCHEDULE_LIST_LIMIT rows, so a long list never reaches the response limit of PostgREST,
+// which would drop rows without a word.
+const LIST_SELECT = "id, start_date, label, created_at, employee_count, total_required";
 const DETAIL_SELECT =
   "id, start_date, label, created_at, schedule_staffing(shift_id, day_offset, required_count), schedule_employees(employee_id)";
-// PostgREST turns the SQLSTATE PT404 that save_schedule raises for a missing schedule into HTTP 404 and keeps the code.
-const NOT_FOUND = "PT404";
-// A shift or an employee that does not exist (any more) is the only foreign key a save can break.
-const FOREIGN_KEY_VIOLATION = "23503";
-// The SQLSTATE PT409 that save_schedule raises when a save would remove assignments and was not confirmed; PostgREST turns
-// it into HTTP 409 and returns the number of assignments, as text, in `details`.
-const REMOVAL_UNCONFIRMED = "PT409";
 
-interface ScheduleListRow {
+/** The most schedules the list shows; older ones are left out and the page says so. */
+export const SCHEDULE_LIST_LIMIT = 100;
+
+interface ScheduleSummaryRow {
   id: string;
   start_date: string;
   label: string | null;
   created_at: string;
-  schedule_employees: { count: number }[];
-  schedule_staffing: { required_count: number }[];
+  employee_count: number;
+  total_required: number;
 }
 
 interface ScheduleRow {
@@ -44,25 +43,14 @@ interface RemovalUnconfirmed {
 }
 export type SaveScheduleResult = { ok: true; id: string } | { ok: false; error: SaveFailure } | RemovalUnconfirmed;
 
-// Plain code-unit order, the one validateScheduleInput sorts by, so a stored schedule reads back in the same order as a
-// validated one.
-function compareText(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function compareCells(a: StaffingCell, b: StaffingCell): number {
-  return compareText(a.shiftId, b.shiftId) || a.dayOffset - b.dayOffset;
-}
-
 function toSummaries(data: unknown): ScheduleSummary[] {
-  return (data as ScheduleListRow[]).map((row) => ({
+  return (data as ScheduleSummaryRow[]).map((row) => ({
     id: row.id,
     startDate: row.start_date,
     label: row.label,
     createdAt: row.created_at,
-    // An embedded count is a one-element list, even for a schedule without people.
-    employeeCount: row.schedule_employees.at(0)?.count ?? 0,
-    totalRequired: totalRequired(row.schedule_staffing.map((cell) => ({ requiredCount: cell.required_count }))),
+    employeeCount: row.employee_count,
+    totalRequired: row.total_required,
   }));
 }
 
@@ -85,33 +73,45 @@ function readFailure(action: string, error: PostgrestError): Error {
 }
 
 function saveFailure(error: PostgrestError): { ok: false; error: SaveFailure } | RemovalUnconfirmed {
-  if (error.code === NOT_FOUND) {
-    return { ok: false, error: "not_found" };
+  // What the code and the details of the error mean is decided by classifySaveFailure; only a failure it does not know is
+  // logged.
+  const failure = classifySaveFailure(error.code, error.details);
+  switch (failure.kind) {
+    case "not_found":
+      return { ok: false, error: "not_found" };
+    case "unknown_reference":
+      return { ok: false, error: "unknown_reference" };
+    case "removal_unconfirmed":
+      return { ok: false, error: "removal_unconfirmed", removed: failure.removed };
+    case "failed":
+      logDatabaseError("schedules", "save", error);
+      return { ok: false, error: "failed" };
   }
-  if (error.code === FOREIGN_KEY_VIOLATION) {
-    return { ok: false, error: "unknown_reference" };
-  }
-  if (error.code === REMOVAL_UNCONFIRMED) {
-    const removed = Number.parseInt(error.details, 10);
-    // A count that cannot be read cannot be shown to the planner to confirm, so it is a failure like any other.
-    if (!Number.isNaN(removed) && removed >= 1) {
-      return { ok: false, error: "removal_unconfirmed", removed };
-    }
-  }
-  logDatabaseError("schedules", "save", error);
-  return { ok: false, error: "failed" };
 }
 
 /**
- * Every schedule the session may see with its number of employees and its total required staffing, ordered by
- * `sortSchedules`. Throws when the database fails.
+ * The newest schedules the session may see (at most `SCHEDULE_LIST_LIMIT`) with their number of employees and their
+ * total required staffing, ordered by `sortSchedules`; `truncated` is true when older ones were left out. Throws when the
+ * database fails.
  */
-export async function listSchedules(supabase: SupabaseClient): Promise<ScheduleSummary[]> {
-  const response = await supabase.from("schedules").select(LIST_SELECT);
+export async function listSchedules(
+  supabase: SupabaseClient,
+): Promise<{ schedules: ScheduleSummary[]; truncated: boolean }> {
+  // One row more than the limit tells whether there is anything beyond it.
+  const response = await supabase
+    .from("schedule_summaries")
+    .select(LIST_SELECT)
+    .order("start_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(SCHEDULE_LIST_LIMIT + 1);
   if (response.error) {
     throw readFailure("list", response.error);
   }
-  return sortSchedules(toSummaries(response.data));
+  const summaries = toSummaries(response.data);
+  return {
+    schedules: sortSchedules(summaries.slice(0, SCHEDULE_LIST_LIMIT)),
+    truncated: summaries.length > SCHEDULE_LIST_LIMIT,
+  };
 }
 
 /**

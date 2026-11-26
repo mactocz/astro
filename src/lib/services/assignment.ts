@@ -1,5 +1,5 @@
 import { isUuid } from "@/lib/postgrest";
-import { PERIOD_DAYS } from "@/lib/services/schedule";
+import { PERIOD_DAYS, compareCells, compareText } from "@/lib/services/schedule";
 import type { AssignmentField, AssignmentFieldErrors, AssignmentInput, CoverageCell, StaffingCell } from "@/types";
 
 // One short message per field, shown next to the field and returned by the API.
@@ -11,16 +11,7 @@ const FIELD_ERRORS = {
 
 type Parsed<T> = { ok: true; value: T } | { ok: false };
 
-// Plain code-unit order rather than a collator: an id is not text for people, and this never depends on locale data.
-function compareText(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 type CellRef = Pick<AssignmentInput, "shiftId" | "dayOffset">;
-
-function compareCells(a: CellRef, b: CellRef): number {
-  return compareText(a.shiftId, b.shiftId) || a.dayOffset - b.dayOffset;
-}
 
 // A staffing cell is one shift on one day.
 function cellKey({ shiftId, dayOffset }: CellRef): string {

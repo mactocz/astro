@@ -28,8 +28,10 @@ const ADD_SELECT_ID = "addShift";
 // The first column stays in place while the days scroll. Its background is opaque (the card behind it is not), or the
 // scrolled cells would show through.
 const stickyCell = "sticky left-0 z-10 min-w-44 max-w-56 border-r border-white/10 bg-slate-800";
+// The cell is a text input with a numeric keypad, not `type="number"`: a number input hands over "" for what it cannot read
+// ("1e", "-", "+5"), and the form could not tell that from an empty cell. The form reads the text itself (`parseCount`).
 const cellInputClass =
-  "w-14 rounded-md border border-white/20 bg-white/10 px-1 py-1.5 text-center text-white transition-colors [appearance:textfield] [color-scheme:dark] focus:ring-2 focus:ring-purple-400 focus:outline-none [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
+  "w-14 rounded-md border border-white/20 bg-white/10 px-1 py-1.5 text-center text-white transition-colors [color-scheme:dark] focus:ring-2 focus:ring-purple-400 focus:outline-none";
 
 // "Nocna 22:00–06:00, następnego dnia, 8 h": the name, the hours, the mark of a shift past midnight and the length.
 function optionText(shift: ShiftOption): string {
@@ -134,11 +136,9 @@ export function StaffingGrid({
                         <input
                           id={id}
                           name={id}
-                          type="number"
+                          type="text"
                           inputMode="numeric"
-                          min={0}
-                          max={STAFFING_MAX}
-                          step={1}
+                          autoComplete="off"
                           value={counts[countKey(row.id, column.offset)] ?? ""}
                           onChange={(e) => {
                             onCountChange(row.id, column.offset, e.target.value);
