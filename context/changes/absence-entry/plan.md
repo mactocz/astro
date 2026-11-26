@@ -399,13 +399,13 @@ Planowany równolegle jest S-08 (`schedule-approval`), implementowany po scaleni
 
 #### Automated
 
-- [x] 1.1 Testy czystych funkcji przechodzą w workerd: `npm test`
-- [x] 1.2 Linting przechodzi: `npm run lint`
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy czystych funkcji przechodzą w workerd: `npm test` — 958851c
+- [x] 1.2 Linting przechodzi: `npm run lint` — 958851c
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 958851c
 
 #### Manual
 
-- [x] 1.4 Decyzja D7 (norma pomniejszona o 8 h × etat za dzień zatwierdzonej nieobecności od poniedziałku do piątku niebędący świętem, z dolnym ograniczeniem 0), polskie etykiety typów i komunikaty walidacji oraz wektory normy zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Decyzja D7 (norma pomniejszona o 8 h × etat za dzień zatwierdzonej nieobecności od poniedziałku do piątku niebędący świętem, z dolnym ograniczeniem 0), polskie etykiety typów i komunikaty walidacji oraz wektory normy zostały przejrzane i zatwierdzone przez autora — 958851c
 
 ### Phase 2: Reguły nieobecności w silniku
 
