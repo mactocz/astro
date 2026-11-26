@@ -374,9 +374,9 @@ Równolegle jest planowany S-06 (`workload-vs-norm`, plan w `context/changes/wor
 
 #### Automated
 
-- [x] 3.1 Testy reguł i silnika przechodzą w workerd: `npm test`
-- [x] 3.2 Linting przechodzi: `npm run lint`
-- [x] 3.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 3.1 Testy reguł i silnika przechodzą w workerd: `npm test` — 0682c85
+- [x] 3.2 Linting przechodzi: `npm run lint` — 0682c85
+- [x] 3.3 Sprawdzanie typów przechodzi: `npx astro check` — 0682c85
 
 ### Phase 4: Widok wskazań
 
