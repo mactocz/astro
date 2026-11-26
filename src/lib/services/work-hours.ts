@@ -11,6 +11,8 @@ import type { AssignmentInput, Fte } from "@/types";
 // A full-time week without a holiday is 40 h, and each holiday on a day other than Sunday takes 8 h off (art. 130).
 const FULL_WEEK_MINUTES = 2400;
 const HOLIDAY_MINUTES = 480;
+// A day of approved absence between Monday and Friday that is not a holiday takes the same 8 h off (decision D7 of S-07).
+const EXCUSED_DAY_MINUTES = 480;
 
 /** What the work-time rules need to know of a shift: when it starts and ends (minutes after midnight, as in `ShiftInput`). */
 export interface ShiftTimes {
@@ -93,6 +95,28 @@ export function weeklyNormWithHolidays(holidays: readonly string[], fte: Fte): W
     baseMinutes: FULL_WEEK_MINUTES - HOLIDAY_MINUTES * holidays.length,
     fte: { numerator, denominator },
     holidays: [...holidays],
+  };
+}
+
+/**
+ * The norm of a week with approved absences (S-07): `weeklyNormWithHolidays` less 8 h for each day in `excusedDays`, never
+ * below 0, so `baseMinutes = max(0, 2400 - 480 × holidays - 480 × excusedDays)`. The caller passes the days that really
+ * lower the norm (`excusedWeekdays` in `absence.ts`: Monday to Friday, not a holiday, covered by an approved absence), and
+ * they are not checked here, so a day listed twice or a Saturday would be counted as given. The result is a
+ * `WeeklyNorm` with one more field, so `normMinutes` and `exceedsNorm` take it as it is. Each norm gets its own copy of
+ * both lists. Throws a RangeError for an `fte` that is not a fraction of whole numbers with 1 <= numerator <= denominator.
+ */
+export function weeklyNormExcused(
+  holidays: readonly string[],
+  excusedDays: readonly string[],
+  fte: Fte,
+): WeeklyNorm & { excusedDays: string[] } {
+  // The same FTE check and the same copies as for a week without absences.
+  const norm = weeklyNormWithHolidays(holidays, fte);
+  return {
+    ...norm,
+    baseMinutes: Math.max(0, norm.baseMinutes - EXCUSED_DAY_MINUTES * excusedDays.length),
+    excusedDays: [...excusedDays],
   };
 }
 

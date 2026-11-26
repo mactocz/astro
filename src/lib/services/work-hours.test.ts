@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { excusedWeekdays } from "@/lib/services/absence";
 import { holidaysInWeek } from "@/lib/services/calendar";
 import { formatDuration } from "@/lib/services/shift";
 import {
@@ -6,6 +7,7 @@ import {
   normMinutes,
   shiftInterval,
   weeklyNorm,
+  weeklyNormExcused,
   weeklyNormWithHolidays,
   workedMinutesByEmployee,
   type ShiftTimes,
@@ -13,7 +15,7 @@ import {
 } from "@/lib/services/work-hours";
 import { expectDeterministic, seededShuffle } from "@/lib/testing/determinism";
 import { localDateMethodsCalledBy } from "@/lib/testing/local-time";
-import type { AssignmentInput, Fte } from "@/types";
+import type { AbsenceStatus, AssignmentInput, Fte } from "@/types";
 
 // The shifts are referred to by id only. By id they order as NIGHT, MORNING, LONG, and the employees as ANNA, BARTEK,
 // CEZARY, which is not the order of the names, so only a sort by id can produce it.
@@ -393,6 +395,395 @@ describe("weeklyNormWithHolidays", () => {
   });
 });
 
+describe("weeklyNormExcused", () => {
+  const FULL: Fte = { numerator: 1, denominator: 1 };
+  const THREE_QUARTERS: Fte = { numerator: 3, denominator: 4 };
+  const HALF: Fte = { numerator: 1, denominator: 2 };
+  const THREE_SEVENTHS: Fte = { numerator: 3, denominator: 7 };
+
+  // The week of Monday 2 November 2026 has no holiday. The week of Tuesday 10 November has 11 November (a Wednesday) in it,
+  // so its working days are Tuesday 10, Wednesday 11 (the holiday), Thursday 12, Friday 13 and Monday 16.
+  const HOLIDAY_WEEK = ["2026-11-11"];
+  const MONDAY_TO_FRIDAY = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"];
+  const WHOLE_WEEK = [...MONDAY_TO_FRIDAY, "2026-11-07", "2026-11-08"];
+  const OTHER_DAYS_OF_HOLIDAY_WEEK = ["2026-11-10", "2026-11-12", "2026-11-13", "2026-11-16"];
+
+  it.each<{
+    label: string;
+    holidays: string[];
+    excused: string[];
+    fte: Fte;
+    base: number;
+    minutes: number;
+    shown: string;
+  }>([
+    { label: "no absence, full time", holidays: [], excused: [], fte: FULL, base: 2400, minutes: 2400, shown: "40 h" },
+    {
+      label: "one day of absence, full time",
+      holidays: [],
+      excused: ["2026-11-04"],
+      fte: FULL,
+      base: 1920,
+      minutes: 1920,
+      shown: "32 h",
+    },
+    {
+      label: "two days of absence, full time",
+      holidays: [],
+      excused: ["2026-11-03", "2026-11-04"],
+      fte: FULL,
+      base: 1440,
+      minutes: 1440,
+      shown: "24 h",
+    },
+    {
+      label: "five days of absence, Monday to Friday, full time",
+      holidays: [],
+      excused: MONDAY_TO_FRIDAY,
+      fte: FULL,
+      base: 0,
+      minutes: 0,
+      shown: "0 min",
+    },
+    {
+      label: "seven days of absence given, Saturday and Sunday too, which stops at 0 and does not go below",
+      holidays: [],
+      excused: WHOLE_WEEK,
+      fte: FULL,
+      base: 0,
+      minutes: 0,
+      shown: "0 min",
+    },
+    {
+      label: "the week of 10 November with no absence, full time",
+      holidays: HOLIDAY_WEEK,
+      excused: [],
+      fte: FULL,
+      base: 1920,
+      minutes: 1920,
+      shown: "32 h",
+    },
+    {
+      label: "the week of 10 November with an absence on Thursday 12 November, full time",
+      holidays: HOLIDAY_WEEK,
+      excused: ["2026-11-12"],
+      fte: FULL,
+      base: 1440,
+      minutes: 1440,
+      shown: "24 h",
+    },
+    {
+      label: "the week of 10 November with an absence on Thursday and Friday, full time",
+      holidays: HOLIDAY_WEEK,
+      excused: ["2026-11-12", "2026-11-13"],
+      fte: FULL,
+      base: 960,
+      minutes: 960,
+      shown: "16 h",
+    },
+    {
+      label: "the week of 10 November with an absence on every other working day, full time",
+      holidays: HOLIDAY_WEEK,
+      excused: OTHER_DAYS_OF_HOLIDAY_WEEK,
+      fte: FULL,
+      base: 0,
+      minutes: 0,
+      shown: "0 min",
+    },
+    {
+      label: "the week of 10 November with five days of absence given, which is below 0 before the floor",
+      holidays: HOLIDAY_WEEK,
+      excused: [...OTHER_DAYS_OF_HOLIDAY_WEEK, "2026-11-11"],
+      fte: FULL,
+      base: 0,
+      minutes: 0,
+      shown: "0 min",
+    },
+    {
+      label: "one day of absence, 3/4",
+      holidays: [],
+      excused: ["2026-11-04"],
+      fte: THREE_QUARTERS,
+      base: 1920,
+      minutes: 1440,
+      shown: "24 h",
+    },
+    {
+      label: "one day of absence, 1/2",
+      holidays: [],
+      excused: ["2026-11-04"],
+      fte: HALF,
+      base: 1920,
+      minutes: 960,
+      shown: "16 h",
+    },
+    {
+      label: "one day of absence, 3/7 (822.86 minutes)",
+      holidays: [],
+      excused: ["2026-11-04"],
+      fte: THREE_SEVENTHS,
+      base: 1920,
+      minutes: 823,
+      shown: "13 h 43 min",
+    },
+    {
+      label: "the week of 10 November with one day of absence, 3/4",
+      holidays: HOLIDAY_WEEK,
+      excused: ["2026-11-12"],
+      fte: THREE_QUARTERS,
+      base: 1440,
+      minutes: 1080,
+      shown: "18 h",
+    },
+    {
+      label: "the week of 10 November with one day of absence, 1/2",
+      holidays: HOLIDAY_WEEK,
+      excused: ["2026-11-12"],
+      fte: HALF,
+      base: 1440,
+      minutes: 720,
+      shown: "12 h",
+    },
+    {
+      label: "the week of 10 November with one day of absence, 3/7 (617.14 minutes)",
+      holidays: HOLIDAY_WEEK,
+      excused: ["2026-11-12"],
+      fte: THREE_SEVENTHS,
+      base: 1440,
+      minutes: 617,
+      shown: "10 h 17 min",
+    },
+    {
+      label: "five days of absence, 3/4",
+      holidays: [],
+      excused: MONDAY_TO_FRIDAY,
+      fte: THREE_QUARTERS,
+      base: 0,
+      minutes: 0,
+      shown: "0 min",
+    },
+  ])("sets the norm of $label to $shown", ({ holidays, excused, fte, base, minutes, shown }) => {
+    const norm = weeklyNormExcused(holidays, excused, fte);
+
+    expect(norm).toStrictEqual({ baseMinutes: base, fte, holidays, excusedDays: excused });
+    expect(normMinutes(norm)).toBe(minutes);
+    expect(formatDuration(normMinutes(norm))).toBe(shown);
+  });
+
+  it("takes 8 h off the full week for each holiday and for each day of absence, and never goes below 0", () => {
+    for (let holidayCount = 0; holidayCount <= 3; holidayCount++) {
+      for (let excusedCount = 0; excusedCount <= 8; excusedCount++) {
+        const holidays = Array.from({ length: holidayCount }, (_unused, index) => `2026-12-2${index + 4}`);
+        const excused = Array.from({ length: excusedCount }, (_unused, index) => `2026-11-0${index + 1}`);
+
+        const { baseMinutes } = weeklyNormExcused(holidays, excused, FULL);
+
+        expect(baseMinutes, `${holidayCount} holidays and ${excusedCount} days of absence`).toBe(
+          Math.max(0, 2400 - 480 * (holidayCount + excusedCount)),
+        );
+      }
+    }
+  });
+
+  it("gives exactly what weeklyNormWithHolidays gives, apart from the empty list of days of absence, when nobody is away", () => {
+    const fractions: Fte[] = [FULL, THREE_QUARTERS, { numerator: 1, denominator: 7 }, THREE_SEVENTHS];
+    // Weeks with none, one, two and three holidays, a Sunday holiday and the turn of the year.
+    const startDates = ["2026-11-02", "2026-11-10", "2026-05-02", "2024-12-23", "2025-12-22", "2099-12-31"];
+
+    for (const startDate of startDates) {
+      const holidays = holidaysInWeek(startDate);
+      for (const fte of fractions) {
+        const { excusedDays, ...norm } = weeklyNormExcused(holidays, [], fte);
+
+        expect(excusedDays).toStrictEqual([]);
+        expect(norm, `${startDate} ${fte.numerator}/${fte.denominator}`).toStrictEqual(
+          weeklyNormWithHolidays(holidays, fte),
+        );
+        expect(norm).toStrictEqual(weeklyNorm(startDate, fte));
+      }
+    }
+  });
+
+  it("leaves weeklyNorm and weeklyNormWithHolidays without the list of days of absence", () => {
+    expect(Object.keys(weeklyNorm("2026-11-10", FULL)).sort()).toStrictEqual(["baseMinutes", "fte", "holidays"]);
+    expect(Object.keys(weeklyNormWithHolidays(HOLIDAY_WEEK, FULL)).sort()).toStrictEqual([
+      "baseMinutes",
+      "fte",
+      "holidays",
+    ]);
+  });
+
+  it("keeps the FTE as a fraction, so that a norm lowered by an absence is compared without rounding", () => {
+    const norm = weeklyNormExcused([], ["2026-11-04"], THREE_SEVENTHS);
+
+    expect((norm.baseMinutes * norm.fte.numerator) / norm.fte.denominator).toBeCloseTo(822.86, 2);
+    expect(normMinutes(norm)).toBe(823);
+  });
+
+  it("gives its own copy of the FTE and of both lists, and leaves frozen input unchanged", () => {
+    const fte = Object.freeze({ numerator: 3, denominator: 4 });
+    const holidays = Object.freeze([...HOLIDAY_WEEK]);
+    const excused = Object.freeze(["2026-11-12", "2026-11-13"]);
+
+    const first = weeklyNormExcused(holidays, excused, fte);
+    const second = weeklyNormExcused(holidays, excused, fte);
+    first.fte.numerator = 1;
+    first.holidays.length = 0;
+    first.excusedDays.length = 0;
+
+    expect(second).toStrictEqual({
+      baseMinutes: 960,
+      fte: { numerator: 3, denominator: 4 },
+      holidays: ["2026-11-11"],
+      excusedDays: ["2026-11-12", "2026-11-13"],
+    });
+    expect(second.holidays).not.toBe(first.holidays);
+    expect(second.excusedDays).not.toBe(first.excusedDays);
+    expect(fte).toStrictEqual({ numerator: 3, denominator: 4 });
+    expect(holidays).toStrictEqual(["2026-11-11"]);
+    expect(excused).toStrictEqual(["2026-11-12", "2026-11-13"]);
+  });
+
+  it.each<[string, Fte]>([
+    ["a zero numerator", { numerator: 0, denominator: 2 }],
+    ["a numerator above the denominator", { numerator: 3, denominator: 2 }],
+    ["a zero denominator", { numerator: 1, denominator: 0 }],
+    ["a negative numerator", { numerator: -1, denominator: 2 }],
+    ["a numerator with a fraction", { numerator: 1.5, denominator: 2 }],
+    ["a numerator that is NaN", { numerator: NaN, denominator: 2 }],
+    ["a denominator that is infinite", { numerator: 1, denominator: Infinity }],
+  ])("throws a RangeError for %s, with or without days of absence", (_label, fte) => {
+    expect(() => weeklyNormExcused([], [], fte)).toThrow(RangeError);
+    expect(() => weeklyNormExcused(HOLIDAY_WEEK, ["2026-11-12"], fte)).toThrow(RangeError);
+  });
+
+  it("gives the same norm for repeated calls", () => {
+    const norm = expectDeterministic(
+      (input: { holidays: string[]; excused: string[] }) =>
+        weeklyNormExcused(input.holidays, input.excused, THREE_QUARTERS),
+      { holidays: HOLIDAY_WEEK, excused: ["2026-11-12"] },
+    );
+
+    expect(norm).toStrictEqual({
+      baseMinutes: 1440,
+      fte: { numerator: 3, denominator: 4 },
+      holidays: ["2026-11-11"],
+      excusedDays: ["2026-11-12"],
+    });
+  });
+});
+
+describe("the norm of a week from the absences", () => {
+  const FULL: Fte = { numerator: 1, denominator: 1 };
+  const THREE_QUARTERS: Fte = { numerator: 3, denominator: 4 };
+  const MONDAY_TO_FRIDAY_OF_NOVEMBER = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"];
+
+  interface Away {
+    startDate: string;
+    endDate: string;
+    status: AbsenceStatus;
+  }
+
+  const approved = (startDate: string, endDate: string): Away => ({ startDate, endDate, status: "approved" });
+
+  // The norm the way the rules and the hours column build it: the holidays of the week, then the days of approved absence.
+  function normOfWeek(startDate: string, absences: readonly Away[], fte: Fte) {
+    const holidays = holidaysInWeek(startDate);
+    return weeklyNormExcused(holidays, excusedWeekdays(startDate, absences, holidays), fte);
+  }
+
+  it.each<{ label: string; startDate: string; absences: Away[]; excused: string[]; hours: string }>([
+    {
+      label: "no absence in the week of 2 November",
+      startDate: "2026-11-02",
+      absences: [],
+      excused: [],
+      hours: "40 h",
+    },
+    {
+      label: "one Wednesday",
+      startDate: "2026-11-02",
+      absences: [approved("2026-11-04", "2026-11-04")],
+      excused: ["2026-11-04"],
+      hours: "32 h",
+    },
+    {
+      label: "Monday to Friday",
+      startDate: "2026-11-02",
+      absences: [approved("2026-11-02", "2026-11-06")],
+      excused: MONDAY_TO_FRIDAY_OF_NOVEMBER,
+      hours: "0 min",
+    },
+    {
+      label: "all seven days, of which only Monday to Friday count",
+      startDate: "2026-11-02",
+      absences: [approved("2026-11-02", "2026-11-08")],
+      excused: MONDAY_TO_FRIDAY_OF_NOVEMBER,
+      hours: "0 min",
+    },
+    {
+      label: "Saturday and Sunday only, which changes nothing",
+      startDate: "2026-11-02",
+      absences: [approved("2026-11-07", "2026-11-08")],
+      excused: [],
+      hours: "40 h",
+    },
+    {
+      label: "Thursday 12 November in the week of the 11 November holiday",
+      startDate: "2026-11-10",
+      absences: [approved("2026-11-12", "2026-11-12")],
+      excused: ["2026-11-12"],
+      hours: "24 h",
+    },
+    {
+      label: "the holiday only, which does not lower the norm a second time",
+      startDate: "2026-11-10",
+      absences: [approved("2026-11-11", "2026-11-11")],
+      excused: [],
+      hours: "32 h",
+    },
+    {
+      label: "an absence from the holiday to Friday, in which the holiday is not counted again",
+      startDate: "2026-11-10",
+      absences: [approved("2026-11-11", "2026-11-13")],
+      excused: ["2026-11-12", "2026-11-13"],
+      hours: "16 h",
+    },
+    {
+      label: "the whole week of the holiday",
+      startDate: "2026-11-10",
+      absences: [approved("2026-11-10", "2026-11-16")],
+      excused: ["2026-11-10", "2026-11-12", "2026-11-13", "2026-11-16"],
+      hours: "0 min",
+    },
+    {
+      label: "a requested and a rejected absence, which lower nothing",
+      startDate: "2026-11-10",
+      absences: [
+        { startDate: "2026-11-12", endDate: "2026-11-13", status: "requested" },
+        { startDate: "2026-11-10", endDate: "2026-11-16", status: "rejected" },
+      ],
+      excused: [],
+      hours: "32 h",
+    },
+  ])("gives $hours for $label", ({ startDate, absences, excused, hours }) => {
+    const norm = normOfWeek(startDate, absences, FULL);
+
+    expect(norm.excusedDays).toStrictEqual(excused);
+    expect(formatDuration(normMinutes(norm))).toBe(hours);
+  });
+
+  it("compares the work of 3/4 with the lowered norm exactly", () => {
+    // 2400 - 480 (the holiday) - 480 (Thursday 12 November) = 1440, and 3/4 of it is 1080 minutes, which is 18 h.
+    const norm = normOfWeek("2026-11-10", [approved("2026-11-12", "2026-11-12")], THREE_QUARTERS);
+
+    expect(norm.baseMinutes).toBe(1440);
+    expect(normMinutes(norm)).toBe(1080);
+    expect(exceedsNorm(1080, norm)).toBe(false);
+    expect(exceedsNorm(1081, norm)).toBe(true);
+  });
+});
+
 describe("exceedsNorm", () => {
   const normOf = (startDate: string, numerator: number, denominator: number) =>
     weeklyNorm(startDate, { numerator, denominator });
@@ -494,6 +885,106 @@ describe("exceedsNorm", () => {
     }
   });
 
+  describe("with the days of absence taken off", () => {
+    const excusedNorm = (holidays: string[], excused: string[], numerator: number, denominator: number) =>
+      weeklyNormExcused(holidays, excused, { numerator, denominator });
+    const HOLIDAY = ["2026-11-11"];
+    const THURSDAY = ["2026-11-12"];
+
+    it.each<{ label: string; norm: WeeklyNorm; worked: number; exceeds: boolean }>([
+      { label: "1920 minutes of 32 h", norm: excusedNorm([], THURSDAY, 1, 1), worked: 1920, exceeds: false },
+      { label: "1921 minutes of 32 h", norm: excusedNorm([], THURSDAY, 1, 1), worked: 1921, exceeds: true },
+      { label: "1440 minutes of 3/4 of 32 h", norm: excusedNorm([], THURSDAY, 3, 4), worked: 1440, exceeds: false },
+      { label: "1441 minutes of 3/4 of 32 h", norm: excusedNorm([], THURSDAY, 3, 4), worked: 1441, exceeds: true },
+      { label: "960 minutes of 1/2 of 32 h", norm: excusedNorm([], THURSDAY, 1, 2), worked: 960, exceeds: false },
+      { label: "961 minutes of 1/2 of 32 h", norm: excusedNorm([], THURSDAY, 1, 2), worked: 961, exceeds: true },
+      {
+        label: "822 minutes of 3/7 of 32 h (822.86 minutes)",
+        norm: excusedNorm([], THURSDAY, 3, 7),
+        worked: 822,
+        exceeds: false,
+      },
+      {
+        label: "823 minutes of 3/7 of 32 h, the rounded norm that is above the exact one",
+        norm: excusedNorm([], THURSDAY, 3, 7),
+        worked: 823,
+        exceeds: true,
+      },
+      {
+        label: "617 minutes of 3/7 of 24 h, a holiday and an absence (617.14 minutes)",
+        norm: excusedNorm(HOLIDAY, THURSDAY, 3, 7),
+        worked: 617,
+        exceeds: false,
+      },
+      {
+        label: "618 minutes of 3/7 of 24 h, a holiday and an absence",
+        norm: excusedNorm(HOLIDAY, THURSDAY, 3, 7),
+        worked: 618,
+        exceeds: true,
+      },
+      {
+        label: "1080 minutes of 3/4 of 24 h, a holiday and an absence",
+        norm: excusedNorm(HOLIDAY, THURSDAY, 3, 4),
+        worked: 1080,
+        exceeds: false,
+      },
+      {
+        label: "1081 minutes of 3/4 of 24 h, a holiday and an absence",
+        norm: excusedNorm(HOLIDAY, THURSDAY, 3, 4),
+        worked: 1081,
+        exceeds: true,
+      },
+      {
+        label: "nothing worked in a week that an absence has taken to 0",
+        norm: excusedNorm([], ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"], 1, 1),
+        worked: 0,
+        exceeds: false,
+      },
+      {
+        label: "a single minute worked in a week that an absence has taken to 0",
+        norm: excusedNorm([], ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"], 1, 1),
+        worked: 1,
+        exceeds: true,
+      },
+      {
+        label: "a single minute worked at 3/7 in a week that an absence has taken to 0",
+        norm: excusedNorm([], ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"], 3, 7),
+        worked: 1,
+        exceeds: true,
+      },
+    ])("says $exceeds for $label", ({ norm, worked, exceeds }) => {
+      expect(exceedsNorm(worked, norm)).toBe(exceeds);
+    });
+
+    it("flips at the first whole minute above the exact norm, for every FTE and every number of days of absence", () => {
+      const fractions: [number, number][] = [
+        [1, 1],
+        [1, 2],
+        [1, 3],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+        [5, 8],
+        [3, 7],
+        [7, 10],
+      ];
+      const days = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"];
+
+      for (const holidays of [[], HOLIDAY]) {
+        for (let count = 0; count <= days.length; count++) {
+          for (const [numerator, denominator] of fractions) {
+            const week = excusedNorm(holidays, days.slice(0, count), numerator, denominator);
+            const firstAbove = Math.floor((week.baseMinutes * numerator) / denominator) + 1;
+            const label = `${holidays.length} holidays, ${count} days of absence, ${numerator}/${denominator}`;
+
+            expect(exceedsNorm(firstAbove - 1, week), `${label}: ${firstAbove - 1}`).toBe(false);
+            expect(exceedsNorm(firstAbove, week), `${label}: ${firstAbove}`).toBe(true);
+          }
+        }
+      }
+    });
+  });
+
   it("leaves the norm unchanged", () => {
     const week = Object.freeze(normOf("2026-11-10", 3, 4));
     const before = structuredClone(week);
@@ -572,6 +1063,23 @@ describe("the time zone", () => {
       exceedsNorm(1441, week);
       weeklyNorm("2099-12-31", { numerator: 1, denominator: 1 });
       weeklyNormWithHolidays(holidaysInWeek("2099-12-31"), { numerator: 1, denominator: 1 });
+    });
+
+    expect(called).toStrictEqual([]);
+  });
+
+  it("calls no method of Date that reads or writes the local time for the norm lowered by absences", () => {
+    const called = localDateMethodsCalledBy(() => {
+      const holidays = holidaysInWeek("2026-11-10");
+      const excused = excusedWeekdays(
+        "2026-11-10",
+        [{ startDate: "2026-11-12", endDate: "2026-11-13", status: "approved" }],
+        holidays,
+      );
+      const week = weeklyNormExcused(holidays, excused, { numerator: 3, denominator: 4 });
+      normMinutes(week);
+      exceedsNorm(1441, week);
+      weeklyNormExcused(holidaysInWeek("2099-12-31"), ["2099-12-31"], { numerator: 1, denominator: 1 });
     });
 
     expect(called).toStrictEqual([]);

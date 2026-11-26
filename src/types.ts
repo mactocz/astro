@@ -84,6 +84,43 @@ export interface ScheduleSummary {
 export type ScheduleField = "startDate" | "label" | "staffing" | "employeeIds";
 export type ScheduleFieldErrors = Partial<Record<ScheduleField, string>>;
 
+/** Why an employee is away: leave, sick leave (L4) or another absence. Only whole days, and no free text (L4 is health data). */
+export type AbsenceType = "vacation" | "sick_leave" | "other";
+
+/** Where an absence stands: asked for but not decided, approved or rejected. Only an approved one lowers the weekly norm. */
+export type AbsenceStatus = "requested" | "approved" | "rejected";
+
+/** What the planner enters: the person, the kind and the first and last day (both included, `YYYY-MM-DD`). */
+export interface AbsenceInput {
+  /** The id of an employee. */
+  employeeId: string;
+  type: AbsenceType;
+  /** The first day of the absence as `YYYY-MM-DD`, 2020-01-01 to 2099-12-31. */
+  startDate: string;
+  /** The last day of the absence as `YYYY-MM-DD`, not before `startDate`, 2020-01-01 to 2099-12-31. */
+  endDate: string;
+}
+
+export interface Absence extends AbsenceInput {
+  id: string;
+  /** The planner's session only writes an approved absence; a requested one comes from the leave request flow. */
+  status: AbsenceStatus;
+  /** ISO timestamp set by the database. */
+  createdAt: string;
+}
+
+export type AbsenceField = "employeeId" | "type" | "startDate" | "endDate";
+export type AbsenceFieldErrors = Partial<Record<AbsenceField, string>>;
+
+/** An absence as the schedule page gives it to the island: no id, no creation time, nothing about the account. */
+export interface AbsenceOption {
+  employeeId: string;
+  type: AbsenceType;
+  status: AbsenceStatus;
+  startDate: string;
+  endDate: string;
+}
+
 /** Who put an assignment there: the planner by hand, or the schedule generator. */
 export type AssignmentSource = "manual" | "generated";
 
