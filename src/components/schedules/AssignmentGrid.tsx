@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { ServerError } from "@/components/auth/ServerError";
 import { assignmentKey, useAssignments } from "@/components/hooks/useAssignments";
 import { useViolations } from "@/components/hooks/useViolations";
+import { useWorkload, type WorkloadText } from "@/components/hooks/useWorkload";
 import { ViolationList } from "@/components/schedules/ViolationList";
 import { employeeDayKey } from "@/lib/services/assignment";
 import { summarizeViolations } from "@/lib/services/rules";
@@ -38,6 +39,10 @@ const shiftButtonClass =
 // A pressed button differs from the others by fill, border, weight and a tick, not only by colour.
 const shiftButtonPressedClass = "border-purple-200 bg-purple-600 font-semibold text-white hover:bg-purple-500";
 const shiftButtonIdleClass = "border-white/20 bg-white/5 text-blue-100/80 hover:bg-white/15 hover:text-white";
+
+// What the paragraph under the people's table says about the column "Godziny", always. The same words are in the smoke test.
+const HOURS_NOTE =
+  "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu (40 h pomniejszone o 8 h za każde święto w dzień inny niż niedziela, proporcjonalnie do etatu). Nieobecności nie są jeszcze uwzględnione. Przekroczenie normy pokazuje lista wskazań.";
 
 const cellKey = (shiftId: string, dayOffset: number): string => `${shiftId}/${dayOffset}`;
 
@@ -130,6 +135,22 @@ function PersonViolations({ violations }: { violations: readonly Violation[] | u
   return <span className={cn("font-medium", counts.critical > 0 ? "text-red-200" : "text-amber-200")}>{text}</span>;
 }
 
+// What the "Godziny" column says about a person: the hours of the schedule against the norm ("32 h z 40 h") and the difference
+// in words ("mniej o 8 h"), each on a line of its own. The colour is the one of the grid text, never a status: the column only
+// shows numbers, and exceeding the norm is a warning of the list. One explicit space between the two lines, so the text of the
+// cell reads "32 h z 40 h mniej o 8 h" without its tags.
+function PersonHours({ hours }: { hours: WorkloadText | undefined }) {
+  if (hours === undefined) {
+    return null;
+  }
+  return (
+    <>
+      <div className="font-medium whitespace-nowrap text-white">{hours.total}</div>{" "}
+      <div className="whitespace-nowrap text-blue-100/70">{hours.difference}</div>
+    </>
+  );
+}
+
 export default function AssignmentGrid({ schedule, shifts, employees, assignments }: Props) {
   const { list, byEmployeeDay, coverage, busy, error, toggle } = useAssignments({
     scheduleId: schedule.id,
@@ -139,6 +160,8 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
   // The rules read the optimistic list of the hook, so they follow every click, a click that is taken back included. They get
   // the shifts of the dictionary only, never the placeholder of `shiftLayout`, which has no hours.
   const violations = useViolations({ schedule, shifts, employees, list });
+  // The hours follow every click the same way, from the same list and the same dictionary shifts.
+  const workload = useWorkload({ schedule, shifts, employees, list });
 
   const columns = useMemo(() => dayColumns(schedule.startDate), [schedule.startDate]);
   // The rows are the people of the schedule, in the order of the employee list.
@@ -161,8 +184,10 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
 
       <ServerError message={error} />
 
-      <div className="mt-2 overflow-x-auto rounded-xl border border-white/10">
-        <table className="w-full min-w-[60rem] border-separate border-spacing-0 text-sm">
+      {/* `relative`: the visually hidden texts (`sr-only`) are positioned absolutely, and without a positioned scroll container
+          they escape its clipping and widen the whole page on a narrow screen. */}
+      <div className="relative mt-2 overflow-x-auto rounded-xl border border-white/10">
+        <table className="w-full min-w-[68rem] border-separate border-spacing-0 text-sm">
           <caption className="sr-only">Przypisania pracowników do zmian w kolejnych dniach grafiku</caption>
           <thead>
             <tr>
@@ -180,6 +205,9 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
               ))}
               <th scope="col" className="min-w-32 px-2 py-2 text-left font-medium whitespace-nowrap text-blue-100/60">
                 Wskazania
+              </th>
+              <th scope="col" className="min-w-36 px-2 py-2 text-left font-medium whitespace-nowrap text-blue-100/60">
+                Godziny
               </th>
             </tr>
           </thead>
@@ -237,11 +265,16 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                 <td className="min-w-32 border-t border-white/10 px-2 py-2 text-left align-top text-xs">
                   <PersonViolations violations={violations.byEmployee[employee.id]} />
                 </td>
+                <td className="min-w-36 border-t border-white/10 px-2 py-2 text-left align-top text-xs">
+                  <PersonHours hours={workload[employee.id]} />
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <p className="mt-2 text-xs text-blue-100/50">{HOURS_NOTE}</p>
 
       <ViolationList violations={violations.violations} counts={violations.counts} />
 
@@ -253,7 +286,7 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
           Ile osób jest przypisanych z ilu potrzebnych. Oznaczenie −n to brak osób, a +n to nadmiar. Brak obsady jest
           ostrzeżeniem na liście wskazań, a nadmiar tylko informacją.
         </p>
-        <div className="overflow-x-auto rounded-xl border border-white/10">
+        <div className="relative overflow-x-auto rounded-xl border border-white/10">
           <table className="w-full min-w-[44rem] border-separate border-spacing-0 text-sm">
             <caption className="sr-only">Liczba przypisanych osób do liczby potrzebnych, według zmiany i dnia</caption>
             <thead>
