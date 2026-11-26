@@ -382,13 +382,13 @@ Równolegle jest planowany S-06 (`workload-vs-norm`, plan w `context/changes/wor
 
 #### Automated
 
-- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 4.2 Smoke z istniejącymi i zaktualizowanymi krokami stron przechodzi lokalnie: `npm run smoke`
+- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 5774f7b
+- [x] 4.2 Smoke z istniejącymi i zaktualizowanymi krokami stron przechodzi lokalnie: `npm run smoke` — 5774f7b
 
 #### Manual
 
-- [x] 4.3 W przeglądarce na desktopie: kliknięcie przypisujące zmianę wywołuje i usuwa wskazania od razu (lista, znaczniki w komórkach, kolumna "Wskazania", licznik), powody są czytelne i wskazują osobę i dzień, wycofanie przy błędzie przywraca poprzednie wskazania, kolory nie są jedynym nośnikiem wagi, obsługa klawiaturą i odczyt licznika przez czytnik
-- [x] 4.4 Na telefonie (lub emulacji): strona się ładuje, lista wskazań jest czytelna, tabela przewija się poziomo bez rozjeżdżania strony
+- [x] 4.3 W przeglądarce na desktopie: kliknięcie przypisujące zmianę wywołuje i usuwa wskazania od razu (lista, znaczniki w komórkach, kolumna "Wskazania", licznik), powody są czytelne i wskazują osobę i dzień, wycofanie przy błędzie przywraca poprzednie wskazania, kolory nie są jedynym nośnikiem wagi, obsługa klawiaturą i odczyt licznika przez czytnik — 5774f7b
+- [x] 4.4 Na telefonie (lub emulacji): strona się ładuje, lista wskazań jest czytelna, tabela przewija się poziomo bez rozjeżdżania strony — 5774f7b
 
 ### Phase 5: Smoke, dokumentacja i wdrożenie
 
