@@ -8,6 +8,7 @@ import {
   WEEKLY_REST_MINUTES,
   WEEKLY_REST_SHIFT_CHANGE_MINUTES,
   WEEK_MINUTES,
+  absenceViolations,
   anchorKey,
   compareViolations,
   dailyHoursViolations,
@@ -25,7 +26,15 @@ import { MINUTES_PER_DAY } from "@/lib/services/shift";
 import type { ShiftTimes } from "@/lib/services/work-hours";
 import { expectDeterministic, seededShuffle } from "@/lib/testing/determinism";
 import { localDateMethodsCalledBy } from "@/lib/testing/local-time";
-import type { AssignmentInput, Fte, Violation, ViolationRule } from "@/types";
+import type {
+  AbsenceOption,
+  AbsenceStatus,
+  AbsenceType,
+  AssignmentInput,
+  Fte,
+  Violation,
+  ViolationRule,
+} from "@/types";
 
 // The shifts are referred to by id only. By id they order as NIGHT, DAY, MORNING, LONG, EVENING, NIGHT_LONG, and the
 // employees as ANNA, BARTEK, CEZARY, which is not the order of the names (Kowalski, Nowak, Wiśniewska), so only a sort by
@@ -108,6 +117,23 @@ function workedCase(minutes: number, extra: Partial<RuleInput> = {}): RuleInput 
 
 // Every rule, in the order of its rank.
 const ALL_RULES = (Object.keys(RULE_RANK) as ViolationRule[]).sort((a, b) => RULE_RANK[a] - RULE_RANK[b]);
+// The rules that an input without absences can break: all of them but the two of the absences.
+const RULES_WITHOUT_ABSENCES = ALL_RULES.filter((rule) => rule !== "absence" && rule !== "absence_requested");
+
+// The dash of a period and of the times of a shift (U+2013), kept apart from the text of the reasons below so that it is
+// never a hyphen by accident.
+const DASH = String.fromCharCode(0x2013);
+
+// An absence of the given kind, `approved` unless the status says otherwise.
+function absence(
+  startDate: string,
+  endDate: string,
+  employeeId: string = ANNA,
+  type: AbsenceType = "vacation",
+  status: AbsenceStatus = "approved",
+): AbsenceOption {
+  return { employeeId, type, status, startDate, endDate };
+}
 
 const reasonsOf = (violations: readonly Violation[]) => violations.map(({ reason }) => reason);
 const keysOf = (violations: readonly Violation[]) => violations.map(({ key }) => key);
@@ -139,10 +165,25 @@ describe("the thresholds", () => {
       "daily_hours",
       "weekly_hours",
       "weekly_rest",
+      "absence",
       "weekly_norm",
       "understaffed",
+      "absence_requested",
     ]);
     expect(new Set(Object.values(RULE_RANK)).size).toBe(ALL_RULES.length);
+  });
+
+  it("number the ranks 0 to 7, so that the absence is among the critical rules and the request after the staffing", () => {
+    expect(RULE_RANK).toStrictEqual({
+      daily_rest: 0,
+      daily_hours: 1,
+      weekly_hours: 2,
+      weekly_rest: 3,
+      absence: 4,
+      weekly_norm: 5,
+      understaffed: 6,
+      absence_requested: 7,
+    });
   });
 });
 
@@ -201,10 +242,13 @@ describe("compareViolations", () => {
     violation({ rule: "daily_hours" }),
     violation({ rule: "weekly_hours", employeeId: CEZARY }),
     violation({ rule: "weekly_rest" }),
+    violation({ rule: "absence", employeeId: CEZARY }),
     violation({ severity: "warning", rule: "daily_rest" }),
     violation({ severity: "warning", rule: "weekly_norm" }),
     violation({ severity: "warning", rule: "understaffed", employeeId: null, key: "x" }),
     violation({ severity: "warning", rule: "understaffed", employeeId: null, key: "y" }),
+    violation({ severity: "warning", rule: "absence_requested" }),
+    violation({ severity: "warning", rule: "absence_requested", employeeId: BARTEK }),
   ];
 
   it.each([1, 2, 3, 4, 5, 6])("sorts a shuffle of the list (seed %d) back into the canonical order", (seed) => {
@@ -1108,6 +1152,524 @@ describe("weeklyNormViolations", () => {
   });
 });
 
+describe("absenceViolations", () => {
+  // Anna on the morning shift of Monday 02.11 (06:00 to 14:00, minutes 360 to 840 of the timeline) or of Tuesday 03.11.
+  const monday = [assignment(MORNING, 0, ANNA)];
+  const tuesday = [assignment(MORNING, 1, ANNA)];
+  const MONDAY_HEAD = `Wiśniewska Anna: zmiana Poranna (pon. 02.11, 06:00${DASH}14:00) przypada na`;
+  const TUESDAY_HEAD = `Wiśniewska Anna: zmiana Poranna (wt. 03.11, 06:00${DASH}14:00) przypada na`;
+
+  it("is a critical violation for a shift on a day of an approved absence: a stable key, the assignment and a Polish reason", () => {
+    const violations = absenceViolations(input(monday, { absences: [absence("2026-11-02", "2026-11-06")] }));
+
+    expect(violations).toStrictEqual([
+      {
+        key: `absence|${ANNA}|0:${MORNING}:${ANNA}`,
+        severity: "critical",
+        rule: "absence",
+        employeeId: ANNA,
+        anchors: [{ shiftId: MORNING, dayOffset: 0, employeeId: ANNA }],
+        reason: `${MONDAY_HEAD} urlop (02.11${DASH}06.11.2026).`,
+        actual: 480,
+        limit: 0,
+        unit: "minutes",
+      },
+    ]);
+  });
+
+  it("is a warning for a shift on a day of a requested absence only, with a rule and a key of its own", () => {
+    const requested = absence("2026-11-02", "2026-11-06", ANNA, "vacation", "requested");
+
+    expect(absenceViolations(input(monday, { absences: [requested] }))).toStrictEqual([
+      {
+        key: `absence_requested|${ANNA}|0:${MORNING}:${ANNA}`,
+        severity: "warning",
+        rule: "absence_requested",
+        employeeId: ANNA,
+        anchors: [{ shiftId: MORNING, dayOffset: 0, employeeId: ANNA }],
+        reason: `${MONDAY_HEAD} nieobecność jeszcze niezatwierdzoną (urlop, 02.11${DASH}06.11.2026).`,
+        actual: 480,
+        limit: 0,
+        unit: "minutes",
+      },
+    ]);
+  });
+
+  it.each<{ type: AbsenceType; approved: string; requested: string }>([
+    { type: "vacation", approved: "urlop", requested: "urlop" },
+    { type: "sick_leave", approved: "zwolnienie lekarskie (L4)", requested: "zwolnienie lekarskie (L4)" },
+    { type: "other", approved: "inną nieobecność", requested: "inna nieobecność" },
+  ])(
+    "names the type $type as $approved for an approved absence and as $requested for a requested one",
+    ({ type, approved, requested }) => {
+      const critical = absenceViolations(
+        input(monday, { absences: [absence("2026-11-02", "2026-11-02", ANNA, type)] }),
+      );
+      const warning = absenceViolations(
+        input(monday, { absences: [absence("2026-11-02", "2026-11-02", ANNA, type, "requested")] }),
+      );
+
+      expect(reasonsOf(critical)).toStrictEqual([`${MONDAY_HEAD} ${approved} (02.11.2026).`]);
+      expect(reasonsOf(warning)).toStrictEqual([
+        `${MONDAY_HEAD} nieobecność jeszcze niezatwierdzoną (${requested}, 02.11.2026).`,
+      ]);
+    },
+  );
+
+  it("ignores a rejected absence, alone and next to the others", () => {
+    const rejected = absence("2026-11-02", "2026-11-08", ANNA, "sick_leave", "rejected");
+
+    expect(absenceViolations(input(monday, { absences: [rejected] }))).toStrictEqual([]);
+    expect(
+      reasonsOf(
+        absenceViolations(
+          input(monday, { absences: [rejected, absence("2026-11-02", "2026-11-02", ANNA, "vacation", "requested")] }),
+        ),
+      ),
+    ).toStrictEqual([`${MONDAY_HEAD} nieobecność jeszcze niezatwierdzoną (urlop, 02.11.2026).`]);
+    expect(
+      reasonsOf(
+        absenceViolations(input(monday, { absences: [rejected, absence("2026-11-02", "2026-11-02", ANNA, "other")] })),
+      ),
+    ).toStrictEqual([`${MONDAY_HEAD} inną nieobecność (02.11.2026).`]);
+  });
+
+  it("gives one violation for each shift that overlaps several absences, the weight and the reason of the strongest", () => {
+    const absences = [
+      absence("2026-11-02", "2026-11-08", ANNA, "vacation", "requested"),
+      absence("2026-11-03", "2026-11-04", ANNA, "sick_leave"),
+    ];
+
+    const violations = absenceViolations(input([...monday, ...tuesday], { absences }));
+
+    // Tuesday is covered by the request and by the sick leave, which is approved and decides; Monday by the request alone.
+    expect(violations.map(({ key, severity, rule }) => [key, severity, rule])).toStrictEqual([
+      [`absence|${ANNA}|1:${MORNING}:${ANNA}`, "critical", "absence"],
+      [`absence_requested|${ANNA}|0:${MORNING}:${ANNA}`, "warning", "absence_requested"],
+    ]);
+    expect(reasonsOf(violations)).toStrictEqual([
+      `${TUESDAY_HEAD} zwolnienie lekarskie (L4) (03.11${DASH}04.11.2026).`,
+      `${MONDAY_HEAD} nieobecność jeszcze niezatwierdzoną (urlop, 02.11${DASH}08.11.2026).`,
+    ]);
+  });
+
+  it.each<{ label: string; absences: AbsenceOption[]; named: string }>([
+    {
+      label: "an approved absence before a requested one that starts earlier and lasts longer",
+      absences: [absence("2026-11-02", "2026-11-08", ANNA, "other", "requested"), absence("2026-11-03", "2026-11-03")],
+      named: "urlop (03.11.2026)",
+    },
+    {
+      label: "the approved absence that starts first",
+      absences: [absence("2026-11-02", "2026-11-04"), absence("2026-11-03", "2026-11-06", ANNA, "sick_leave")],
+      named: `urlop (02.11${DASH}04.11.2026)`,
+    },
+    {
+      label: "the approved absence that lasts longer when two start on the same day",
+      absences: [absence("2026-11-02", "2026-11-03"), absence("2026-11-02", "2026-11-05", ANNA, "other")],
+      named: `inną nieobecność (02.11${DASH}05.11.2026)`,
+    },
+    {
+      label: "the type that comes first by code unit when the ranges are the same",
+      absences: [absence("2026-11-02", "2026-11-04"), absence("2026-11-02", "2026-11-04", ANNA, "sick_leave")],
+      named: `zwolnienie lekarskie (L4) (02.11${DASH}04.11.2026)`,
+    },
+  ])("names $label, whatever the order of the absences", ({ absences, named }) => {
+    for (const order of [absences, [...absences].reverse()]) {
+      const violations = absenceViolations(input(tuesday, { absences: order }));
+
+      expect(rulesOf(violations)).toStrictEqual(["absence"]);
+      expect(reasonsOf(violations)).toStrictEqual([`${TUESDAY_HEAD} ${named}.`]);
+    }
+  });
+
+  // The absence is Tuesday 03.11 alone: minutes 1440 to 2880 of the timeline, the end not included. `overlap` is the
+  // number of minutes of the shift inside it, 0 for no violation.
+  it.each<{ label: string; shift: ShiftTimes; dayOffset: number; overlap: number }>([
+    {
+      label: "a shift that ends exactly at midnight, when the absence starts",
+      shift: customShift("edge", "Do północy", 960, 0),
+      dayOffset: 0,
+      overlap: 0,
+    },
+    {
+      label: "a shift that ends a minute after midnight",
+      shift: customShift("edge", "Po północy", 960, 1),
+      dayOffset: 0,
+      overlap: 1,
+    },
+    {
+      label: "a night shift that starts the evening before and runs into the first day",
+      shift: NIGHT_SHIFT,
+      dayOffset: 0,
+      overlap: 360,
+    },
+    {
+      label: "a shift on the morning before, which ends long before",
+      shift: MORNING_SHIFT,
+      dayOffset: 0,
+      overlap: 0,
+    },
+    {
+      label: "a shift that starts at midnight of the first day",
+      shift: customShift("edge", "Od północy", 0, 480),
+      dayOffset: 1,
+      overlap: 480,
+    },
+    {
+      label: "a night shift that starts on the last day of the absence",
+      shift: NIGHT_SHIFT,
+      dayOffset: 1,
+      overlap: 120,
+    },
+    {
+      label: "a shift that starts a minute before the end of the last day",
+      shift: customShift("edge", "Tuż przed północą", 1439, 300),
+      dayOffset: 1,
+      overlap: 1,
+    },
+    {
+      label: "a shift that starts at midnight right after the last day",
+      shift: customShift("edge", "Od północy po", 0, 480),
+      dayOffset: 2,
+      overlap: 0,
+    },
+    {
+      label: "a night shift that starts on the evening after the last day",
+      shift: NIGHT_SHIFT,
+      dayOffset: 2,
+      overlap: 0,
+    },
+  ])("says $overlap minutes of overlap for $label", ({ shift, dayOffset, overlap }) => {
+    const violations = absenceViolations(
+      input([assignment(shift.id, dayOffset, ANNA)], {
+        shifts: [...SHIFTS, shift],
+        absences: [absence("2026-11-03", "2026-11-03")],
+      }),
+    );
+
+    expect(violations.map(({ actual }) => actual)).toStrictEqual(overlap > 0 ? [overlap] : []);
+    expect(violations.map(({ rule, severity, limit, unit }) => [rule, severity, limit, unit])).toStrictEqual(
+      overlap > 0 ? [["absence", "critical", 0, "minutes"]] : [],
+    );
+  });
+
+  it("names a night shift from the evening before an absence, and says how many minutes of it fall inside", () => {
+    const violations = absenceViolations(
+      input([assignment(NIGHT, 0, ANNA)], { absences: [absence("2026-11-03", "2026-11-03")] }),
+    );
+
+    expect(reasonsOf(violations)).toStrictEqual([
+      `Wiśniewska Anna: zmiana Nocna (pon. 02.11, 22:00${DASH}06:00) przypada na urlop (03.11.2026).`,
+    ]);
+    expect(violations.map(({ actual }) => actual)).toStrictEqual([360]);
+  });
+
+  it("counts the end of a night shift of the last day of the schedule against an absence that starts the day after it", () => {
+    const violations = absenceViolations(
+      input([assignment(NIGHT, 6, ANNA)], { absences: [absence("2026-11-09", "2026-11-13")] }),
+    );
+
+    expect(reasonsOf(violations)).toStrictEqual([
+      `Wiśniewska Anna: zmiana Nocna (niedz. 08.11, 22:00${DASH}06:00) przypada na urlop (09.11${DASH}13.11.2026).`,
+    ]);
+    expect(violations.map(({ actual }) => actual)).toStrictEqual([360]);
+  });
+
+  it.each<{ label: string; absences: AbsenceOption[] }>([
+    { label: "an absence that ends the day before the schedule", absences: [absence("2026-10-26", "2026-11-01")] },
+    { label: "an absence that starts the day after the schedule", absences: [absence("2026-11-09", "2026-11-13")] },
+    { label: "an absence years before it", absences: [absence("2020-01-01", "2020-12-31")] },
+    { label: "an absence years after it", absences: [absence("2099-01-01", "2099-12-31")] },
+  ])("gives nothing for a morning shift on each day of the week and $label", ({ absences }) => {
+    const week = [0, 1, 2, 3, 4, 5, 6].map((dayOffset) => assignment(MORNING, dayOffset, ANNA));
+
+    expect(absenceViolations(input(week, { absences }))).toStrictEqual([]);
+  });
+
+  it("finds the days of the schedule inside an absence that began before it", () => {
+    const week = [0, 1, 2, 3].map((dayOffset) => assignment(MORNING, dayOffset, ANNA));
+
+    const violations = absenceViolations(input(week, { absences: [absence("2026-10-28", "2026-11-03")] }));
+
+    expect(violations.map(anchorsOf)).toStrictEqual([[`0:${MORNING}:${ANNA}`], [`1:${MORNING}:${ANNA}`]]);
+    expect(reasonsOf(violations)[0]).toBe(`${MONDAY_HEAD} urlop (28.10${DASH}03.11.2026).`);
+  });
+
+  it("gives nothing for a person without absences, for the absences of somebody else, for none and for an empty list", () => {
+    const elsewhere = [
+      absence("2026-11-02", "2026-11-06", BARTEK),
+      absence("2026-11-02", "2026-11-06", "somebody-else"),
+    ];
+
+    expect(absenceViolations(input(monday))).toStrictEqual([]);
+    expect(absenceViolations(input(monday, { absences: [] }))).toStrictEqual([]);
+    expect(absenceViolations(input(monday, { absences: elsewhere }))).toStrictEqual([]);
+    expect(absenceViolations(input([], { absences: elsewhere }))).toStrictEqual([]);
+  });
+
+  it("judges each person by their own absences", () => {
+    const together = [assignment(MORNING, 0, ANNA), assignment(MORNING, 0, BARTEK)];
+
+    const violations = absenceViolations(input(together, { absences: [absence("2026-11-02", "2026-11-02", BARTEK)] }));
+
+    expect(violations.map(({ employeeId }) => employeeId)).toStrictEqual([BARTEK]);
+    expect(reasonsOf(violations)).toStrictEqual([
+      `Kowalski Bartek: zmiana Poranna (pon. 02.11, 06:00${DASH}14:00) przypada na urlop (02.11.2026).`,
+    ]);
+  });
+
+  it("shows a person who is not on the list of employees by id", () => {
+    const violations = absenceViolations(
+      input([assignment(MORNING, 0, "ghost-employee")], {
+        absences: [absence("2026-11-02", "2026-11-02", "ghost-employee")],
+      }),
+    );
+
+    expect(violations.map(({ employeeId }) => employeeId)).toStrictEqual(["ghost-employee"]);
+    expect(violations[0].reason.startsWith("ghost-employee: zmiana Poranna")).toBe(true);
+  });
+
+  it("skips an assignment to a shift that has no hours, and still finds the ones that have", () => {
+    const absences = [absence("2026-11-02", "2026-11-06")];
+
+    expect(absenceViolations(input([assignment(UNKNOWN, 0, ANNA)], { absences }))).toStrictEqual([]);
+    expect(
+      absenceViolations(input([assignment(UNKNOWN, 0, ANNA), assignment(MORNING, 1, ANNA)], { absences })).map(
+        anchorsOf,
+      ),
+    ).toStrictEqual([[`1:${MORNING}:${ANNA}`]]);
+  });
+
+  it("gives a violation for each assignment on the days of an absence, each with a key of its own, and one for a repeated assignment", () => {
+    const assignments = [
+      assignment(MORNING, 0, ANNA),
+      assignment(EVENING, 1, ANNA),
+      assignment(MORNING, 1, ANNA),
+      assignment(MORNING, 1, ANNA),
+    ];
+
+    const violations = absenceViolations(input(assignments, { absences: [absence("2026-11-02", "2026-11-03")] }));
+
+    // By key: the day offset first, then the shift id, which puts the morning shift (5f1c...) before the evening one (b8a6...).
+    expect(keysOf(violations)).toStrictEqual([
+      `absence|${ANNA}|0:${MORNING}:${ANNA}`,
+      `absence|${ANNA}|1:${MORNING}:${ANNA}`,
+      `absence|${ANNA}|1:${EVENING}:${ANNA}`,
+    ]);
+    expect(violations.every(({ anchors }) => anchors.length === 1)).toBe(true);
+    expect(new Set(keysOf(violations)).size).toBe(3);
+  });
+
+  it("keeps the key of a finding whatever the hours of the shift and the order of the input, and changes the numbers", () => {
+    const assignments = [assignment(MORNING, 0, ANNA), assignment(MORNING, 1, ANNA)];
+    const absences = [
+      absence("2026-11-02", "2026-11-02", ANNA, "vacation", "requested"),
+      absence("2026-11-03", "2026-11-03"),
+    ];
+    const later = SHIFTS.map((shift) =>
+      shift.id === MORNING ? { ...shift, startMinute: 420, endMinute: 900 } : shift,
+    );
+
+    const violations = absenceViolations(input(assignments, { absences }));
+    const changed = absenceViolations(
+      input([...assignments].reverse(), { shifts: later, absences: [...absences].reverse() }),
+    );
+
+    expect(keysOf(violations)).toStrictEqual([
+      `absence|${ANNA}|1:${MORNING}:${ANNA}`,
+      `absence_requested|${ANNA}|0:${MORNING}:${ANNA}`,
+    ]);
+    expect(keysOf(changed)).toStrictEqual(keysOf(violations));
+    expect(changed).not.toStrictEqual(violations);
+  });
+
+  it("throws a RangeError for an absence with a date that cannot be read, as the other rules do for the start date", () => {
+    expect(() => absenceViolations(input(monday, { absences: [absence("2019-12-31", "2020-01-02")] }))).toThrow(
+      RangeError,
+    );
+    expect(() => absenceViolations(input(monday, { absences: [absence("2026-02-30", "2026-03-02")] }))).toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe("weeklyNormViolations with absences", () => {
+  const fte = (numerator: number, denominator: number): Fte => ({ numerator, denominator });
+  const onlyAnna = (anna: Fte) => [{ id: ANNA, name: "Wiśniewska Anna", fte: anna }];
+  const base = (worked: string) => `Wiśniewska Anna: w tygodniu grafiku (${PERIOD}) łączny czas pracy ${worked}`;
+
+  // An approved absence lowers the norm by 8 h times the FTE for each day from Monday to Friday that is not a holiday, and
+  // the reason names the days. At the norm there is no warning, a minute above it there is one.
+  it.each<{
+    label: string;
+    startDate?: string;
+    employeeFte?: Fte;
+    absences: AbsenceOption[];
+    norm: number;
+    reason: string;
+  }>([
+    {
+      label: "three days of absence on Monday, Tuesday and Thursday",
+      absences: [absence("2026-11-02", "2026-11-03"), absence("2026-11-05", "2026-11-05", ANNA, "other")],
+      norm: 960,
+      reason: `${base("16 h 1 min")}, norma tygodniowa (pełny etat) to 16 h po pomniejszeniu o nieobecność (3 dni: 02.11, 03.11, 05.11).`,
+    },
+    {
+      label: "one day of absence, said in the singular",
+      absences: [absence("2026-11-04", "2026-11-04", ANNA, "sick_leave")],
+      norm: 1920,
+      reason: `${base("32 h 1 min")}, norma tygodniowa (pełny etat) to 32 h po pomniejszeniu o nieobecność (1 dzień: 04.11).`,
+    },
+    {
+      label: "a week of absence, from Monday to Sunday: only the five weekdays count and the norm is 0",
+      absences: [absence("2026-11-02", "2026-11-08")],
+      norm: 0,
+      reason: `${base("1 min")}, norma tygodniowa (pełny etat) to 0 min po pomniejszeniu o nieobecność (5 dni: 02.11, 03.11, 04.11, 05.11, 06.11).`,
+    },
+    {
+      label: "two absences that cover the same days, each day counted once",
+      absences: [absence("2026-11-02", "2026-11-04"), absence("2026-11-03", "2026-11-05", ANNA, "sick_leave")],
+      norm: 480,
+      reason: `${base("8 h 1 min")}, norma tygodniowa (pełny etat) to 8 h po pomniejszeniu o nieobecność (4 dni: 02.11, 03.11, 04.11, 05.11).`,
+    },
+    {
+      label: "an absence that began before the week and ends inside it",
+      absences: [absence("2026-10-28", "2026-11-03")],
+      norm: 1440,
+      reason: `${base("24 h 1 min")}, norma tygodniowa (pełny etat) to 24 h po pomniejszeniu o nieobecność (2 dni: 02.11, 03.11).`,
+    },
+    {
+      label: "an absence at 3/4 of an FTE",
+      employeeFte: fte(3, 4),
+      absences: [absence("2026-11-02", "2026-11-02")],
+      norm: 1440,
+      reason: `${base("24 h 1 min")}, norma tygodniowa (3/4 etatu) to 24 h po pomniejszeniu o nieobecność (1 dzień: 02.11).`,
+    },
+    {
+      // Wednesday 11.11 is a holiday and lowers the norm on its own, so only Thursday and Friday count for the absence.
+      label: "a holiday in the middle of an absence",
+      startDate: "2026-11-10",
+      absences: [absence("2026-11-11", "2026-11-13")],
+      norm: 960,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (10.11${DASH}16.11.2026) łączny czas pracy 16 h 1 min, norma tygodniowa (pełny etat) to 16 h po pomniejszeniu o święto 11.11 i nieobecność (2 dni: 12.11, 13.11).`,
+    },
+    {
+      // Thursday 24.12, Friday 25.12 and Saturday 26.12 are holidays (3 x 8 h), and Monday to Wednesday of the absence take
+      // 3 x 8 h more: the norm would be below 0, and it stays at 0.
+      label: "several holidays and an absence that would take the norm below 0",
+      startDate: "2026-12-24",
+      absences: [absence("2026-12-28", "2026-12-30")],
+      norm: 0,
+      reason: `Wiśniewska Anna: w tygodniu grafiku (24.12${DASH}30.12.2026) łączny czas pracy 1 min, norma tygodniowa (pełny etat) to 0 min po pomniejszeniu o święta 24.12, 25.12 i 26.12 oraz nieobecność (3 dni: 28.12, 29.12, 30.12).`,
+    },
+  ])(
+    "lowers the norm to $norm minutes for $label and says why",
+    ({ startDate, employeeFte, absences, norm, reason }) => {
+      const at = (worked: number) =>
+        workedCase(worked, { startDate: startDate ?? START_DATE, employees: onlyAnna(employeeFte ?? FULL), absences });
+
+      expect(weeklyNormViolations(at(norm))).toStrictEqual([]);
+      const violations = weeklyNormViolations(at(norm + 1));
+      expect(violations.map(({ actual, limit }) => [actual, limit])).toStrictEqual([[norm + 1, norm]]);
+      expect(reasonsOf(violations)).toStrictEqual([reason]);
+    },
+  );
+
+  it("warns when the work is above the lower norm, though it is below the norm without the absence", () => {
+    const absences = [absence("2026-11-02", "2026-11-04")];
+
+    expect(weeklyNormViolations(workedCase(1000))).toStrictEqual([]);
+    expect(
+      weeklyNormViolations(workedCase(1000, { absences })).map(({ actual, limit }) => [actual, limit]),
+    ).toStrictEqual([[1000, 960]]);
+  });
+
+  it("keeps the remark on a fraction of a minute last, after the days of the absence", () => {
+    // 1920 minutes (one day off) at 3/7 of a post is 822.86 minutes, shown as 823: 822 is below it, 823 is above the exact norm.
+    const at = (worked: number) =>
+      workedCase(worked, { employees: onlyAnna(fte(3, 7)), absences: [absence("2026-11-02", "2026-11-02")] });
+
+    expect(weeklyNormViolations(at(822))).toStrictEqual([]);
+    expect(reasonsOf(weeklyNormViolations(at(823)))).toStrictEqual([
+      `${base("13 h 43 min")}, norma tygodniowa (3/7 etatu) to 13 h 43 min po pomniejszeniu o nieobecność (1 dzień: 02.11) (przekroczona o ułamek minuty).`,
+    ]);
+  });
+
+  // The norm and the reason stay as they are for every absence that does not take a day off it.
+  it.each<{ label: string; absences: AbsenceOption[] }>([
+    {
+      label: "a requested absence for the whole week",
+      absences: [absence("2026-11-02", "2026-11-06", ANNA, "vacation", "requested")],
+    },
+    {
+      label: "a rejected absence for the whole week",
+      absences: [absence("2026-11-02", "2026-11-06", ANNA, "vacation", "rejected")],
+    },
+    { label: "an approved absence on Saturday and Sunday only", absences: [absence("2026-11-07", "2026-11-08")] },
+    { label: "an approved absence of somebody else", absences: [absence("2026-11-02", "2026-11-06", BARTEK)] },
+    {
+      label: "an approved absence that ended the day before the week",
+      absences: [absence("2026-10-26", "2026-11-01")],
+    },
+    {
+      label: "an approved absence that starts the day after the week",
+      absences: [absence("2026-11-09", "2026-11-13")],
+    },
+  ])("does not lower the norm for $label", ({ absences }) => {
+    const at = (worked: number) => workedCase(worked, { absences });
+
+    expect(weeklyNormViolations(at(2400))).toStrictEqual([]);
+    expect(reasonsOf(weeklyNormViolations(at(2401)))).toStrictEqual([
+      `${base("40 h 1 min")}, norma tygodniowa (pełny etat) to 40 h.`,
+    ]);
+    expect(weeklyNormViolations(at(2401))).toStrictEqual(weeklyNormViolations(workedCase(2401)));
+  });
+
+  it("does not take the day of a holiday off the norm twice when the absence is on the holiday alone", () => {
+    const at = (worked: number) =>
+      workedCase(worked, { startDate: "2026-11-10", absences: [absence("2026-11-11", "2026-11-11")] });
+
+    expect(weeklyNormViolations(at(1920))).toStrictEqual([]);
+    expect(reasonsOf(weeklyNormViolations(at(1921)))).toStrictEqual([
+      `Wiśniewska Anna: w tygodniu grafiku (10.11${DASH}16.11.2026) łączny czas pracy 32 h 1 min, norma tygodniowa (pełny etat) to 32 h po pomniejszeniu o święto 11.11.`,
+    ]);
+  });
+
+  it("takes the absences of each person into account for that person only", () => {
+    const anna = work(ANNA, 1000);
+    const bartek = work(BARTEK, 1000);
+
+    const violations = weeklyNormViolations(
+      input([...anna.assignments, ...bartek.assignments], {
+        shifts: [...SHIFTS, ...anna.shifts, ...bartek.shifts],
+        absences: [absence("2026-11-02", "2026-11-04", BARTEK)],
+      }),
+    );
+
+    // Bartek's norm is 16 h (960 minutes) and Anna's is 40 h.
+    expect(violations.map(({ employeeId, actual, limit }) => [employeeId, actual, limit])).toStrictEqual([
+      [BARTEK, 1000, 960],
+    ]);
+  });
+
+  it("gives the collision and the lower norm together for a person who works in the week of an absence", () => {
+    // One shift of 6 h 40 min on Monday: inside the 8 h of a day, so that no other rule has anything to say.
+    const rules = workedCase(400, { absences: [absence("2026-11-02", "2026-11-06")] });
+
+    const violations = evaluateSchedule(rules);
+
+    expect(violations.map(({ rule, severity, actual, limit }) => [rule, severity, actual, limit])).toStrictEqual([
+      ["absence", "critical", 400, 0],
+      ["weekly_norm", "warning", 400, 0],
+    ]);
+  });
+
+  it("gives nothing for a person with no work, whatever the norm: 0 minutes do not exceed even a norm of 0", () => {
+    expect(weeklyNormViolations(workedCase(0, { absences: [absence("2026-11-02", "2026-11-08")] }))).toStrictEqual([]);
+  });
+});
+
 describe("understaffedViolations", () => {
   const cell = (requiredCount: number, shiftId = MORNING, dayOffset = 0) => ({ shiftId, dayOffset, requiredCount });
   const people = [ANNA, BARTEK, CEZARY, "extra-1"];
@@ -1388,6 +1950,113 @@ describe("evaluateSchedule", () => {
     expect(new Set(rulesOf(evaluateSchedule(scenario))).size).toBe(6);
   });
 
+  describe("with absences", () => {
+    // Anna has an approved vacation on Tuesday 03.11, the day of her morning shift, and Cezary a requested sick leave on
+    // Wednesday 04.11, the day of one of his day shifts.
+    const withAbsences: RuleInput = {
+      ...scenario,
+      absences: [
+        absence("2026-11-03", "2026-11-03"),
+        absence("2026-11-04", "2026-11-04", CEZARY, "sick_leave", "requested"),
+      ],
+    };
+
+    it("lists the critical absence among the critical violations by its rank and the request after the staffing", () => {
+      const violations = evaluateSchedule(withAbsences);
+
+      expect(rulesOf(violations)).toStrictEqual([
+        "daily_rest",
+        "daily_hours",
+        "weekly_hours",
+        "weekly_rest",
+        "absence",
+        "weekly_norm",
+        "weekly_norm",
+        "understaffed",
+        "understaffed",
+        "absence_requested",
+      ]);
+      expect(violations.map(({ severity }) => severity)).toStrictEqual([
+        "critical",
+        "critical",
+        "critical",
+        "critical",
+        "critical",
+        "warning",
+        "warning",
+        "warning",
+        "warning",
+        "warning",
+      ]);
+      expect([...violations].sort(compareViolations)).toStrictEqual(violations);
+      expect(new Set(keysOf(violations)).size).toBe(violations.length);
+    });
+
+    it("gives the absence and the request with the key and the reason of each", () => {
+      const violations = evaluateSchedule(withAbsences);
+
+      expect(
+        violations
+          .filter(({ rule }) => rule === "absence" || rule === "absence_requested")
+          .map(({ key, severity, reason, actual, limit, unit }) => ({ key, severity, reason, actual, limit, unit })),
+      ).toStrictEqual([
+        {
+          key: `absence|${ANNA}|1:${MORNING}:${ANNA}`,
+          severity: "critical",
+          reason: `Wiśniewska Anna: zmiana Poranna (wt. 03.11, 06:00${DASH}14:00) przypada na urlop (03.11.2026).`,
+          actual: 480,
+          limit: 0,
+          unit: "minutes",
+        },
+        {
+          key: `absence_requested|${CEZARY}|2:${DAY}:${CEZARY}`,
+          severity: "warning",
+          reason: `Nowak Cezary: zmiana Dzienna (śr. 04.11, 08:00${DASH}16:00) przypada na nieobecność jeszcze niezatwierdzoną (zwolnienie lekarskie (L4), 04.11.2026).`,
+          actual: 480,
+          limit: 0,
+          unit: "minutes",
+        },
+      ]);
+    });
+
+    it("leaves the other violations as they were: a request takes nothing off a norm", () => {
+      const others = evaluateSchedule(withAbsences).filter(
+        ({ rule }) => rule !== "absence" && rule !== "absence_requested",
+      );
+
+      expect(others).toStrictEqual(evaluateSchedule(scenario));
+    });
+
+    it("is the single rules merged, the absences among them", () => {
+      const apart = [
+        ...dailyRestViolations(withAbsences),
+        ...dailyHoursViolations(withAbsences),
+        ...weeklyHoursViolations(withAbsences),
+        ...weeklyRestViolations(withAbsences),
+        ...absenceViolations(withAbsences),
+        ...weeklyNormViolations(withAbsences),
+        ...understaffedViolations(withAbsences),
+      ].sort(compareViolations);
+
+      expect(evaluateSchedule(withAbsences)).toStrictEqual(apart);
+    });
+
+    it.each<{ label: string; absences: AbsenceOption[] }>([
+      { label: "an empty list", absences: [] },
+      {
+        label: "a rejected absence over the whole week",
+        absences: [absence("2026-11-02", "2026-11-08", BARTEK, "vacation", "rejected")],
+      },
+      {
+        label: "an absence of a person who has no shift",
+        absences: [absence("2026-11-02", "2026-11-08", "somebody-else")],
+      },
+      { label: "an absence in another week", absences: [absence("2026-12-01", "2026-12-05", BARTEK)] },
+    ])("gives exactly what it gave before absences for $label", ({ absences }) => {
+      expect(evaluateSchedule({ ...scenario, absences })).toStrictEqual(evaluateSchedule(scenario));
+    });
+  });
+
   it("is a new array each time, which nobody else holds", () => {
     const first = evaluateSchedule(scenario);
     first.length = 0;
@@ -1582,7 +2251,7 @@ describe("the rules together", () => {
     const violations = evaluateSchedule(roster);
     const firstWarning = violations.findIndex(({ severity }) => severity === "warning");
 
-    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(ALL_RULES));
+    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(RULES_WITHOUT_ABSENCES));
     expect(violations.slice(0, firstWarning).every(({ severity }) => severity === "critical")).toBe(true);
     expect(violations.slice(firstWarning).every(({ severity }) => severity === "warning")).toBe(true);
     expect(violations.filter(({ rule }) => rule === "weekly_norm").map(({ employeeId }) => employeeId)).toStrictEqual([
@@ -1655,9 +2324,69 @@ describe("repeatability of the rules", () => {
     const violations = evaluateSchedule(base);
 
     expect(new Set(rulesOf(criticalOf(base))).size).toBe(4);
-    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(ALL_RULES));
+    expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(RULES_WITHOUT_ABSENCES));
     expect(violations.filter(({ rule }) => rule === "understaffed")).toHaveLength(4);
     expect(new Set(keysOf(violations)).size).toBe(violations.length);
+  });
+
+  describe("with absences", () => {
+    // Approved, requested and rejected absences that overlap each other and the shifts above: a spell that began before the
+    // week, one that goes on after it, two approved ones on the same days and a rejected one that must change nothing.
+    const absences: AbsenceOption[] = [
+      absence("2026-11-02", "2026-11-03", ANNA),
+      absence("2026-11-03", "2026-11-05", ANNA, "sick_leave"),
+      absence("2026-11-04", "2026-11-04", ANNA, "other", "requested"),
+      absence("2026-11-02", "2026-11-08", ANNA, "vacation", "rejected"),
+      absence("2026-11-05", "2026-11-06", BARTEK, "vacation", "requested"),
+      absence("2026-11-07", "2026-11-08", BARTEK, "other"),
+      absence("2026-10-28", "2026-11-02", CEZARY),
+      absence("2026-11-08", "2026-11-10", CEZARY, "sick_leave"),
+      absence("2026-11-09", "2026-11-12", CEZARY, "sick_leave", "requested"),
+    ];
+    const withAbsences: RuleInput = { ...base, absences };
+    const variantsWithAbsences = [
+      ...seeds.map((seed): RuleInput => ({
+        ...withAbsences,
+        assignments: seededShuffle(base.assignments, seed),
+        shifts: seededShuffle(base.shifts, seed + 100),
+        employees: seededShuffle(base.employees, seed + 200),
+        staffing: seededShuffle(base.staffing, seed + 300),
+        absences: seededShuffle(absences, seed + 400),
+      })),
+      { ...withAbsences, absences: [...absences].reverse() },
+    ];
+
+    it.each<[string, (rules: RuleInput) => Violation[]]>([
+      ["every rule", evaluateSchedule],
+      ["the critical rules", criticalOf],
+      ["the absences", absenceViolations],
+      ["the weekly norm", weeklyNormViolations],
+    ])(
+      "gives the same result for %s on repeated calls and for any order of the input, the absences included",
+      (_name, rule) => {
+        const violations = expectDeterministic(rule, withAbsences, { variants: variantsWithAbsences });
+
+        expect(violations.length).toBeGreaterThan(0);
+      },
+    );
+
+    it("finds all eight rules on this input, with both severities of the absences, so that the check above compares something", () => {
+      const violations = evaluateSchedule(withAbsences);
+
+      expect(new Set(rulesOf(violations))).toStrictEqual(new Set<ViolationRule>(ALL_RULES));
+      expect(new Set(keysOf(violations)).size).toBe(violations.length);
+      expect(violations.filter(({ rule }) => rule === "absence").length).toBeGreaterThan(1);
+      expect(violations.filter(({ rule }) => rule === "absence_requested").length).toBeGreaterThan(0);
+    });
+
+    it("finds at most one violation for each assignment, and none for an assignment outside every absence", () => {
+      const violations = absenceViolations(withAbsences);
+      const anchors = violations.flatMap(anchorsOf);
+
+      expect(new Set(anchors).size).toBe(anchors.length);
+      expect(violations.every(({ anchors: own }) => own.length === 1)).toBe(true);
+      expect(violations.length).toBeLessThan(new Set(base.assignments.map(anchorKey)).size);
+    });
   });
 });
 
@@ -1671,6 +2400,10 @@ describe("the input", () => {
       employees: Object.freeze(
         source.employees.map((employee) => Object.freeze({ ...employee, fte: Object.freeze({ ...employee.fte }) })),
       ),
+      // The absences are optional: an input without them stays without the key.
+      ...(source.absences === undefined
+        ? {}
+        : { absences: Object.freeze(source.absences.map((entry) => Object.freeze({ ...entry }))) }),
     });
   }
 
@@ -1714,6 +2447,38 @@ describe("the input", () => {
       true,
     ]);
   });
+
+  it("is left unchanged by every rule when it has absences, and the frozen absences are never sorted in place", () => {
+    const week = [0, 1, 2, 3, 4, 5, 6].map((dayOffset) => assignment(DAY, dayOffset, ANNA));
+    const source = freeze(
+      input([assignment(MORNING, 1, BARTEK), assignment(NIGHT, 6, CEZARY), ...week, assignment(MORNING, 0, BARTEK)], {
+        absences: [
+          absence("2026-11-09", "2026-11-12", CEZARY, "sick_leave"),
+          absence("2026-11-05", "2026-11-06", ANNA, "other", "requested"),
+          absence("2026-11-03", "2026-11-04", ANNA, "vacation"),
+          absence("2026-11-02", "2026-11-08", BARTEK, "vacation", "rejected"),
+          absence("2026-10-28", "2026-11-02", BARTEK, "sick_leave"),
+          absence("2026-11-02", "2026-11-04", ANNA, "sick_leave"),
+        ],
+      }),
+    );
+    const before = structuredClone(source);
+
+    const results = [
+      evaluateSchedule(source),
+      absenceViolations(source),
+      weeklyNormViolations(source),
+      dailyRestViolations(source),
+      understaffedViolations(source),
+    ];
+
+    expect(Object.isFrozen(source.absences)).toBe(true);
+    expect(structuredClone(source)).toStrictEqual(before);
+    expect(rulesOf(results[0])).toContain("absence");
+    expect(rulesOf(results[0])).toContain("absence_requested");
+    expect(results[1].length).toBeGreaterThan(0);
+    expect(results[2].length).toBeGreaterThan(0);
+  });
 });
 
 describe("the time zone", () => {
@@ -1742,5 +2507,35 @@ describe("the time zone", () => {
     });
 
     expect(called).toStrictEqual([]);
+  });
+
+  it("calls none of them for the absences either: over New Year, at the edge of the years and in a week with holidays", () => {
+    const week = [0, 1, 2, 3, 4, 5, 6].map((dayOffset) => assignment(DAY, dayOffset, ANNA));
+    const results: Violation[][] = [];
+    const called = localDateMethodsCalledBy(() => {
+      results.push(
+        evaluateSchedule(
+          input([...week, assignment(NIGHT, 6, BARTEK)], {
+            startDate: "2026-12-29",
+            absences: [
+              absence("2026-12-30", "2027-01-02"),
+              absence("2026-12-01", "2027-01-05", BARTEK, "sick_leave"),
+              absence("2027-01-04", "2027-01-08", CEZARY, "other", "requested"),
+            ],
+          }),
+        ),
+        evaluateSchedule(input(week, { startDate: "2099-12-31", absences: [absence("2099-12-31", "2099-12-31")] })),
+        weeklyNormViolations(
+          workedCase(2401, { startDate: "2026-11-10", absences: [absence("2026-11-11", "2026-11-13")] }),
+        ),
+        absenceViolations(input(week, { startDate: "2026-12-24", absences: [absence("2026-12-28", "2026-12-30")] })),
+      );
+    });
+
+    expect(called).toStrictEqual([]);
+    // The absences were really judged, in every one of the weeks.
+    expect(
+      results.map((violations) => violations.some(({ rule }) => rule === "absence" || rule === "weekly_norm")),
+    ).toStrictEqual([true, true, true, true]);
   });
 });

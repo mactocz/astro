@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { holidaysInWeek, isHoliday, weekdayOf } from "@/lib/services/calendar";
+import { weeklyNormViolations } from "@/lib/services/rules";
 import { exceedsNorm, weeklyNorm, type ShiftTimes } from "@/lib/services/work-hours";
 import { formatWorkload, summarizeWorkload, type WorkloadInput } from "@/lib/services/workload";
 import { expectDeterministic, seededShuffle } from "@/lib/testing/determinism";
 import { localDateMethodsCalledBy } from "@/lib/testing/local-time";
-import type { AssignmentInput, Fte, WorkloadRow } from "@/types";
+import type { AbsenceOption, AbsenceStatus, AbsenceType, AssignmentInput, Fte, WorkloadRow } from "@/types";
 
 // The shifts are referred to by id only. By id they order as NIGHT, MORNING, LONG, and the employees as ANNA, BARTEK,
 // CEZARY, which is not the order of the names, so only a sort by id can produce it.
@@ -61,8 +62,20 @@ function summarize(
   employees: WorkloadInput["employees"],
   assignments: readonly AssignmentInput[] = [],
   startDate = PLAIN_WEEK,
+  absences?: readonly AbsenceOption[],
 ): WorkloadRow[] {
-  return summarizeWorkload({ startDate, assignments, shifts: ALL_SHIFTS, employees });
+  return summarizeWorkload({ startDate, assignments, shifts: ALL_SHIFTS, employees, absences });
+}
+
+// An absence of the given kind, `approved` unless the status says otherwise.
+function absence(
+  startDate: string,
+  endDate: string,
+  employeeId: string = ANNA,
+  type: AbsenceType = "vacation",
+  status: AbsenceStatus = "approved",
+): AbsenceOption {
+  return { employeeId, type, status, startDate, endDate };
 }
 
 describe("the weeks the tests use", () => {
@@ -465,6 +478,428 @@ describe("summarizeWorkload people", () => {
   });
 });
 
+describe("summarizeWorkload with absences", () => {
+  // The norm of a person with no shifts, from the week, the FTE and the absences. An approved absence takes 8 h times the FTE
+  // off for each day from Monday to Friday that is not a holiday, once however many absences cover the day.
+  it.each<{ label: string; startDate: string; fte: Fte; absences: AbsenceOption[]; norm: number; shown: string }>([
+    {
+      label: "three days of an approved absence, Monday to Wednesday",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-02", "2026-11-04")],
+      norm: 960,
+      shown: "16 h",
+    },
+    {
+      label: "one day of an approved absence",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-04", "2026-11-04", ANNA, "sick_leave")],
+      norm: 1920,
+      shown: "32 h",
+    },
+    {
+      label: "two absences that cover the same days, each day counted once",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-02", "2026-11-04"), absence("2026-11-03", "2026-11-05", ANNA, "other")],
+      norm: 480,
+      shown: "8 h",
+    },
+    {
+      label: "an absence that began before the week and ends inside it",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-10-28", "2026-11-03")],
+      norm: 1440,
+      shown: "24 h",
+    },
+    {
+      label: "an absence from Monday to Sunday, of which the five weekdays count",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-02", "2026-11-08")],
+      norm: 0,
+      shown: "0 min",
+    },
+    {
+      label: "an absence on Saturday and Sunday only",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-07", "2026-11-08")],
+      norm: 2400,
+      shown: "40 h",
+    },
+    {
+      label: "a requested absence for the whole week",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-02", "2026-11-06", ANNA, "vacation", "requested")],
+      norm: 2400,
+      shown: "40 h",
+    },
+    {
+      label: "a rejected absence for the whole week",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-02", "2026-11-06", ANNA, "vacation", "rejected")],
+      norm: 2400,
+      shown: "40 h",
+    },
+    {
+      label: "an approved absence of somebody else",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-02", "2026-11-06", BARTEK)],
+      norm: 2400,
+      shown: "40 h",
+    },
+    {
+      label: "an absence that ended the day before the week",
+      startDate: PLAIN_WEEK,
+      fte: FULL,
+      absences: [absence("2026-10-26", "2026-11-01")],
+      norm: 2400,
+      shown: "40 h",
+    },
+    {
+      label: "an absence on the holiday of the week alone, which lowered the norm already",
+      startDate: HOLIDAY_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-11", "2026-11-11")],
+      norm: 1920,
+      shown: "32 h",
+    },
+    {
+      label: "an absence from the holiday to Friday: the holiday is not taken off twice",
+      startDate: HOLIDAY_WEEK,
+      fte: FULL,
+      absences: [absence("2026-11-11", "2026-11-13")],
+      norm: 960,
+      shown: "16 h",
+    },
+    {
+      label: "one day of absence at 3/4 of an FTE",
+      startDate: PLAIN_WEEK,
+      fte: THREE_QUARTERS,
+      absences: [absence("2026-11-02", "2026-11-02")],
+      norm: 1440,
+      shown: "24 h",
+    },
+    {
+      label: "two days of absence at 1/2 of an FTE",
+      startDate: PLAIN_WEEK,
+      fte: HALF,
+      absences: [absence("2026-11-02", "2026-11-03")],
+      norm: 720,
+      shown: "12 h",
+    },
+    {
+      // 24 h less 8 h for the holiday and 8 h for Thursday is 1440 minutes, and 3/7 of it is 617.14, shown as 10 h 17 min.
+      label: "a day of absence in the week with a holiday, at 3/7 of an FTE (617.14 minutes)",
+      startDate: HOLIDAY_WEEK,
+      fte: THREE_SEVENTHS,
+      absences: [absence("2026-11-12", "2026-11-12")],
+      norm: 617,
+      shown: "10 h 17 min",
+    },
+    {
+      // Thursday 24.12, Friday 25.12 and Saturday 26.12 are holidays, and the absence on Monday to Wednesday would take the
+      // norm below 0.
+      label: "an absence after three holidays, which would take the norm below 0",
+      startDate: "2026-12-24",
+      fte: FULL,
+      absences: [absence("2026-12-28", "2026-12-30")],
+      norm: 0,
+      shown: "0 min",
+    },
+  ])("gives a person with no shifts 0 min of $shown for $label", ({ startDate, fte, absences, norm, shown }) => {
+    const rows = summarize([{ id: ANNA, fte }], [], startDate, absences);
+
+    expect(rows).toStrictEqual([
+      { employeeId: ANNA, workedMinutes: 0, normMinutes: norm, differenceMinutes: 0 - norm },
+    ]);
+    expect(formatWorkload(rows[0])).toStrictEqual({
+      total: `0 min z ${shown}`,
+      difference: norm === 0 ? "równo z normą" : `mniej o ${shown}`,
+    });
+  });
+
+  it("gives the person with an absence a lower norm and takes the difference from it, and leaves the others as they were", () => {
+    const rows = summarize(
+      [
+        { id: CEZARY, fte: HALF },
+        { id: BARTEK, fte: FULL },
+        { id: ANNA, fte: FULL },
+      ],
+      [
+        ...onDays(MORNING, [3, 4], ANNA),
+        ...onDays(MORNING, [0, 1, 2, 3], BARTEK),
+        assignment(LONG, 0, CEZARY),
+        assignment(MORNING, 1, CEZARY),
+      ],
+      PLAIN_WEEK,
+      [absence("2026-11-02", "2026-11-03"), absence("2026-11-04", "2026-11-04", CEZARY, "sick_leave")],
+    );
+
+    expect(rows).toStrictEqual([
+      // Two days off 40 h: 24 h.
+      { employeeId: ANNA, workedMinutes: 960, normMinutes: 1440, differenceMinutes: -480 },
+      // No absence: the norm of the week, and the same row as without absences.
+      { employeeId: BARTEK, workedMinutes: 1920, normMinutes: 2400, differenceMinutes: -480 },
+      // One day off 40 h, half of the rest: 16 h.
+      { employeeId: CEZARY, workedMinutes: 1200, normMinutes: 960, differenceMinutes: 240 },
+    ]);
+    expect(rows.map((row) => formatWorkload(row))).toStrictEqual([
+      { total: "16 h z 24 h", difference: "mniej o 8 h" },
+      { total: "32 h z 40 h", difference: "mniej o 8 h" },
+      { total: "20 h z 16 h", difference: "więcej o 4 h" },
+    ]);
+  });
+
+  it("says that the person is above a norm of 0 for any work, and equal to it for none", () => {
+    const week = [absence("2026-11-02", "2026-11-06")];
+
+    const rows = [
+      summarize([{ id: ANNA, fte: FULL }], [], PLAIN_WEEK, week),
+      summarize([{ id: ANNA, fte: FULL }], [assignment(ONE_MINUTE.id, 5, ANNA)], PLAIN_WEEK, week),
+      summarize([{ id: ANNA, fte: FULL }], [assignment(MORNING, 0, ANNA)], PLAIN_WEEK, week),
+    ].flat();
+
+    expect(rows.map((row) => row.normMinutes)).toStrictEqual([0, 0, 0]);
+    expect(rows.map((row) => formatWorkload(row))).toStrictEqual([
+      { total: "0 min z 0 min", difference: "równo z normą" },
+      { total: "1 min z 0 min", difference: "więcej o 1 min" },
+      { total: "8 h z 0 min", difference: "więcej o 8 h" },
+    ]);
+    // Nothing in a week of absence is "mniej o".
+    expect(rows.every((row) => row.differenceMinutes >= 0)).toBe(true);
+  });
+
+  it("leaves out the absences of a person who is not on the list, and gives that person no row", () => {
+    const withDanuta = summarize([{ id: ANNA, fte: FULL }], [assignment(MORNING, 0, ANNA)], PLAIN_WEEK, [
+      absence("2026-11-02", "2026-11-06", DANUTA),
+    ]);
+
+    expect(withDanuta).toStrictEqual(summarize([{ id: ANNA, fte: FULL }], [assignment(MORNING, 0, ANNA)]));
+    expect(summarize([], [], PLAIN_WEEK, [absence("2026-11-02", "2026-11-06")])).toStrictEqual([]);
+  });
+
+  it("gives exactly the rows of a week without absences for no list, an empty list and absences that take nothing off", () => {
+    const people = [
+      { id: ANNA, fte: FULL },
+      { id: BARTEK, fte: THREE_SEVENTHS },
+    ];
+    const assignments = [...onDays(MORNING, [0, 1], ANNA), assignment(NIGHT, 6, BARTEK)];
+    const without = summarize(people, assignments, HOLIDAY_WEEK);
+
+    expect(summarize(people, assignments, HOLIDAY_WEEK, [])).toStrictEqual(without);
+    expect(
+      summarize(people, assignments, HOLIDAY_WEEK, [
+        absence("2026-11-10", "2026-11-16", ANNA, "vacation", "rejected"),
+        absence("2026-11-10", "2026-11-16", BARTEK, "other", "requested"),
+        absence("2026-11-14", "2026-11-15", BARTEK),
+        absence("2026-11-11", "2026-11-11", ANNA),
+        absence("2026-12-01", "2026-12-05", ANNA),
+      ]),
+    ).toStrictEqual(without);
+  });
+
+  it("throws a RangeError for a start date or an FTE that is not valid, with absences as without", () => {
+    const week = [absence("2026-11-02", "2026-11-03")];
+
+    expect(() => summarize([{ id: ANNA, fte: FULL }], [], "2026-02-30", week)).toThrow(RangeError);
+    expect(() => summarize([{ id: ANNA, fte: { numerator: 3, denominator: 2 } }], [], PLAIN_WEEK, week)).toThrow(
+      RangeError,
+    );
+  });
+});
+
+// The hours of the people's table and the weekly_norm warning take their norm from the same days of absence and the same
+// holidays, so for the same week, FTE and absences the warning's `limit` is the `normMinutes` of the row, and the warning
+// says what the row shows as worked.
+describe("the norm of the hours and the norm of the weekly_norm warning", () => {
+  const NAMES: Record<string, string> = {
+    [ANNA]: "Wiśniewska Anna",
+    [BARTEK]: "Kowalski Bartek",
+    [CEZARY]: "Nowak Cezary",
+  };
+  const fiveMornings = (employeeId: string) => onDays(MORNING, [0, 1, 2, 3, 4], employeeId);
+
+  it.each<{
+    label: string;
+    startDate: string;
+    employees: { id: string; fte: Fte }[];
+    assignments: AssignmentInput[];
+    absences: AbsenceOption[];
+    norms: Record<string, number>;
+    exceeding: string[];
+  }>([
+    {
+      label: "three days of absence and a long week",
+      startDate: PLAIN_WEEK,
+      employees: [{ id: ANNA, fte: FULL }],
+      assignments: onDays(LONG, [3, 4, 5], ANNA),
+      absences: [absence("2026-11-02", "2026-11-04")],
+      norms: { [ANNA]: 960 },
+      exceeding: [ANNA],
+    },
+    {
+      label: "a day of absence in the week with a holiday at 3/7 of an FTE",
+      startDate: HOLIDAY_WEEK,
+      employees: [{ id: ANNA, fte: THREE_SEVENTHS }],
+      assignments: [assignment(LONG, 0, ANNA)],
+      absences: [absence("2026-11-12", "2026-11-12")],
+      norms: { [ANNA]: 617 },
+      exceeding: [ANNA],
+    },
+    {
+      label: "a whole week of absence and a single minute of work",
+      startDate: PLAIN_WEEK,
+      employees: [{ id: ANNA, fte: FULL }],
+      assignments: [assignment(ONE_MINUTE.id, 2, ANNA)],
+      absences: [absence("2026-11-02", "2026-11-08")],
+      norms: { [ANNA]: 0 },
+      exceeding: [ANNA],
+    },
+    {
+      label: "an absence after three holidays, which would take the norm below 0",
+      startDate: "2026-12-24",
+      employees: [{ id: ANNA, fte: FULL }],
+      assignments: [assignment(MORNING, 0, ANNA)],
+      absences: [absence("2026-12-28", "2026-12-30")],
+      norms: { [ANNA]: 0 },
+      exceeding: [ANNA],
+    },
+    {
+      label: "two days of absence at 1/2 of an FTE",
+      startDate: PLAIN_WEEK,
+      employees: [{ id: ANNA, fte: HALF }],
+      assignments: [assignment(LONG, 0, ANNA), assignment(MORNING, 1, ANNA)],
+      absences: [absence("2026-11-02", "2026-11-03")],
+      norms: { [ANNA]: 720 },
+      exceeding: [ANNA],
+    },
+    {
+      label: "three people: one with an absence, one with a rejected one and one with a requested one",
+      startDate: PLAIN_WEEK,
+      employees: [
+        { id: ANNA, fte: FULL },
+        { id: BARTEK, fte: FULL },
+        { id: CEZARY, fte: THREE_QUARTERS },
+      ],
+      assignments: [...fiveMornings(ANNA), ...fiveMornings(BARTEK), ...fiveMornings(CEZARY)],
+      absences: [
+        absence("2026-11-02", "2026-11-03"),
+        absence("2026-11-02", "2026-11-06", BARTEK, "vacation", "rejected"),
+        absence("2026-11-02", "2026-11-06", CEZARY, "sick_leave", "requested"),
+      ],
+      // Anna: 1440 (two days off). Bartek: 2400, so exactly his work. Cezary: 1800, 3/4 of 40 h, below his work.
+      norms: { [ANNA]: 1440, [BARTEK]: 2400, [CEZARY]: 1800 },
+      exceeding: [ANNA, CEZARY],
+    },
+  ])("is the same number for $label", ({ startDate, employees, assignments, absences, norms, exceeding }) => {
+    const rows = summarizeWorkload({ startDate, assignments, shifts: ALL_SHIFTS, employees, absences });
+    const violations = weeklyNormViolations({
+      startDate,
+      staffing: [],
+      assignments,
+      shifts: ALL_SHIFTS,
+      employees: employees.map(({ id, fte }) => ({ id, name: NAMES[id], fte })),
+      absences,
+    });
+
+    expect(Object.fromEntries(rows.map((row) => [row.employeeId, row.normMinutes]))).toStrictEqual(norms);
+    expect(violations.map(({ employeeId }) => employeeId)).toStrictEqual(exceeding);
+    for (const violation of violations) {
+      const row = rows.find(({ employeeId }) => employeeId === violation.employeeId);
+
+      expect(violation.limit).toBe(row?.normMinutes);
+      expect(violation.actual).toBe(row?.workedMinutes);
+    }
+    // A person who is above the norm shown has a warning (the other way round does not hold: the warning compares with the
+    // exact norm, so that equal to a rounded one can still exceed it).
+    for (const row of rows.filter(({ differenceMinutes }) => differenceMinutes > 0)) {
+      expect(exceeding).toContain(row.employeeId);
+    }
+  });
+});
+
+describe("repeatability of the workload with absences", () => {
+  const people = [
+    { id: ANNA, fte: FULL },
+    { id: BARTEK, fte: HALF },
+    { id: CEZARY, fte: THREE_SEVENTHS },
+  ];
+  const roster = [
+    ...onDays(MORNING, [0, 2], ANNA),
+    assignment(LONG, 4, ANNA),
+    assignment(NIGHT, 6, BARTEK),
+    assignment(MORNING, 1, BARTEK),
+    assignment(LONG, 3, CEZARY),
+    // Repeats, a shift without hours and a person who is not on the list, which must not change the rows.
+    assignment(MORNING, 0, ANNA),
+    assignment(UNKNOWN, 2, CEZARY),
+    assignment(MORNING, 1, DANUTA),
+  ];
+  // In the week with a holiday on Wednesday 11.11: Anna has two days of approved absence (Thursday and Friday: 16 h off a
+  // norm of 32 h), Bartek only a request (no effect), Cezary the holiday itself (no effect) and Monday 16.11 as a sick leave
+  // (8 h off 32 h, and 3/7 of 24 h is 617.14 minutes). A rejected absence and one of a person who is not on the list change
+  // nothing, and one absence is listed twice.
+  const absences: AbsenceOption[] = [
+    absence("2026-11-12", "2026-11-13", ANNA),
+    absence("2026-11-13", "2026-11-13", ANNA, "other"),
+    absence("2026-11-10", "2026-11-16", BARTEK, "vacation", "requested"),
+    absence("2026-11-11", "2026-11-11", CEZARY),
+    absence("2026-11-16", "2026-11-16", CEZARY, "sick_leave"),
+    absence("2026-11-16", "2026-11-16", CEZARY, "sick_leave"),
+    absence("2026-11-10", "2026-11-16", ANNA, "vacation", "rejected"),
+    absence("2026-11-10", "2026-11-16", DANUTA),
+  ];
+  const input: WorkloadInput = {
+    startDate: HOLIDAY_WEEK,
+    assignments: roster,
+    shifts: ALL_SHIFTS,
+    employees: people,
+    absences,
+  };
+
+  it("gives the same rows for repeated calls and for any order of the assignments, the shifts, the people and the absences", () => {
+    const rows = expectDeterministic(summarizeWorkload, input, {
+      variants: [1, 2, 3, 4, 5, 6].map((seed): WorkloadInput => ({
+        startDate: HOLIDAY_WEEK,
+        assignments: seededShuffle(roster, seed),
+        shifts: seededShuffle(ALL_SHIFTS, seed + 100),
+        employees: seededShuffle(people, seed + 200),
+        absences: seededShuffle(absences, seed + 300),
+      })),
+    });
+
+    expect(rows).toStrictEqual([
+      { employeeId: ANNA, workedMinutes: 1680, normMinutes: 960, differenceMinutes: 720 },
+      { employeeId: BARTEK, workedMinutes: 960, normMinutes: 960, differenceMinutes: 0 },
+      { employeeId: CEZARY, workedMinutes: 720, normMinutes: 617, differenceMinutes: 103 },
+    ]);
+  });
+
+  it("leaves the input unchanged, frozen as it is", () => {
+    const frozen = Object.freeze({
+      ...input,
+      assignments: Object.freeze(roster.map((entry) => Object.freeze({ ...entry }))),
+      shifts: Object.freeze(ALL_SHIFTS.map((shift) => Object.freeze({ ...shift }))),
+      employees: Object.freeze(people.map(({ id, fte }) => Object.freeze({ id, fte: Object.freeze({ ...fte }) }))),
+      absences: Object.freeze(absences.map((entry) => Object.freeze({ ...entry }))),
+    });
+    const before = structuredClone(frozen);
+
+    const rows = summarizeWorkload(frozen);
+
+    expect(structuredClone(frozen)).toStrictEqual(before);
+    expect(rows.map((row) => row.normMinutes)).toStrictEqual([960, 960, 617]);
+    expect(rows.every((row) => !Object.isFrozen(row))).toBe(true);
+  });
+});
+
 describe("summarizeWorkload input", () => {
   it.each(["", "2026-02-30", "2019-12-31", "2100-01-01", "2026-11-10 "])(
     "throws a RangeError for the start date %j",
@@ -651,5 +1086,25 @@ describe("the time zone", () => {
     });
 
     expect(called).toStrictEqual([]);
+  });
+
+  it("calls none of them for the absences either, over New Year, at the edge of the years and in a week with holidays", () => {
+    const rows: WorkloadRow[][] = [];
+    const called = localDateMethodsCalledBy(() => {
+      rows.push(
+        summarize([{ id: ANNA, fte: THREE_SEVENTHS }], [assignment(NIGHT, 6, ANNA)], "2026-12-29", [
+          absence("2026-12-30", "2027-01-02"),
+        ]),
+        summarize([{ id: ANNA, fte: HALF }], [], "2099-12-31", [absence("2099-12-31", "2099-12-31")]),
+        summarize([{ id: ANNA, fte: FULL }], [], HOLIDAY_WEEK, [absence("2026-11-11", "2026-11-13")]),
+        summarize([{ id: ANNA, fte: FULL }], [], "2026-12-24", [absence("2026-12-28", "2026-12-30")]),
+      );
+    });
+
+    expect(called).toStrictEqual([]);
+    // The absences were really counted, in every one of the weeks: 3/7 of 16 h (the holiday of 1 January and two days of
+    // absence off 40 h), half of 16 h (the holidays of 1 and 6 January 2100 and the Thursday of the absence off 40 h), 16 h
+    // and 0.
+    expect(rows.map(([row]) => row.normMinutes)).toStrictEqual([411, 480, 960, 0]);
   });
 });

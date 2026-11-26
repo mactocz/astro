@@ -160,7 +160,14 @@ export type ViolationSeverity = "critical" | "warning";
 
 /** The rules of the live check, in the order a result lists them. */
 export type ViolationRule =
-  "daily_rest" | "daily_hours" | "weekly_hours" | "weekly_rest" | "weekly_norm" | "understaffed";
+  | "daily_rest"
+  | "daily_hours"
+  | "weekly_hours"
+  | "weekly_rest"
+  | "absence"
+  | "weekly_norm"
+  | "understaffed"
+  | "absence_requested";
 
 /** Where a violation sits in the schedule: an assignment or, when `employeeId` is null, a staffing cell. */
 export interface ViolationAnchor {

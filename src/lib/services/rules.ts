@@ -1,3 +1,10 @@
+import {
+  absenceInterval,
+  absenceTypeLabel,
+  excusedWeekdays,
+  formatAbsenceRange,
+  rangesOverlap,
+} from "@/lib/services/absence";
 import { summarizeCoverage } from "@/lib/services/assignment";
 import { holidaysInWeek } from "@/lib/services/calendar";
 import { formatFteLabel } from "@/lib/services/fte";
@@ -7,11 +14,13 @@ import {
   exceedsNorm,
   normMinutes,
   shiftInterval,
-  weeklyNormWithHolidays,
+  weeklyNormExcused,
   workedMinutesByEmployee,
   type ShiftTimes,
 } from "@/lib/services/work-hours";
 import type {
+  AbsenceOption,
+  AbsenceType,
   AssignmentInput,
   Fte,
   StaffingCell,
@@ -28,6 +37,11 @@ import type {
 // counted in minutes from midnight of the first day of the schedule. The rules judge one schedule only, so the rest on
 // either side of it (the previous and the next week) is not checked. `evaluateSchedule` is the one entry point that puts
 // all of them together.
+//
+// The absences of S-07 add two rules: a shift that overlaps an approved absence is critical (`absence`), one that overlaps
+// only a requested absence is a warning (`absence_requested`), and an approved absence lowers the weekly norm. An absence
+// is an interval on the same timeline (whole days, `absenceInterval`), so a night shift that runs into the first day of an
+// absence collides with it.
 
 /** The least rest between two shifts of a person (art. 132): 11 h, the limit itself is allowed. */
 export const DAILY_REST_MINUTES = 660;
@@ -53,8 +67,10 @@ export const RULE_RANK = {
   daily_hours: 1,
   weekly_hours: 2,
   weekly_rest: 3,
-  weekly_norm: 4,
-  understaffed: 5,
+  absence: 4,
+  weekly_norm: 5,
+  understaffed: 6,
+  absence_requested: 7,
 } as const satisfies Record<ViolationRule, number>;
 
 // The same for the severity: critical first.
@@ -71,6 +87,11 @@ const LONG_SHIFT_NOTE = `Zmiana dłuższa niż ${formatDuration(DAILY_HOURS_MINU
  * time rules leave it out; an employee that is not in `employees` is shown by id and, having no FTE, is left out of the
  * weekly norm. The staffing grid has one cell per shift and day. `startDate` must be a date that `parseIsoDate` accepts and
  * an FTE a fraction that `weeklyNorm` accepts: the rules throw a RangeError for another.
+ *
+ * `absences` (S-07) is optional, so that an input without it is judged as before. A rejected absence is ignored, a requested
+ * one only warns and an approved one is critical and lowers the weekly norm; the dates of an absence must be ones that
+ * `parseIsoDate` accepts (a RangeError otherwise). An absence of a person who has no shift in the schedule changes nothing,
+ * and the same absence listed twice is judged as one.
  */
 export interface RuleInput {
   /** The first day as `YYYY-MM-DD`. */
@@ -79,6 +100,7 @@ export interface RuleInput {
   assignments: readonly AssignmentInput[];
   shifts: readonly ShiftTimes[];
   employees: readonly { id: string; name: string; fte: Fte }[];
+  absences?: readonly AbsenceOption[];
 }
 
 /** The key of one anchor, `<day offset>:<shift id>:<employee id or ->`. */
@@ -145,10 +167,24 @@ interface Timeline {
   segments: Segment[];
 }
 
+// One absence as an interval on the same timeline: whole days from midnight of its first day to the end of its last one.
+interface AbsenceSpan {
+  absence: AbsenceOption;
+  /** Minutes from midnight of day 0; below 0 for an absence that began before the schedule. */
+  start: number;
+  /** Minutes from midnight of day 0, exclusive; past the last day for an absence that goes on after the schedule. */
+  end: number;
+}
+
 interface Context {
   period: string;
   /** The people with at least one shift that has hours, sorted by id. */
   timelines: Timeline[];
+  /**
+   * The requested and the approved absences of each person (a rejected one is left out), the strongest first (see
+   * `compareAbsenceSpans`). A person with none has no entry.
+   */
+  absences: ReadonlyMap<string, readonly AbsenceSpan[]>;
   nameOf: (employeeId: string) => string;
   dayLabel: (dayOffset: number) => string;
   /** "Poranna (pon. 02.11, 06:00–14:00)". */
@@ -165,6 +201,40 @@ const anchorOf = ({ shift, dayOffset, employeeId }: Segment): ViolationAnchor =>
 
 function compareSegments(a: Segment, b: Segment): number {
   return a.start - b.start || a.end - b.end || compareText(a.shift.id, b.shift.id);
+}
+
+// The strongest absence first: an approved one before a requested one, then the one that starts earlier, then the one that
+// lasts longer, then by type. The first of a person's absences that a shift overlaps is the one the reason names, so the
+// order has to tell apart everything the reason shows (the weight, the days and the type), and then the same finding reads
+// the same whatever the order of the input.
+function compareAbsenceSpans(a: AbsenceSpan, b: AbsenceSpan): number {
+  return (
+    Number(a.absence.status !== "approved") - Number(b.absence.status !== "approved") ||
+    a.start - b.start ||
+    b.end - a.end ||
+    compareText(a.absence.type, b.absence.type)
+  );
+}
+
+// The absences of every person as intervals, a rejected one left out.
+function absencesByEmployee(startDate: string, absences: readonly AbsenceOption[]): Map<string, AbsenceSpan[]> {
+  const byEmployee = new Map<string, AbsenceSpan[]>();
+  for (const absence of absences) {
+    if (absence.status === "rejected") {
+      continue;
+    }
+    const span: AbsenceSpan = { absence, ...absenceInterval(startDate, absence) };
+    const spans = byEmployee.get(absence.employeeId);
+    if (spans === undefined) {
+      byEmployee.set(absence.employeeId, [span]);
+    } else {
+      spans.push(span);
+    }
+  }
+  for (const spans of byEmployee.values()) {
+    spans.sort(compareAbsenceSpans);
+  }
+  return byEmployee;
 }
 
 // The timeline of every person, built once for all the rules. The same assignment twice counts once, as in
@@ -201,6 +271,7 @@ function prepare(input: RuleInput): Context {
     timelines: [...byEmployee]
       .sort(([a], [b]) => compareText(a, b))
       .map(([employeeId, segments]) => ({ employeeId, segments: segments.sort(compareSegments) })),
+    absences: absencesByEmployee(input.startDate, input.absences ?? []),
     nameOf: (employeeId) => names.get(employeeId) ?? employeeId,
     dayLabel,
     describe: ({ shift, dayOffset }) => describeShift(shift, dayOffset),
@@ -453,20 +524,46 @@ function weeklyRest({ timelines, nameOf, dayLabel, period }: Context): Violation
 // "święto 11.11", "święta 11.11 i 12.11" or "święta 24.12, 25.12 i 26.12": the dates of the holidays of a week (never more
 // than seven days apart, so with no year).
 function formatHolidays(holidays: readonly string[]): string {
-  const dates = holidays.map((date) => `${date.slice(8, 10)}.${date.slice(5, 7)}`);
+  const dates = holidays.map(dayAndMonth);
   const last = dates[dates.length - 1];
   const list = dates.length === 1 ? last : `${dates.slice(0, -1).join(", ")} i ${last}`;
   return `${dates.length === 1 ? "święto" : "święta"} ${list}`;
+}
+
+// "02.11" for "2026-11-02": the day and the month of a date of the week of a schedule (no year, as the days are never more
+// than seven days apart).
+function dayAndMonth(date: string): string {
+  return `${date.slice(8, 10)}.${date.slice(5, 7)}`;
+}
+
+// "nieobecność (1 dzień: 02.11)" or "nieobecność (3 dni: 02.11, 03.11, 05.11)": the days of Monday to Friday that an approved
+// absence took off the norm. There are one to five of them, so only "dzień" and "dni" occur.
+function formatExcusedDays(excusedDays: readonly string[]): string {
+  const count = excusedDays.length === 1 ? "1 dzień" : `${excusedDays.length} dni`;
+  return `nieobecność (${count}: ${excusedDays.map(dayAndMonth).join(", ")})`;
+}
+
+// What the norm was lowered by, for the end of "po pomniejszeniu o ...": the holidays, the days of absence or both ("święto
+// 11.11 i nieobecność (2 dni: 12.11, 13.11)"). Several holidays end in an "i" of their own, so the absence follows with
+// "oraz" and the sentence does not say "i" twice in a row. An empty text when nothing lowered it.
+function formatLoweredBy(holidays: readonly string[], excusedDays: readonly string[]): string {
+  const parts = [
+    ...(holidays.length > 0 ? [formatHolidays(holidays)] : []),
+    ...(excusedDays.length > 0 ? [formatExcusedDays(excusedDays)] : []),
+  ];
+  return parts.length === 0 ? "" : ` po pomniejszeniu o ${parts.join(holidays.length > 1 ? " oraz " : " i ")}`;
 }
 
 // The hours of a week against the norm of the FTE. The comparison is exact (`exceedsNorm`), and the limit shown is the norm
 // rounded to the minute. When the work equals that rounded limit and still exceeds the exact norm, the reason says so, as the
 // two numbers it shows would be equal otherwise. A person who is not in the list of employees has no FTE, so they are
 // skipped; one with no hours cannot exceed a norm. The holidays of the week are the same for everybody, so they are looked
-// up once.
+// up once. The norm of a person is lowered by the days of their approved absences as well (`excusedWeekdays`, the same
+// function that the hours of the people's table take their norm from, so that the two never disagree); it can reach 0, and
+// then any work at all exceeds it.
 function weeklyNormWarnings(
   { startDate, assignments, shifts, employees }: RuleInput,
-  { period }: Context,
+  { period, absences }: Context,
 ): Violation[] {
   const worked = new Map(Object.entries(workedMinutesByEmployee(assignments, shifts)));
   // One entry for each id, so that a repeated employee is judged once.
@@ -480,12 +577,14 @@ function weeklyNormWarnings(
     if (minutes === undefined) {
       continue;
     }
-    const norm = weeklyNormWithHolidays(holidays, fte);
+    const own = absences.get(id)?.map(({ absence }) => absence);
+    const excused = own === undefined ? [] : excusedWeekdays(startDate, own, holidays);
+    const norm = weeklyNormExcused(holidays, excused, fte);
     if (!exceedsNorm(minutes, norm)) {
       continue;
     }
     const limit = normMinutes(norm);
-    const lowered = norm.holidays.length > 0 ? ` po pomniejszeniu o ${formatHolidays(norm.holidays)}` : "";
+    const lowered = formatLoweredBy(norm.holidays, norm.excusedDays);
     const fraction = minutes === limit ? " (przekroczona o ułamek minuty)" : "";
     violations.push(
       violationOf(
@@ -521,6 +620,63 @@ function understaffedWarnings({ staffing, assignments }: RuleInput, { describeCe
       ),
     )
     .sort(compareViolations);
+}
+
+// The type of an absence after "przypada na": "przypada na urlop".
+const ABSENCE_ACCUSATIVE = {
+  vacation: "urlop",
+  sick_leave: "zwolnienie lekarskie (L4)",
+  other: "inną nieobecność",
+} as const satisfies Record<AbsenceType, string>;
+
+// "urlop" for "Urlop": a label in the middle of a sentence. Only the first letter is lowered, so the "L4" of a sick leave stays.
+const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+
+// One violation for each assignment that overlaps an absence of its person, however many absences it overlaps: the strongest
+// one decides the weight and is the one the reason names (`compareAbsenceSpans` puts it first). The anchor is the assignment
+// alone, so the key holds the person and the assignment and nothing about the absence. `actual` is how many minutes of the
+// shift fall inside that absence. An assignment to a shift that has no hours is not a segment, so it is left out.
+function absenceCollisions({ timelines, absences, nameOf, describe }: Context): Violation[] {
+  const violations: Violation[] = [];
+  for (const { employeeId, segments } of timelines) {
+    const own = absences.get(employeeId);
+    if (own === undefined) {
+      continue;
+    }
+    for (const segment of segments) {
+      const hit = own.find((span) => rangesOverlap(segment, span));
+      if (hit === undefined) {
+        continue;
+      }
+      const { absence } = hit;
+      const overlap = Math.min(segment.end, hit.end) - Math.max(segment.start, hit.start);
+      const range = formatAbsenceRange(absence);
+      const head = `${nameOf(employeeId)}: zmiana ${describe(segment)} przypada na`;
+      const anchors = [anchorOf(segment)];
+      violations.push(
+        absence.status === "approved"
+          ? criticalViolation(
+              "absence",
+              employeeId,
+              anchors,
+              `${head} ${ABSENCE_ACCUSATIVE[absence.type]} (${range}).`,
+              overlap,
+              0,
+            )
+          : violationOf(
+              "warning",
+              "absence_requested",
+              employeeId,
+              anchors,
+              `${head} nieobecność jeszcze niezatwierdzoną (${lowerFirst(absenceTypeLabel(absence.type))}, ${range}).`,
+              overlap,
+              0,
+              "minutes",
+            ),
+      );
+    }
+  }
+  return violations.sort(compareViolations);
 }
 
 /**
@@ -566,14 +722,29 @@ export function weeklyRestViolations(input: RuleInput): Violation[] {
 
 /**
  * The weekly norm (art. 130, in the form of a week of the schedule): a person on the list of employees whose work in the
- * seven days of the schedule is above 40 h times the FTE, less 8 h times the FTE for each holiday on a day other than Sunday,
- * gets a warning. The comparison is exact (3/7 of 40 h is 1028.57 minutes, so 1029 exceeds it and 1028 does not); `limit`
- * is the norm rounded to the minute, and when the work equals it (1029) the reason adds that the norm is exceeded by a
- * fraction of a minute. A person who is not in `employees` is skipped. No anchors. A warning, not a critical
- * violation: the norm of the law is monthly and averaged, so one week above it is not a breach by itself.
+ * seven days of the schedule is above 40 h times the FTE, less 8 h times the FTE for each holiday on a day other than Sunday
+ * and for each day from Monday to Friday, not a holiday, that an approved absence covers (decision D7 of S-07; the norm is
+ * never below 0, and then any work exceeds it), gets a warning. The comparison is exact (3/7 of 40 h is 1028.57 minutes, so
+ * 1029 exceeds it and 1028 does not); `limit` is the norm rounded to the minute, and when the work equals it (1029) the
+ * reason adds that the norm is exceeded by a fraction of a minute. A person who is not in `employees` is skipped. No
+ * anchors. A warning, not a critical violation: the norm of the law is monthly and averaged, so one week above it is not a
+ * breach by itself.
  */
 export function weeklyNormViolations(input: RuleInput): Violation[] {
   return weeklyNormWarnings(input, prepare(input));
+}
+
+/**
+ * The absences (S-07): one violation for each assignment whose shift overlaps an absence of its person, on the timeline of
+ * minutes (an absence takes whole days, and a night shift that starts the evening before it and runs into its first day
+ * overlaps it; a shift that ends exactly at midnight, when the absence starts, does not). Critical (`absence`) when any
+ * approved absence overlaps, otherwise a warning (`absence_requested`) when a requested one does; a rejected absence is
+ * ignored. With several absences the strongest decides, an approved one before a requested one, then the one that starts
+ * earlier. The anchor is the assignment, `actual` the minutes of the shift inside that absence and `limit` 0. An assignment
+ * to a shift that is not in `shifts` is skipped, as it has no hours, and so is an input with no `absences`.
+ */
+export function absenceViolations(input: RuleInput): Violation[] {
+  return absenceCollisions(prepare(input));
 }
 
 /**
@@ -587,9 +758,10 @@ export function understaffedViolations(input: RuleInput): Violation[] {
 }
 
 /**
- * Every rule on one schedule: the four critical ones and the two warnings, in one new array in the canonical order
- * (`compareViolations`: critical first, then the rule, the employee and the key). The result does not depend on the order
- * of the input, which is only read.
+ * Every rule on one schedule: the four critical ones and the two warnings, and the absences with their critical violation
+ * and their warning, in one new array in the canonical order (`compareViolations`: critical first, then the rule, the
+ * employee and the key). The result does not depend on the order of the input, which is only read, and an input without
+ * `absences` gives what it gave before them.
  */
 export function evaluateSchedule(input: RuleInput): Violation[] {
   const context = prepare(input);
@@ -598,6 +770,7 @@ export function evaluateSchedule(input: RuleInput): Violation[] {
     ...dailyHours(context),
     ...weeklyHours(context),
     ...weeklyRest(context),
+    ...absenceCollisions(context),
     ...weeklyNormWarnings(input, context),
     ...understaffedWarnings(input, context),
   ].sort(compareViolations);

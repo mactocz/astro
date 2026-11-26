@@ -411,13 +411,13 @@ Planowany równolegle jest S-08 (`schedule-approval`), implementowany po scaleni
 
 #### Automated
 
-- [ ] 2.1 Testy reguł, normy i sum godzin przechodzą w workerd: `npm test`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 2.1 Testy reguł, normy i sum godzin przechodzą w workerd: `npm test`
+- [x] 2.2 Linting przechodzi: `npm run lint`
+- [x] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
-- [ ] 2.4 Polskie powody wskazań nieobecności, ranga i klucze reguł oraz tekst normy pomniejszonej o nieobecność zostały przejrzane i zatwierdzone przez autora
+- [x] 2.4 Polskie powody wskazań nieobecności, ranga i klucze reguł oraz tekst normy pomniejszonej o nieobecność zostały przejrzane i zatwierdzone przez autora
 
 ### Phase 3: Baza i moduł danych
 
