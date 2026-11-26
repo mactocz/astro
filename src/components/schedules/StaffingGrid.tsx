@@ -89,7 +89,7 @@ export function StaffingGrid({
           Dodaj zmianę, żeby wpisać obsadę.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-white/10">
+        <div className="relative overflow-x-auto rounded-xl border border-white/10">
           <table className="w-full min-w-[40rem] border-separate border-spacing-0 text-sm">
             <thead>
               <tr>

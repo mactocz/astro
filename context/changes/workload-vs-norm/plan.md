@@ -208,12 +208,12 @@ S-06 zależy od Fazy 1 planu S-05 (`live-rule-violations`): minuty zmian i etat 
 
 #### Automated
 
-- [ ] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 2.2 Smoke z istniejącymi i nowymi krokami stron przechodzi lokalnie: `npm run smoke`
+- [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 2.2 Smoke z istniejącymi i nowymi krokami stron przechodzi lokalnie: `npm run smoke`
 - [ ] 2.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
 
 #### Manual
 
-- [ ] 2.4 W przeglądarce na desktopie: kliknięcie przypisujące zmianę zmienia sumę i różnicę w wierszu osoby od razu, wycofanie przy błędzie przywraca poprzednie liczby, kolumna jest czytelna i neutralna (bez progów i kolorów jako nośnika), akapit pod siatką jest zrozumiały, a obsługa klawiaturą i czytnik nie mają nowych pułapek
-- [ ] 2.5 Na telefonie (lub emulacji): strona się ładuje, kolumna jest czytelna, tabela przewija się poziomo bez rozjeżdżania strony
+- [x] 2.4 W przeglądarce na desktopie: kliknięcie przypisujące zmianę zmienia sumę i różnicę w wierszu osoby od razu, wycofanie przy błędzie przywraca poprzednie liczby, kolumna jest czytelna i neutralna (bez progów i kolorów jako nośnika), akapit pod siatką jest zrozumiały, a obsługa klawiaturą i czytnik nie mają nowych pułapek
+- [x] 2.5 Na telefonie (lub emulacji): strona się ładuje, kolumna jest czytelna, tabela przewija się poziomo bez rozjeżdżania strony
 - [ ] 2.6 Po wdrożeniu (`npm run build` i `npx wrangler deploy`, bez migracji) kolumna "Godziny" pokazuje poprawne liczby na produkcji; nie uruchamiać `npm run smoke` na produkcji
