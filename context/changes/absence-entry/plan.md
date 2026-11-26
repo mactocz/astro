@@ -423,13 +423,13 @@ Planowany równolegle jest S-08 (`schedule-approval`), implementowany po scaleni
 
 #### Automated
 
-- [x] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 3.2 Migracja stosuje się na świeżej bazie: `npx supabase db reset`
-- [x] 3.3 Smoke z krokami bazy przechodzi lokalnie: `npm run smoke`
+- [x] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — bd41ec5
+- [x] 3.2 Migracja stosuje się na świeżej bazie: `npx supabase db reset` — bd41ec5
+- [x] 3.3 Smoke z krokami bazy przechodzi lokalnie: `npm run smoke` — bd41ec5
 
 #### Manual
 
-- [x] 3.4 Treść migracji (kolumny, granty, polityki, nazwy ograniczeń, kaskada) została przejrzana i zatwierdzona przez autora
+- [x] 3.4 Treść migracji (kolumny, granty, polityki, nazwy ograniczeń, kaskada) została przejrzana i zatwierdzona przez autora — bd41ec5
 
 ### Phase 4: API i strony planisty
 
