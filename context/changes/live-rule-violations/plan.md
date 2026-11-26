@@ -362,13 +362,13 @@ Równolegle jest planowany S-06 (`workload-vs-norm`, plan w `context/changes/wor
 
 #### Automated
 
-- [ ] 2.1 Testy reguł przechodzą w workerd: `npm test`
-- [ ] 2.2 Linting przechodzi: `npm run lint`
-- [ ] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 2.1 Testy reguł przechodzą w workerd: `npm test`
+- [x] 2.2 Linting przechodzi: `npm run lint`
+- [x] 2.3 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
-- [ ] 2.4 Powody po polsku, przykłady z granicami (8 h i 11 h, 10 h w oknie doby, 35 h i 24 h) i zachowanie na krawędziach grafiku zostały przejrzane i zatwierdzone przez autora
+- [x] 2.4 Powody po polsku, przykłady z granicami (8 h i 11 h, 10 h w oknie doby, 35 h i 24 h) i zachowanie na krawędziach grafiku zostały przejrzane i zatwierdzone przez autora
 
 ### Phase 3: Norma, brak kadrowy i silnik
 
