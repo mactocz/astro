@@ -29,7 +29,10 @@
 // foreign account, the tokens from the admin API instead of the mails, the new employee's session, the activation time
 // that the first password set records and a reset keeps, and the locked e-mail), what the pages of that flow show (the
 // account column and invite button of the employee list, the locked e-mail field of the edit page, the password form of
-// the set-password page; read from the HTML the server renders), and that public registration stays closed. Zero
+// the set-password page; read from the HTML the server renders), that a schedule is approved only through the route or
+// the function approve_schedule, which refuses stale data, critical findings and unconfirmed warnings, that an approved
+// schedule takes no write (database and routes), keeps its copy of shifts and people and is read only on every page,
+// and that public registration stays closed. Zero
 // dependencies on purpose. It creates real accounts and removes its own accounts, employee, shift and schedule rows
 // with the service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
 // (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from there. Values come from
@@ -5740,6 +5743,109 @@ const plannerWritesRoute = (what, method, url, json, expected) => [
 
 const plannerInsertsShiftRow = (what, body, keepId) => plannerInsertsKeepingId(what, "shifts", () => body, keepId);
 
+// What the pages show for the schedule of the approval route steps: first as a draft with a critical violation and then
+// with warnings only (the approval section under the coverage table), and after the approval read only, from the copies
+// and the findings stored with it, also after the shift and the person have been edited.
+let approveRouteGridHeaders;
+let approveRouteViolations;
+const approveRoutePeriod = "02.11–08.11.2026";
+const approvalDayOf = (time) =>
+  new Intl.DateTimeFormat("pl-PL", {
+    timeZone: "Europe/Warsaw",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(time));
+const visitApproveRoute = (what, path, bodyCheck, describe) => [
+  `${planner.label}: GET ${what}`,
+  () => request(planner, path()),
+  { status: 200, bodyCheck, describe },
+];
+const approveRouteAssignPage = () => `/schedules/${approveRouteScheduleId}/assign`;
+
+const approvalSectionOf = (html) => {
+  const at = html.indexOf(`aria-labelledby="approval-heading"`);
+  return at === -1 || at < html.indexOf(`aria-labelledby="coverage-heading"`)
+    ? undefined
+    : html.slice(html.lastIndexOf("<section", at), html.indexOf("</section>", at));
+};
+const approveButtonOf = (html) =>
+  elementsOf(approvalSectionOf(html), "button").find((button) => textOf(button) === "Zatwierdź grafik");
+const isDisabledElement = (element, name) => hasAttribute(tagsOf(element, name)[0], "disabled");
+const approvalBlockedText = "Nie można zatwierdzić: lista wskazań ma krytyczne naruszenia.";
+// The confirmation is opened by a click, so the HTML the server renders never carries it.
+const hasNoConfirmation = (html) => !html.includes("Zatwierdzenie jest ostateczne");
+
+const showsBlockedApproval = (html) =>
+  textsOf(approvalSectionOf(html), "h2")[0] === "Zatwierdzanie" &&
+  isDisabledElement(approveButtonOf(html), "button") &&
+  textsOf(approvalSectionOf(html), "p").includes(approvalBlockedText) &&
+  hasNoConfirmation(html);
+const showsOpenApproval = (html) => {
+  approveRouteGridHeaders = gridHeadersOf(html);
+  return (
+    !isDisabledElement(approveButtonOf(html), "button") &&
+    !html.includes(approvalBlockedText) &&
+    hasNoConfirmation(html) &&
+    hasD6Notice(html)
+  );
+};
+
+// The two buttons of the one person: the Monday shift is on, the Tuesday one is off.
+const approvedShiftButtons = (html) =>
+  tagsOf(cutAtCoverage(html)[0], "button").filter((tag) => attributeOf(tag, "aria-pressed") !== undefined);
+const approvedHoursOf = (html) => textOf(bodyRowsOf(cutAtCoverage(html)[0])[0].cells[8]);
+const hasApprovedNotice = (html) =>
+  html.includes("Zatwierdzony grafik tygodniowy.") &&
+  html.includes("art. 129 § 3") &&
+  !html.includes("To szkic grafiku tygodniowego");
+
+const showsApprovedAssignPage = (html) =>
+  textsOf(html, "p").includes(`Grafik zatwierdzony ${approvalDayOf(approveRouteTime)}, przez ${planner.email}`) &&
+  hasApprovedNotice(html) &&
+  JSON.stringify(gridHeadersOf(html)) === JSON.stringify(approveRouteGridHeaders) &&
+  JSON.stringify(
+    approvedShiftButtons(html).map((tag) => [attributeOf(tag, "aria-pressed"), hasAttribute(tag, "disabled")]),
+  ) ===
+    JSON.stringify([
+      ["true", true],
+      ["false", true],
+    ]) &&
+  violationCounterOf(html) === "Wskazania: 2 ostrzeżenia" &&
+  JSON.stringify(violationItemsOf(html)) ===
+    JSON.stringify(approveRouteViolations.map((violation) => `Ostrzeżenie ${violation.reason}`)) &&
+  !violationSectionOf(html).includes(`role="alert"`) &&
+  approvedHoursOf(html) === "8 h z 40 h mniej o 32 h" &&
+  !html.includes(`aria-labelledby="approval-heading"`) &&
+  !linksOf(html).some((link) => link.text === "Edytuj grafik") &&
+  linksOf(html).some((link) => link.href === "/schedules" && link.text === "Lista grafików");
+
+const listsApprovedSchedule = (html) => {
+  const row = tableRowWith(html, approveRouteLabel);
+  const cells = cellsOf(row);
+  return (
+    cells.length === 7 &&
+    cells[5] === `Zatwierdzony ${approvalDayOf(approveRouteTime)}` &&
+    cells[6] === "Podgląd" &&
+    row.includes(`href="/schedules/${approveRouteScheduleId}/assign"`) &&
+    row.includes(`aria-label="Podgląd: ${approveRoutePeriod}, ${approveRouteLabel}"`) &&
+    !row.includes(`href="/schedules/${approveRouteScheduleId}"`)
+  );
+};
+
+const showsLockedEditPage = (html) =>
+  textsOf(html, "p").includes("Ten grafik jest zatwierdzony i nie można go edytować.") &&
+  linksOf(html).some((link) => link.href === approveRouteAssignPage() && link.text === "Zobacz zatwierdzony grafik") &&
+  hasApprovedNotice(html) &&
+  inputsOf(html).length === 0;
+
+// After the edits the page still names the shift, its hours and the person as they were approved.
+const keepsTheApprovedCopy = (html) =>
+  showsApprovedAssignPage(html) &&
+  html.includes(`${approveRouteLabel} 06:00–14:00`) &&
+  html.includes(`${approveRouteLabel} Smoke`) &&
+  !html.includes(`${approveRouteLabel}-renamed`);
+
 const approvalRouteSteps = [
   plannerInsertsKeepingId(
     "the employee of the approval route steps",
@@ -5820,6 +5926,13 @@ const approvalRouteSteps = [
     ),
   ),
 
+  visitApproveRoute(
+    "the assignment page of a draft with a critical violation blocks the approval",
+    approveRouteAssignPage,
+    showsBlockedApproval,
+    "the section after the coverage table with a disabled button and the reason",
+  ),
+
   // A critical violation refuses, whatever is confirmed.
   plannerApproveRoute("with a critical violation is refused", () => [longDayKey(), ...shortageKeys()], {
     status: 409,
@@ -5832,6 +5945,13 @@ const approvalRouteSteps = [
     () => `/api/schedules/${approveRouteScheduleId}/assignments`,
     () => approveRouteAssignment(true),
     { status: 200 },
+  ),
+
+  visitApproveRoute(
+    "the assignment page of a draft with warnings only offers the approval",
+    approveRouteAssignPage,
+    showsOpenApproval,
+    "an enabled button, no confirmation yet and the draft notice",
   ),
 
   // Warnings need every one of their keys.
@@ -5878,6 +5998,7 @@ const approvalRouteSteps = [
     {
       status: 200,
       check: ([record]) =>
+        (approveRouteViolations = record.violations) !== undefined &&
         record.approved_by === planner.id &&
         Date.parse(record.approved_at) === Date.parse(approveRouteTime) &&
         record.critical_count === 0 &&
@@ -5948,6 +6069,61 @@ const approvalRouteSteps = [
       describe: "the one assignment of Monday",
     },
   ],
+
+  // The pages of the approved schedule.
+  visitApproveRoute(
+    "/schedules lists the approved schedule with its status and one link",
+    () => "/schedules",
+    listsApprovedSchedule,
+    "the status with the day of the approval and only the link Podgląd",
+  ),
+  visitApproveRoute(
+    "the assignment page of the approved schedule is read only",
+    approveRouteAssignPage,
+    showsApprovedAssignPage,
+    "the banner, disabled buttons, the stored findings and hours, no approval section",
+  ),
+  visitApproveRoute(
+    "/schedules/<id> of the approved schedule has no form",
+    () => `/schedules/${approveRouteScheduleId}`,
+    showsLockedEditPage,
+    "the message and the link to the approved schedule",
+  ),
+  plannerWritesRoute(
+    "/api/shifts/<id> renames and moves a shift of the approved schedule",
+    "PUT",
+    () => `/api/shifts/${approveRouteShiftId}`,
+    () => ({ name: `${approveRouteLabel}-renamed`, startTime: "07:00", endTime: "14:00" }),
+    { status: 200 },
+  ),
+  plannerWritesRoute(
+    "/api/employees/<id> renames the person of the approved schedule",
+    "PUT",
+    () => `/api/employees/${approveRouteEmployeeId}`,
+    () => ({
+      firstName: "Smoke",
+      lastName: `${approveRouteLabel}-renamed`,
+      email: `smoke-${runId}-approve-route@example.com`,
+      fteNumerator: 1,
+      fteDenominator: 2,
+    }),
+    { status: 200 },
+  ),
+  visitApproveRoute(
+    "the assignment page of the approved schedule keeps the approved copy after the edits",
+    approveRouteAssignPage,
+    keepsTheApprovedCopy,
+    "the old shift name and hours, the old name of the person and the old norm",
+  ),
+  visitApproveRoute(
+    "/shifts/<id> says that approved schedules keep their copy",
+    () => `/shifts/${approveRouteShiftId}`,
+    (html) =>
+      textsOf(html, "p").includes(
+        "Zatwierdzone grafiki zachowują własną kopię danych zmiany, więc ta edycja ich nie zmieni.",
+      ),
+    "the note about the copy",
+  ),
   signOut(planner),
 ];
 

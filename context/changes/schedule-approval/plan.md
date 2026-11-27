@@ -401,20 +401,20 @@ Planowany równolegle jest S-07 (`absence-entry`), implementowany PRZED tym wyci
 
 #### Automated
 
-- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 4.2 Smoke z istniejącymi krokami stron szkiców przechodzi lokalnie: `npm run smoke`
+- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — a718ac2
+- [x] 4.2 Smoke z istniejącymi krokami stron szkiców przechodzi lokalnie: `npm run smoke` — a718ac2
 
 #### Manual
 
-- [x] 4.3 W przeglądarce na desktopie: panel potwierdzenia (lista ostrzeżeń, bezpieczny przycisk, zatwierdzenie), po zatwierdzeniu baner i siatka tylko do odczytu z zapisanymi wskazaniami i sumami z migawki, strona edycji z komunikatem, lista ze statusem, komunikaty przy zmianie krytycznego wskazania między kliknięciami, klawiatura i czytnik
-- [x] 4.4 Na telefonie (lub emulacji): sekcja i panel zatwierdzania oraz widok tylko do odczytu są czytelne, strona nie ma poziomego przewijania dokumentu
+- [x] 4.3 W przeglądarce na desktopie: panel potwierdzenia (lista ostrzeżeń, bezpieczny przycisk, zatwierdzenie), po zatwierdzeniu baner i siatka tylko do odczytu z zapisanymi wskazaniami i sumami z migawki, strona edycji z komunikatem, lista ze statusem, komunikaty przy zmianie krytycznego wskazania między kliknięciami, klawiatura i czytnik — a718ac2
+- [x] 4.4 Na telefonie (lub emulacji): sekcja i panel zatwierdzania oraz widok tylko do odczytu są czytelne, strona nie ma poziomego przewijania dokumentu — a718ac2
 
 ### Phase 5: Smoke stron i dokumentacja
 
 #### Automated
 
-- [ ] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 5.2 Smoke z krokami stron zatwierdzonego grafiku przechodzi lokalnie: `npm run smoke`
+- [x] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 5.2 Smoke z krokami stron zatwierdzonego grafiku przechodzi lokalnie: `npm run smoke`
 
 ### Phase 6: Wdrożenie
 
