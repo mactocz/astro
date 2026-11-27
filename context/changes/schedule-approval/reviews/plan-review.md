@@ -30,7 +30,7 @@
 - **Location**: Rozstrzygnięte w planowaniu, "Blokada"; Phase 2
 - **Detail**: Plan blokuje `schedule_assignments`, potem `schedule_staffing`. `save_schedule` (20261124152716, linie 138-165) pisze najpierw do `schedule_staffing`, a kaskada dopiero potem do `schedule_assignments`. Zapis INNEGO szkicu w tym samym czasie może dać deadlock.
 - **Fix**: Kolejność `LOCK TABLE schedule_staffing, schedule_employees, schedule_assignments, absences`.
-- **Decision**: PENDING
+- **Decision**: FIXED
 
 ### F2 — Zapis równoległy z zatwierdzeniem dostanie 404 zamiast 409
 
@@ -40,7 +40,7 @@
 - **Location**: Critical Implementation Details, "Polityki" (`save_schedule`)
 - **Detail**: Sprawdzenie statusu przed `update schedules` widzi jeszcze szkic. `update` czeka na blokadę, po zatwierdzeniu polityka odfiltrowuje wiersz, więc funkcja rzuca `PT404`, a nie `PT423`.
 - **Fix**: Gdy `update` nie trafi w wiersz, sprawdzić status ponownie i dla zatwierdzonego rzucić `PT423`, inaczej `PT404`. Dodać ten przypadek do testu dwoma połączeniami.
-- **Decision**: PENDING
+- **Decision**: FIXED
 
 ### F3 — Wyspa nie ma jak odświeżyć wskazań po 409
 
@@ -50,7 +50,7 @@
 - **Location**: Phase 4, `useApproval`
 - **Detail**: Plan mówi "przeładowuje listę wskazań", ale `useViolations` liczy z propsów załadowanych przy otwarciu strony (assign.astro:29-46). Po zmianie nieobecności, zmiany lub pracownika w innej karcie przycisk dawałby 409 w kółko.
 - **Fix**: Na 409 `confirmation_required`, `schedule_changed` i `critical_violations` pokazać komunikat z przyciskiem "Odśwież stronę" (pełne przeładowanie).
-- **Decision**: PENDING
+- **Decision**: FIXED
 
 ### F4 — Potwierdzenie po samym kluczu przepuszcza zmienione ostrzeżenie
 
@@ -69,7 +69,7 @@
   - Tradeoff: Możliwe zatwierdzenie gorszego stanu niż pokazany.
   - Confidence: HIGH — wynika z definicji klucza.
   - Blind spot: None significant.
-- **Decision**: PENDING
+- **Decision**: ACCEPTED (Fix B: sam klucz, ryzyko opisane w planie)
 
 ### F5 — Nierozstrzygnięte dane zdrowotne w zamrożonych powodach
 
@@ -88,7 +88,7 @@
   - Tradeoff: Zamrożony tekst różni się od pokazanego przed zatwierdzeniem; dodatkowa logika.
   - Confidence: MEDIUM — wymaga zmian w budowie powodów.
   - Blind spot: Teksty norm tygodniowych też wspominają nieobecność.
-- **Decision**: PENDING
+- **Decision**: FIXED (Fix A)
 
 ### F6 — `listAssignments` bez dokładnego licznika
 
@@ -98,7 +98,7 @@
 - **Location**: Phase 3, moduł danych
 - **Detail**: CLAUDE.md odnotowuje to jako uwagę dla S-08. Przy `max_rows` mniejszym niż 1000 obcięty odczyt dawałby ciągłe `schedule_changed` (bezpiecznie, ale mylnie).
 - **Fix**: Czytać z `count: "exact"` i użyć `assertCompleteRead` (przenieść do `src/lib/postgrest.ts`).
-- **Decision**: PENDING
+- **Decision**: FIXED
 
 ### F7 — Brak planu B, gdy test blokady się nie powiedzie
 
@@ -108,4 +108,4 @@
 - **Location**: Phase 2, test współbieżności
 - **Detail**: Przypadek (a) zakłada, że zapis po odczekaniu na blokadę widzi nowy status; to założenie z pamięci.
 - **Fix**: Jeśli test (a) nie przejdzie, zadeklarować `schedule_is_draft` jako `volatile` i powtórzyć test; dalsza porażka wraca do autora.
-- **Decision**: PENDING
+- **Decision**: FIXED
