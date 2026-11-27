@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   employeeDayKey,
   groupByEmployeeDay,
+  readGenerationRequest,
   sortAssignments,
   summarizeCoverage,
   validateAssignmentInput,
@@ -236,6 +237,48 @@ describe("validateAssignmentInput repeatability", () => {
     validateAssignmentInput(input);
 
     expect(input).toStrictEqual(before);
+  });
+});
+
+describe("readGenerationRequest", () => {
+  const body = { basis: "abc", assignments: [validInput], additions: [assignment(MORNING, 0, BARTEK)] };
+
+  it("reads the fingerprint, the assignments of the page and the ones to add", () => {
+    expect(readGenerationRequest(body)).toStrictEqual(body);
+  });
+
+  it("accepts a page with no assignments", () => {
+    expect(readGenerationRequest({ ...body, assignments: [] })).toStrictEqual({ ...body, assignments: [] });
+  });
+
+  it("normalises every item and leaves out other keys", () => {
+    const raw = {
+      ...body,
+      assignments: [{ ...validInput, shiftId: NIGHT.toUpperCase(), source: "manual" }],
+      additions: [{ ...assignment(MORNING, 0, BARTEK.toUpperCase()), source: "manual" }],
+      confirmedKeys: ["x"],
+    };
+
+    expect(readGenerationRequest(raw)).toStrictEqual(body);
+  });
+
+  it.each<[string, unknown]>([
+    ["nothing", undefined],
+    ["null", null],
+    ["a string", "body"],
+    ["a list", [body]],
+    ["a body without a fingerprint", { ...body, basis: undefined }],
+    ["a fingerprint that is not text", { ...body, basis: 1 }],
+    ["a body without the assignments of the page", { ...body, assignments: undefined }],
+    ["assignments that are not a list", { ...body, assignments: validInput }],
+    ["an assignment of the page that is not valid", { ...body, assignments: [{ ...validInput, dayOffset: 7 }] }],
+    ["a body without additions", { ...body, additions: undefined }],
+    ["additions that are not a list", { ...body, additions: validInput }],
+    ["an empty list of additions", { ...body, additions: [] }],
+    ["one invalid addition among valid ones", { ...body, additions: [validInput, { ...validInput, shiftId: "x" }] }],
+    ["an addition that is null", { ...body, additions: [null] }],
+  ])("refuses %s", (_label, raw) => {
+    expect(readGenerationRequest(raw)).toBeNull();
   });
 });
 

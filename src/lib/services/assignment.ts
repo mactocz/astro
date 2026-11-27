@@ -65,6 +65,47 @@ export function validateAssignmentInput(
   return { ok: true, value: { shiftId: shiftId.value, dayOffset: dayOffset.value, employeeId: employeeId.value } };
 }
 
+/** What the page sends to store a proposal (S-09): what it has on the screen and the assignments to add. */
+export interface GenerationRequest {
+  basis: string;
+  assignments: AssignmentInput[];
+  additions: AssignmentInput[];
+}
+
+// Every item validated and normalised, or null when the value is not a list of assignments.
+function readAssignmentList(value: unknown): AssignmentInput[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const read: AssignmentInput[] = [];
+  for (const item of value) {
+    const result = validateAssignmentInput(item);
+    if (!result.ok) {
+      return null;
+    }
+    read.push(result.value);
+  }
+  return read;
+}
+
+/**
+ * The body of a request that stores a proposal, `{ basis, assignments, additions }`, or null when it is not one: `basis`
+ * is a string, both lists hold only valid assignments and `additions` is not empty. Other keys are left out. It only
+ * checks the shape: whether the page is up to date and the cells exist is decided against the database.
+ */
+export function readGenerationRequest(body: unknown): GenerationRequest | null {
+  if (typeof body !== "object" || body === null) {
+    return null;
+  }
+  const { basis, assignments, additions } = body as Record<string, unknown>;
+  const shown = readAssignmentList(assignments);
+  const added = readAssignmentList(additions);
+  if (typeof basis !== "string" || shown === null || added === null || added.length === 0) {
+    return null;
+  }
+  return { basis, assignments: shown, additions: added };
+}
+
 /**
  * A new list ordered by shift id, then day, then employee id. The result does not depend on the order of `list`, which is
  * left unchanged. Works on any item with these keys, so on a full assignment as well as on an input.

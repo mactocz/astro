@@ -250,24 +250,24 @@ Brak migracji. Starsza wersja aplikacji ignoruje `source`.
 
 #### Automated
 
-- [x] 1.1 Testy generatora przechodzą: `npm test`
-- [x] 1.2 Linting przechodzi: `npm run lint`
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy generatora przechodzą: `npm test` — 9f9f894
+- [x] 1.2 Linting przechodzi: `npm run lint` — 9f9f894
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 9f9f894
 
 #### Manual
 
-- [x] 1.4 Kolejność przebiegów, remisy i polskie zdania podsumowania zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Kolejność przebiegów, remisy i polskie zdania podsumowania zostały przejrzane i zatwierdzone przez autora — 9f9f894
 
 ### Phase 2: Zapis
 
 #### Automated
 
-- [ ] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 2.2 Smoke z krokami tras przechodzi: `npm run smoke`
+- [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 2.2 Smoke z krokami tras przechodzi: `npm run smoke`
 
 #### Manual
 
-- [ ] 2.3 Kolejność sprawdzeń w trasie i kody odpowiedzi zostały przejrzane i zatwierdzone przez autora
+- [x] 2.3 Kolejność sprawdzeń w trasie i kody odpowiedzi zostały przejrzane i zatwierdzone przez autora
 
 ### Phase 3: Interfejs i dokumentacja
 
