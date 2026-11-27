@@ -3,7 +3,7 @@ project: Shiftly
 version: 1
 status: draft
 created: 2026-10-16
-updated: 2026-11-26
+updated: 2026-11-27
 prd_version: 1
 main_goal: quality
 top_blocker: decisions
@@ -49,7 +49,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | done |
 | S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | done |
 | S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | done |
-| S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | in-progress |
+| S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | done        |
 | S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | proposed |
 | S-09 | schedule-generation         | wygenerować propozycję grafiku bez nadpisywania wpisów ręcznych   | S-05, S-07, F-02 | FR-009, FR-011, US-01                         | proposed |
 | S-10 | employee-invitation         | zaprosić pracownika e-mailem; pracownik ustawia hasło z linku     | F-01, S-01    | FR-001, FR-002                                   | in-progress |
@@ -204,7 +204,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Unknowns:**
   - Czy nieobecność ma granularność dnia czy godzin (PRD mówi o "dniu/godzinie")? — rozstrzygnięte 2026-11-26 w planowaniu: całe dni (daty włącznie); godziny jako rozszerzenie później (nullable start_minute/end_minute), korekta normy wg art. 130 § 3 jako decyzja D7, zob. `context/changes/absence-entry/plan.md`. — Owner: user. Block: no.
 - **Risk:** Pierwszy raz reguła czerpie dane spoza grafiku; nieobecności zasilą też późniejsze wycinki pracownika (S-13, S-14), więc model ustawiam tutaj.
-- **Status:** in-progress
+- **Status:** done
 
 ### S-08: Zatwierdzanie grafiku
 
@@ -318,7 +318,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 | S-04       | manual-shift-assignment    | Ręczne obsadzanie zmian w grafiku roboczym                    | done                  | Zarchiwizowane 2026-11-25: `context/archive/2026-11-24-manual-shift-assignment/` |
 | S-05       | live-rule-violations       | Naruszenia reguł i braki obsady na żywo                       | done                  | Zarchiwizowane 2026-11-26: `context/archive/2026-11-25-live-rule-violations/` |
 | S-06       | workload-vs-norm           | Suma godzin pracownika względem normy z etatu                 | done                  | Zarchiwizowane 2026-11-26: `context/archive/2026-11-25-workload-vs-norm/` |
-| S-07       | absence-entry              | Wpisywanie nieobecności i kolizja w grafiku                   | yes                   | Run `/10x-new absence-entry`, then `/10x-plan`; S-01 i S-05 gotowe; do uwzględnienia w planie: nowa reguła w silniku z S-05 (`ViolationRule` i `RULE_RANK` w `rules.ts`, kontrakt `Violation`), korekta normy o nieobecności (art. 130 § 3: `weeklyNorm` w `work-hours.ts` i kolumna "Godziny" z S-06 jej nie uwzględniają), granularność dnia czy godzin (niewiadoma wyżej) |
+| S-07       | absence-entry              | Wpisywanie nieobecności i kolizja w grafiku                   | done                  | Zarchiwizowane 2026-11-27: `context/archive/2026-11-26-absence-entry/` |
 | S-08       | schedule-approval          | Zatwierdzanie grafiku z blokadą krytycznych naruszeń          | yes                   | Run `/10x-new schedule-approval`, then `/10x-plan`; S-05 gotowe; do uwzględnienia w planie: potwierdzanie dotyczy ostrzeżeń (`weekly_norm`, `understaffed`, ich klucze są stabilne), klucz `daily_hours` to otwierająca zmiana okna, reguły oceniają jeden grafik i nie sprawdzają krawędzi (odpoczynek między tygodniami to S-12), wskazania zapisywane razem z grafikiem |
 | S-09       | schedule-generation        | Generowanie propozycji grafiku                                | no                    | Czeka na S-07 (S-05 i F-02 gotowe); pomiar CPU powtórzyć na ciężkim grafiku (render wyspy w Workerze, limit 10 ms; mediana strony obsadzania po S-05 to 4,8 ms na typowym grafiku) |
 | S-10       | employee-invitation        | Zaproszenie pracownika e-mailem i ustawienie hasła            | no                    | Zależności gotowe (F-01, S-01); blokada: wymaga nadawcy poczty |
@@ -369,4 +369,5 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **S-04: Planista może ręcznie przypisywać pracowników do zmian w grafiku roboczym i poprawiać te wpisy.** — Archived 2026-11-25 → `context/archive/2026-11-24-manual-shift-assignment/`. Lesson: —.
 - **S-03: Planista może utworzyć grafik tygodniowy: wybrać okres (tydzień od daty początkowej), zmiany i pracowników oraz określić wymaganą liczbę osób na zmianę w każdym dniu, a potem znaleźć grafik na liście i edytować szkic.** — Archived 2026-11-26 → `context/archive/2026-11-05-weekly-schedule-draft/`. Lesson: —.
 - **S-06: Planista może zobaczyć w grafiku sumę godzin każdego pracownika względem normy wynikającej z jego wymiaru czasu pracy.** — Archived 2026-11-26 → `context/archive/2026-11-25-workload-vs-norm/`. Lesson: —.
+- **S-07: Planista może wpisać nieobecność pracownika (urlop, L4), a grafik kolidujący z zatwierdzoną nieobecnością jest wskazany jako krytyczne naruszenie.** — Archived 2026-11-27 → `context/archive/2026-11-26-absence-entry/`. Lesson: —.
 - **S-05: Planista może zobaczyć podczas układania krytyczne naruszenia (odpoczynek dobowy, odpoczynek tygodniowy, limit 8 godzin na dobę, pułap 48 godzin w tygodniu) oraz ostrzeżenia o przekroczeniu normy tygodniowej etatu i o brakach obsady, każde z czytelnym powodem i miejscem w grafiku.** — Archived 2026-11-26 → `context/archive/2026-11-25-live-rule-violations/`. Lesson: —.
