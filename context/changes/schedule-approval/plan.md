@@ -378,24 +378,24 @@ Planowany równolegle jest S-07 (`absence-entry`), implementowany PRZED tym wyci
 
 #### Automated
 
-- [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 03523ce
 - [ ] 2.2 Migracja stosuje się na świeżej bazie: `npx supabase db reset`
-- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie: `npm run smoke`
+- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie: `npm run smoke` — 03523ce
 
 #### Manual
 
-- [x] 2.4 Treść migracji (granty kolumnowe, polityki, funkcja `approve_schedule`, kody błędów, kolejność blokad, brak kluczy do `auth.users`) została przejrzana i zatwierdzona przez autora, a wynik testu dwoma połączeniami jest zapisany w notatce
+- [x] 2.4 Treść migracji (granty kolumnowe, polityki, funkcja `approve_schedule`, kody błędów, kolejność blokad, brak kluczy do `auth.users`) została przejrzana i zatwierdzona przez autora, a wynik testu dwoma połączeniami jest zapisany w notatce — 03523ce
 
 ### Phase 3: Dane i trasa zatwierdzania
 
 #### Automated
 
-- [ ] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 3.2 Smoke z krokami trasy zatwierdzania i blokady tras przechodzi lokalnie: `npm run smoke`
+- [x] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 3.2 Smoke z krokami trasy zatwierdzania i blokady tras przechodzi lokalnie: `npm run smoke`
 
 #### Manual
 
-- [ ] 3.3 Kolejność sprawdzeń w trasie zatwierdzania, kody odpowiedzi i mapowanie błędów bazy zostały przejrzane i zatwierdzone przez autora
+- [x] 3.3 Kolejność sprawdzeń w trasie zatwierdzania, kody odpowiedzi i mapowanie błędów bazy zostały przejrzane i zatwierdzone przez autora
 
 ### Phase 4: Interfejs zatwierdzania i tryb tylko do odczytu
 

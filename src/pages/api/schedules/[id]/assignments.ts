@@ -42,6 +42,10 @@ async function handle(context: APIContext, write: WriteAssignment): Promise<Resp
   if (result.ok) {
     return jsonResponse(200, { ok: true });
   }
+  // An approved schedule is final (S-08); nothing was written.
+  if (result.error === "schedule_approved") {
+    return jsonResponse(409, { error: "schedule_approved" });
+  }
   // The cell has no staffing any more, or the person is not in the roster of the schedule (or the schedule does not exist),
   // so the body no longer fits the data.
   if (result.error === "unknown_reference") {

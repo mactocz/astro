@@ -1,5 +1,6 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
-import { isUuid, logDatabaseError } from "@/lib/postgrest";
+import { assertExactCount, isUuid, logDatabaseError } from "@/lib/postgrest";
+import { isScheduleApproved } from "@/lib/schedules";
 import { sortAssignments } from "@/lib/services/assignment";
 import type { Assignment, AssignmentInput, AssignmentSource } from "@/types";
 
@@ -17,6 +18,8 @@ const READ_LIMIT = 1000;
 // A cell without staffing or a person outside the roster of the schedule is the only foreign key an add can break, and a
 // schedule that does not exist breaks both.
 const FOREIGN_KEY_VIOLATION = "23503";
+// A policy turned the row down: for a planner that is an approved schedule (S-08).
+const PERMISSION_DENIED = "42501";
 
 interface AssignmentRow {
   shift_id: string;
@@ -26,8 +29,8 @@ interface AssignmentRow {
 }
 
 type WriteResult<Failure extends string> = { ok: true } | { ok: false; error: Failure };
-export type AddAssignmentResult = WriteResult<"unknown_reference" | "failed">;
-export type RemoveAssignmentResult = WriteResult<"failed">;
+export type AddAssignmentResult = WriteResult<"unknown_reference" | "schedule_approved" | "failed">;
+export type RemoveAssignmentResult = WriteResult<"schedule_approved" | "failed">;
 
 function toAssignments(data: unknown): Assignment[] {
   return (data as AssignmentRow[]).map((row) => ({
@@ -50,18 +53,22 @@ function writeFailure(action: string, error: PostgrestError): { ok: false; error
 
 /**
  * Every assignment of the schedule that the session may see, ordered by `sortAssignments`; an empty list for an id that is
- * not a UUID (no query is made). Throws when the database fails, and when the answer is as long as the read limit of 1000
- * rows, because it may then be cut off.
+ * not a UUID (no query is made). Throws when the database fails, when the answer is shorter than the exact count the
+ * database gives with it, and when it is as long as the read limit of 1000 rows, because it may then be cut off.
  */
 export async function listAssignments(supabase: SupabaseClient, scheduleId: string): Promise<Assignment[]> {
   if (!isUuid(scheduleId)) {
     return [];
   }
-  const { data, error } = await supabase.from(TABLE).select(COLUMNS).eq("schedule_id", scheduleId);
+  const { data, error, count } = await supabase
+    .from(TABLE)
+    .select(COLUMNS, { count: "exact" })
+    .eq("schedule_id", scheduleId);
   if (error) {
     throw readFailure("list", error);
   }
   const assignments = toAssignments(data);
+  assertExactCount("assignments", assignments.length, count, "list");
   if (assignments.length >= READ_LIMIT) {
     throw new Error(`Reading assignments failed (list): the answer reached the read limit of ${READ_LIMIT} rows.`);
   }
@@ -90,7 +97,7 @@ export async function countAssignments(supabase: SupabaseClient, scheduleId: str
  * Puts the employee on the shift on that day of the schedule (the input is already validated and normalised). Adding what
  * is already there is not an error and changes nothing. The entry is a manual one: `source` is not sent, the column
  * defaults to `manual`. `unknown_reference` when the cell has no staffing (any more), the person is not in the roster of
- * the schedule or the schedule does not exist.
+ * the schedule or the schedule does not exist; `schedule_approved` when the schedule is approved and so locked.
  */
 export async function addAssignment(
   supabase: SupabaseClient,
@@ -109,31 +116,41 @@ export async function addAssignment(
     { onConflict: KEY_COLUMNS, ignoreDuplicates: true },
   );
   if (error) {
-    return error.code === FOREIGN_KEY_VIOLATION
-      ? { ok: false, error: "unknown_reference" }
-      : writeFailure("add", error);
+    if (error.code === FOREIGN_KEY_VIOLATION) {
+      return { ok: false, error: "unknown_reference" };
+    }
+    if (error.code === PERMISSION_DENIED && (await isScheduleApproved(supabase, scheduleId))) {
+      return { ok: false, error: "schedule_approved" };
+    }
+    return writeFailure("add", error);
   }
   return { ok: true };
 }
 
 /**
  * Takes the employee off the shift on that day of the schedule, by the whole key. Removing what is not there is not an
- * error.
+ * error; `schedule_approved` when the schedule is approved and so locked.
  */
 export async function removeAssignment(
   supabase: SupabaseClient,
   scheduleId: string,
   input: AssignmentInput,
 ): Promise<RemoveAssignmentResult> {
-  const { error } = await supabase
+  // The deleted rows come back: the policy of an approved schedule turns a delete into a no-op without an error, so no
+  // row means either that there was nothing to remove or that the schedule is locked.
+  const { data, error } = await supabase
     .from(TABLE)
     .delete()
     .eq("schedule_id", scheduleId)
     .eq("shift_id", input.shiftId)
     .eq("day_offset", input.dayOffset)
-    .eq("employee_id", input.employeeId);
+    .eq("employee_id", input.employeeId)
+    .select("shift_id");
   if (error) {
     return writeFailure("remove", error);
+  }
+  if (data.length === 0 && (await isScheduleApproved(supabase, scheduleId))) {
+    return { ok: false, error: "schedule_approved" };
   }
   return { ok: true };
 }

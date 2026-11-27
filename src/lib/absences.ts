@@ -1,5 +1,5 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
-import { isUuid, logDatabaseError } from "@/lib/postgrest";
+import { assertExactCount, isUuid, logDatabaseError } from "@/lib/postgrest";
 import { sortAbsences } from "@/lib/services/absence";
 import type { Absence, AbsenceInput, AbsenceStatus, AbsenceType } from "@/types";
 
@@ -85,22 +85,9 @@ function toSortedAbsences(absences: Absence[], action: string): Absence[] {
   return sortAbsences(absences);
 }
 
-/**
- * Refuses an answer that is shorter than the exact number of rows the database counted for the same request, because the
- * server cut it off (its `max_rows`, which the hosted project sets on its own) and whoever judges the absences would judge
- * an incomplete set. `exactCount` is the `count` of a request made with `{ count: "exact" }`; it is `null` when the database
- * gave none, and then nothing shows the answer to be complete, so that is refused too. A count below the number of rows is not
- * a cut-off answer (rows came in between the two readings), so it is let through. Throws an `Error` that names `action`.
- */
+/** `assertExactCount` for a read of absences: throws when the answer is not complete. */
 export function assertCompleteRead(rowCount: number, exactCount: number | null, action: string): void {
-  if (exactCount === null) {
-    throw new Error(
-      `Reading absences failed (${action}): the database gave no exact count to check the answer against.`,
-    );
-  }
-  if (rowCount < exactCount) {
-    throw new Error(`Reading absences failed (${action}): the answer has ${rowCount} of ${exactCount} rows.`);
-  }
+  assertExactCount("absences", rowCount, exactCount, action);
 }
 
 /**

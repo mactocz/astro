@@ -1,7 +1,7 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { isUuid, logDatabaseError } from "@/lib/postgrest";
 import { classifySaveFailure, compareCells, compareText, sortSchedules } from "@/lib/services/schedule";
-import type { Schedule, ScheduleInput, ScheduleSummary } from "@/types";
+import type { Schedule, ScheduleInput, ScheduleStatus, ScheduleSummary } from "@/types";
 
 // The only module that knows the table and column names of a schedule. Every function runs on the client it is given,
 // i.e. on the signed-in user's session, so row-level security decides what is visible and writable. The list reads the
@@ -9,9 +9,10 @@ import type { Schedule, ScheduleInput, ScheduleSummary } from "@/types";
 // schedule with the number of its employees and the sum of its required counts already worked out by the database. It is
 // read newest first and cut at SCHEDULE_LIST_LIMIT rows, so a long list never reaches the response limit of PostgREST,
 // which would drop rows without a word.
-const LIST_SELECT = "id, start_date, label, created_at, employee_count, total_required";
+const LIST_SELECT = "id, start_date, label, created_at, employee_count, total_required, status, approved_at";
+// An approval is one row at most (its key is the schedule), so PostgREST embeds it as an object, or null for a draft.
 const DETAIL_SELECT =
-  "id, start_date, label, created_at, schedule_staffing(shift_id, day_offset, required_count), schedule_employees(employee_id)";
+  "id, start_date, label, created_at, status, schedule_approvals(approved_at), schedule_staffing(shift_id, day_offset, required_count), schedule_employees(employee_id)";
 
 /** The most schedules the list shows; older ones are left out and the page says so. */
 export const SCHEDULE_LIST_LIMIT = 100;
@@ -23,6 +24,8 @@ interface ScheduleSummaryRow {
   created_at: string;
   employee_count: number;
   total_required: number;
+  status: ScheduleStatus;
+  approved_at: string | null;
 }
 
 interface ScheduleRow {
@@ -30,11 +33,13 @@ interface ScheduleRow {
   start_date: string;
   label: string | null;
   created_at: string;
+  status: ScheduleStatus;
+  schedule_approvals: { approved_at: string } | null;
   schedule_staffing: { shift_id: string; day_offset: number; required_count: number }[];
   schedule_employees: { employee_id: string }[];
 }
 
-type SaveFailure = "not_found" | "unknown_reference" | "failed";
+type SaveFailure = "not_found" | "unknown_reference" | "schedule_approved" | "failed";
 // removal_unconfirmed carries the number of assignments the save would have removed, so it is a variant of its own.
 interface RemovalUnconfirmed {
   ok: false;
@@ -51,6 +56,8 @@ function toSummaries(data: unknown): ScheduleSummary[] {
     createdAt: row.created_at,
     employeeCount: row.employee_count,
     totalRequired: row.total_required,
+    status: row.status,
+    approvedAt: row.approved_at,
   }));
 }
 
@@ -60,6 +67,8 @@ function toSchedules(data: unknown): Schedule[] {
     startDate: row.start_date,
     label: row.label,
     createdAt: row.created_at,
+    status: row.status,
+    approvedAt: row.schedule_approvals?.approved_at ?? null,
     staffing: row.schedule_staffing
       .map((cell) => ({ shiftId: cell.shift_id, dayOffset: cell.day_offset, requiredCount: cell.required_count }))
       .sort(compareCells),
@@ -83,6 +92,8 @@ function saveFailure(error: PostgrestError): { ok: false; error: SaveFailure } |
       return { ok: false, error: "unknown_reference" };
     case "removal_unconfirmed":
       return { ok: false, error: "removal_unconfirmed", removed: failure.removed };
+    case "schedule_approved":
+      return { ok: false, error: "schedule_approved" };
     case "failed":
       logDatabaseError("schedules", "save", error);
       return { ok: false, error: "failed" };
@@ -130,13 +141,28 @@ export async function getSchedule(supabase: SupabaseClient, id: string): Promise
 }
 
 /**
+ * True when the session sees the schedule and it is approved; false for a draft, for a missing or hidden one and for an
+ * id that is not a UUID. Tells why a write was refused or touched no row. Throws when the database fails.
+ */
+export async function isScheduleApproved(supabase: SupabaseClient, id: string): Promise<boolean> {
+  if (!isUuid(id)) {
+    return false;
+  }
+  const response = await supabase.from("schedules").select("id").eq("id", id).eq("status", "approved");
+  if (response.error) {
+    throw readFailure("status", response.error);
+  }
+  return response.data.length > 0;
+}
+
+/**
  * Stores a schedule (the input is already validated and normalised) in one transaction through the `save_schedule`
  * function: a new one for an `id` of null, otherwise it changes the date and the label of that schedule and brings its
  * grid and its employees to the input, keeping the assignments of every cell and person that stays. `not_found` when no
  * schedule is visible with this id (missing, or hidden by RLS); `unknown_reference` when a shift or an employee of the
  * input does not exist; `removal_unconfirmed`, with the number of assignments concerned, when the save would remove a cell
  * or a person that has assignments and `confirmRemoval` is not true (it is meant for the second attempt, after the planner
- * was told that number). Either way nothing is stored.
+ * was told that number); `schedule_approved` when the schedule is approved and so locked. Either way nothing is stored.
  */
 export async function saveSchedule(
   supabase: SupabaseClient,

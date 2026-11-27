@@ -67,6 +67,9 @@ export interface Schedule extends ScheduleInput {
   id: string;
   /** ISO timestamp set by the database. */
   createdAt: string;
+  status: ScheduleStatus;
+  /** ISO timestamp of the approval, or null for a draft. */
+  approvedAt: string | null;
 }
 
 /** One row of the schedule list. */
@@ -79,6 +82,9 @@ export interface ScheduleSummary {
   employeeCount: number;
   /** The sum of the required counts over the whole grid. */
   totalRequired: number;
+  status: ScheduleStatus;
+  /** ISO timestamp of the approval, or null for a draft. */
+  approvedAt: string | null;
 }
 
 export type ScheduleField = "startDate" | "label" | "staffing" | "employeeIds";
