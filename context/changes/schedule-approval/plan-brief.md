@@ -1,5 +1,7 @@
 # Schedule approval — Plan Brief
 
+> Przegląd planu: `reviews/plan-review.md` (2026-11-27, werdykt REVISE).
+
 > Full plan: `context/changes/schedule-approval/plan.md`
 
 ## What & Why
