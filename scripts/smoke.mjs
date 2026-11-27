@@ -1058,8 +1058,17 @@ const emptyScheduleStartDate = "2026-11-09";
 let emptyScheduleId;
 // The labels that the refused writes to the view carry: a write that went through would leave a schedule under them.
 const summaryWriteLabel = `Smoke-${runId}-view`;
-const SUMMARY_COLUMNS = ["created_at", "employee_count", "id", "label", "start_date", "total_required"];
-// Exactly one row for the schedule, with exactly the six columns of the view; the counts are numbers, compared strictly.
+const SUMMARY_COLUMNS = [
+  "approved_at",
+  "created_at",
+  "employee_count",
+  "id",
+  "label",
+  "start_date",
+  "status",
+  "total_required",
+];
+// Exactly one row for a draft, with exactly the eight columns of the view; the counts are numbers, compared strictly.
 const isScheduleSummary = (id, expected) => (rows) =>
   Array.isArray(rows) &&
   rows.length === 1 &&
@@ -1069,7 +1078,9 @@ const isScheduleSummary = (id, expected) => (rows) =>
   rows[0].start_date === expected().startDate &&
   rows[0].label === expected().label &&
   rows[0].employee_count === expected().employeeCount &&
-  rows[0].total_required === expected().totalRequired;
+  rows[0].total_required === expected().totalRequired &&
+  rows[0].status === "draft" &&
+  rows[0].approved_at === null;
 // The rows of a read ordered newest first (start date, then creation time, both descending), cut at `limit`: exactly that
 // many rows (the steps that use it know that more schedules exist), each not newer than the one before it.
 const isNewestFirst = (limit) => (rows) =>
@@ -1092,7 +1103,7 @@ const plannerReadsSummary = (name, id, expected, what) => [
   {
     status: 200,
     check: isScheduleSummary(id, expected),
-    describe: `one row with the six columns of the view, for ${what}`,
+    describe: `one row with the eight columns of the view, for ${what}`,
   },
 ];
 
@@ -5239,6 +5250,438 @@ const absencePageSteps = [
   ...absStateSteps(visitAbsHolidayPage, absHolidayStates[1]),
 ];
 
+// Schedule approval (S-08) in the database. A schedule, a shift and an employee of its own (all under the "Smoke-" prefix
+// the cleanup deletes by): one cell for two people on Monday 2 November 2026 with one person on it, and a vacation on the
+// day after the seven (the edge of the window the approval reads). The steps call approve_schedule the way the app does,
+// first with every kind of refusal (the cause is asserted: status, code and message), then successfully, and afterwards try
+// every write to the approved schedule, edit the dictionary to prove the snapshot, and let the cleanup prove the cascade.
+const APPROVAL_TABLES = ["schedule_approvals", "schedule_approval_shifts", "schedule_approval_employees"];
+const approvalLabel = `Smoke-${runId}-approval`;
+let approvalEmployeeId;
+let approvalShiftId;
+let approvalScheduleId;
+let approvalTime;
+const approvalChildren = () => `?schedule_id=eq.${approvalScheduleId}`;
+const approvalEmployee = {
+  first_name: "Smoke",
+  last_name: approvalLabel,
+  email: `smoke-${runId}-approval@example.com`,
+  fte_numerator: 1,
+  fte_denominator: 1,
+};
+const approvalShift = { name: approvalLabel, start_minute: 360, end_minute: 840 };
+const approvalState = () => ({
+  startDate: "2026-11-02",
+  label: approvalLabel,
+  staffing: [{ shiftId: approvalShiftId, dayOffset: 0, requiredCount: 2 }],
+  employeeIds: [approvalEmployeeId],
+});
+const approvalAssignment = (dayOffset = 0) => ({
+  schedule_id: approvalScheduleId,
+  shift_id: approvalShiftId,
+  day_offset: dayOffset,
+  employee_id: approvalEmployeeId,
+});
+const approvalAbsence = () => ({
+  employeeId: approvalEmployeeId,
+  type: "vacation",
+  status: "approved",
+  startDate: "2026-11-09",
+  endDate: "2026-11-09",
+});
+const approvalPerson = () => ({
+  id: approvalEmployeeId,
+  name: `${approvalLabel} Smoke`,
+  fte: { numerator: 1, denominator: 1 },
+});
+const approvalShiftInput = () => ({ id: approvalShiftId, name: approvalLabel, startMinute: 360, endMinute: 840 });
+const approvalInputs = () => ({
+  startDate: "2026-11-02",
+  staffing: approvalState().staffing,
+  employeeIds: [approvalEmployeeId],
+  assignments: [{ shiftId: approvalShiftId, dayOffset: 0, employeeId: approvalEmployeeId }],
+  shifts: [approvalShiftInput()],
+  employees: [approvalPerson()],
+  absences: [approvalAbsence()],
+});
+const approvalWarning = () => ({
+  key: `understaffed|-|0:${approvalShiftId}:-`,
+  severity: "warning",
+  rule: "understaffed",
+  employeeId: null,
+  anchors: [{ shiftId: approvalShiftId, dayOffset: 0, employeeId: null }],
+  reason: "Smoke: brakuje 1 osoby",
+  actual: 1,
+  limit: 2,
+  unit: "people",
+});
+// A key that no finding has any more stays among the confirmed ones, like after a shortage that was filled.
+const approvalConfirmedKeys = () => [approvalWarning().key, "understaffed|-|gone"];
+const approvalHours = () => [{ employeeId: approvalEmployeeId, workedMinutes: 480, normMinutes: 2400 }];
+const approveArgs = (changes = {}) => ({
+  p_schedule_id: approvalScheduleId,
+  p_inputs: approvalInputs(),
+  p_violations: [approvalWarning()],
+  p_confirmed_keys: approvalConfirmedKeys(),
+  p_workload: approvalHours(),
+  ...changes,
+});
+
+const refusedWith = (status, code, message) => ({
+  status,
+  check: (error) => error?.code === code && error?.message === message,
+  describe: `an error with the code ${code} and the message ${message}`,
+});
+const scheduleChanged = refusedWith(412, "PT412", "Schedule data has changed");
+const findingsRefused = refusedWith(422, "PT422", "Findings do not allow an approval");
+const alreadyApproved = refusedWith(423, "PT423", "Schedule is approved");
+const approverRefused = refusedWith(403, "42501", "Only a planner can approve a schedule");
+
+const plannerApprovesWith = (description, changes, expected) => [
+  `${planner.label}: rpc approve_schedule ${description}`,
+  async () => rpc("approve_schedule", await accessToken(planner), approveArgs(changes())),
+  expected,
+];
+const changedInputs = (changes) => () => ({ p_inputs: { ...approvalInputs(), ...changes() } });
+
+const isApprovalRecord = (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  rows[0].schedule_id === approvalScheduleId &&
+  rows[0].approved_by === planner.id &&
+  rows[0].approved_by_email === planner.email &&
+  Date.parse(rows[0].approved_at) === Date.parse(approvalTime) &&
+  rows[0].violations.length === 1 &&
+  rows[0].violations[0].key === approvalWarning().key &&
+  rows[0].violations[0].reason === approvalWarning().reason &&
+  sameItems(rows[0].confirmed_keys, approvalConfirmedKeys()) &&
+  rows[0].critical_count === 0 &&
+  rows[0].warning_count === 1;
+const isSnapshotShifts = (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  rows[0].shift_id === approvalShiftId &&
+  hasColumns(rows[0], approvalShift);
+const isSnapshotEmployees = (rows) =>
+  Array.isArray(rows) &&
+  rows.length === 1 &&
+  hasColumns(rows[0], {
+    employee_id: approvalEmployeeId,
+    display_name: `${approvalLabel} Smoke`,
+    fte_numerator: 1,
+    fte_denominator: 1,
+    worked_minutes: 480,
+    norm_minutes: 2400,
+  });
+const plannerReadsApproval = (when) =>
+  [
+    ["schedule_approvals", isApprovalRecord, "one record with the findings, the keys, the counts and the approver"],
+    ["schedule_approval_shifts", isSnapshotShifts, "the shift as it was approved"],
+    ["schedule_approval_employees", isSnapshotEmployees, "the person as approved, with the hours"],
+  ].map(([table, check, describe]) => [
+    `${planner.label}: ${table} read ${when}`,
+    async () => restTable(table, "GET", { token: await accessToken(planner), query: approvalChildren() }),
+    { status: 200, check, describe },
+  ]);
+
+// The writes to an approved schedule. The policies hide its rows from an update or a delete (an empty list) and turn down
+// an insert.
+const plannerChangesNoApprovedRow = (table, method, query, body) => [
+  `${planner.label}: ${table} ${method} on the approved schedule touches no row`,
+  async () =>
+    restTable(table, method, {
+      token: await accessToken(planner),
+      query: query(),
+      body: body?.(),
+      prefer: asksForChangedRows,
+    }),
+  rowsHidden,
+];
+const plannerInsertIsTurnedDown = (table, body) => [
+  `${planner.label}: ${table} insert into the approved schedule is rejected`,
+  async () => restTable(table, "POST", { token: await accessToken(planner), body: body() }),
+  policyTurnsDown(table),
+];
+
+const plannerInsertsKeepingId = (what, table, body, keepId) => [
+  `${planner.label}: ${table} insert of ${what}`,
+  async () => {
+    const result = await restTable(table, "POST", {
+      token: await accessToken(planner),
+      body: body(),
+      prefer: "return=representation",
+    });
+    keepId(parseJson(result.body)?.[0]?.id);
+    return result;
+  },
+  { status: 201 },
+];
+
+const approvalDatabaseSteps = [
+  plannerInsertsKeepingId(
+    "the employee of the approval steps",
+    "employees",
+    () => approvalEmployee,
+    (id) => (approvalEmployeeId = id),
+  ),
+  plannerInsertsKeepingId(
+    "the shift of the approval steps",
+    "shifts",
+    () => approvalShift,
+    (id) => (approvalShiftId = id),
+  ),
+  [
+    `${planner.label}: rpc save_schedule creates the schedule of the approval steps`,
+    async () => {
+      const result = await rpc("save_schedule", await accessToken(planner), saveScheduleArgs(approvalState()));
+      approvalScheduleId = parseJson(result.body);
+      return result;
+    },
+    { status: 200, check: isUuidText },
+  ],
+  [
+    `${planner.label}: schedule_assignments insert of the assignment of the approval steps`,
+    async () => assignmentsTable("POST", { token: await accessToken(planner), body: approvalAssignment() }),
+    { status: 201 },
+  ],
+  [
+    `${planner.label}: absences insert of the vacation of the approval steps`,
+    async () =>
+      absencesTable("POST", {
+        token: await accessToken(planner),
+        body: { employee_id: approvalEmployeeId, type: "vacation", start_date: "2026-11-09", end_date: "2026-11-09" },
+      }),
+    { status: 201 },
+  ],
+
+  // The status is written by no session.
+  [
+    `${planner.label}: schedules update of the status is rejected`,
+    async () =>
+      schedulesTable("PATCH", {
+        token: await accessToken(planner),
+        query: `?id=eq.${approvalScheduleId}`,
+        body: { status: "approved" },
+      }),
+    tableDenied("schedules"),
+  ],
+  [
+    `${planner.label}: schedules insert with a status is rejected`,
+    async () =>
+      schedulesTable("POST", {
+        token: await accessToken(planner),
+        body: { start_date: "2026-11-02", label: `${approvalLabel}-status`, status: "approved" },
+      }),
+    tableDenied("schedules"),
+  ],
+  [
+    `${planner.label}: schedule_approvals insert is rejected`,
+    async () =>
+      restTable("schedule_approvals", "POST", {
+        token: await accessToken(planner),
+        body: {
+          schedule_id: approvalScheduleId,
+          approved_by: planner.id,
+          approved_by_email: planner.email,
+          violations: [],
+          confirmed_keys: [],
+          critical_count: 0,
+          warning_count: 0,
+        },
+      }),
+    tableDenied("schedule_approvals"),
+  ],
+
+  // Only a planner gets through the one door.
+  ...[employee, noRole].map((actor) => [
+    `${actor.label}: rpc approve_schedule is rejected`,
+    async () => rpc("approve_schedule", await accessToken(actor), approveArgs()),
+    approverRefused,
+  ]),
+  [
+    `${anonymous.label}: rpc approve_schedule is rejected`,
+    () => rpc("approve_schedule", undefined, approveArgs()),
+    anonymousFunctionDenied("approve_schedule"),
+  ],
+
+  plannerApprovesWith(
+    "of an unknown schedule is not found",
+    () => ({ p_schedule_id: unknownScheduleId }),
+    scheduleHidden,
+  ),
+  plannerApprovesWith(
+    "with another start date",
+    changedInputs(() => ({ startDate: "2026-11-03" })),
+    scheduleChanged,
+  ),
+  plannerApprovesWith(
+    "without the assignment",
+    changedInputs(() => ({ assignments: [] })),
+    scheduleChanged,
+  ),
+  plannerApprovesWith(
+    "with another required count",
+    changedInputs(() => ({ staffing: [{ ...approvalState().staffing[0], requiredCount: 1 }] })),
+    scheduleChanged,
+  ),
+  plannerApprovesWith(
+    "with nobody on the roster",
+    changedInputs(() => ({ employeeIds: [] })),
+    scheduleChanged,
+  ),
+  plannerApprovesWith(
+    "with other hours of a shift",
+    changedInputs(() => ({ shifts: [{ ...approvalShiftInput(), endMinute: 900 }] })),
+    scheduleChanged,
+  ),
+  plannerApprovesWith(
+    "with another FTE",
+    changedInputs(() => ({ employees: [{ ...approvalPerson(), fte: { numerator: 1, denominator: 2 } }] })),
+    scheduleChanged,
+  ),
+  plannerApprovesWith(
+    "without the absence on the day after the seven",
+    changedInputs(() => ({ absences: [] })),
+    scheduleChanged,
+  ),
+  plannerApprovesWith(
+    "without a list of its inputs",
+    changedInputs(() => ({ absences: undefined })),
+    refusedWith(422, "PT422", "Approval arguments are not valid"),
+  ),
+  plannerApprovesWith(
+    "with a critical finding",
+    () => ({ p_violations: [{ ...approvalWarning(), severity: "critical" }] }),
+    findingsRefused,
+  ),
+  plannerApprovesWith("with an unconfirmed warning", () => ({ p_confirmed_keys: [] }), findingsRefused),
+  plannerApprovesWith(
+    "without the hours of the roster",
+    () => ({ p_workload: [] }),
+    refusedWith(422, "PT422", "Hours do not match the roster"),
+  ),
+  plannerReadsSummary(
+    "still shows a draft after the refused approvals",
+    () => approvalScheduleId,
+    () => ({ startDate: "2026-11-02", label: approvalLabel, employeeCount: 1, totalRequired: 2 }),
+    "the schedule of the approval steps",
+  ),
+
+  [
+    `${planner.label}: rpc approve_schedule approves the schedule`,
+    async () => {
+      const result = await rpc("approve_schedule", await accessToken(planner), approveArgs());
+      approvalTime = parseJson(result.body);
+      return result;
+    },
+    {
+      status: 200,
+      check: (time) => typeof time === "string" && !Number.isNaN(Date.parse(time)),
+      describe: "the time of the approval",
+    },
+  ],
+  plannerApprovesWith("a second time is rejected", () => ({}), alreadyApproved),
+  ...plannerReadsApproval("after the approval"),
+  [
+    `${planner.label}: schedule_summaries read shows the approved schedule`,
+    async () =>
+      scheduleSummariesTable("GET", { token: await accessToken(planner), query: `?id=eq.${approvalScheduleId}` }),
+    {
+      status: 200,
+      check: (rows) =>
+        rows.length === 1 &&
+        sameItems(Object.keys(rows[0]), SUMMARY_COLUMNS) &&
+        rows[0].status === "approved" &&
+        Date.parse(rows[0].approved_at) === Date.parse(approvalTime),
+      describe: "the status approved with the time of the approval",
+    },
+  ],
+
+  // The record exists, and the findings in it can name the kind of an absence: nobody but the planner reads any of it.
+  ...APPROVAL_TABLES.flatMap((table) => [
+    ...[employee, noRole].map((actor) => [
+      `${actor.label}: ${table} read returns an empty list`,
+      async () => restTable(table, "GET", { token: await accessToken(actor), query: approvalChildren() }),
+      { status: 200, check: isEmptyList, describe: "an empty list" },
+    ]),
+    [
+      `${anonymous.label}: ${table} read is rejected`,
+      () => restTable(table, "GET", { query: approvalChildren() }),
+      anonymousTableDenied(table),
+    ],
+    [
+      `${planner.label}: ${table} delete is rejected`,
+      async () => restTable(table, "DELETE", { token: await accessToken(planner), query: approvalChildren() }),
+      tableDenied(table),
+    ],
+  ]),
+
+  // Every write to the approved schedule.
+  plannerChangesNoApprovedRow(
+    "schedules",
+    "PATCH",
+    () => `?id=eq.${approvalScheduleId}`,
+    () => ({ label: `${approvalLabel}-changed` }),
+  ),
+  plannerChangesNoApprovedRow("schedule_staffing", "PATCH", approvalChildren, () => ({ required_count: 5 })),
+  plannerChangesNoApprovedRow("schedule_assignments", "DELETE", approvalChildren),
+  plannerChangesNoApprovedRow("schedule_staffing", "DELETE", approvalChildren),
+  plannerChangesNoApprovedRow("schedule_employees", "DELETE", approvalChildren),
+  plannerInsertIsTurnedDown("schedule_staffing", () => ({
+    schedule_id: approvalScheduleId,
+    shift_id: approvalShiftId,
+    day_offset: 3,
+    required_count: 1,
+  })),
+  plannerInsertIsTurnedDown("schedule_employees", () => ({
+    schedule_id: approvalScheduleId,
+    employee_id: apiEmployeeId,
+  })),
+  plannerInsertIsTurnedDown("schedule_assignments", () => approvalAssignment(3)),
+  [
+    `${planner.label}: rpc save_schedule on the approved schedule is rejected`,
+    async () =>
+      rpc("save_schedule", await accessToken(planner), saveScheduleArgs(approvalState(), approvalScheduleId, true)),
+    alreadyApproved,
+  ],
+  ...plannerReadsSchedule(
+    "is unchanged after the writes to the approved schedule",
+    approvalState,
+    "the approved schedule, unchanged",
+    () => approvalScheduleId,
+  ),
+  [
+    `${planner.label}: schedule_assignments read still finds the assignment of the approved schedule`,
+    async () => assignmentsTable("GET", { token: await accessToken(planner), query: approvalChildren() }),
+    { status: 200, check: (rows) => rows.length === 1, describe: "one assignment" },
+  ],
+
+  // The dictionary and the roster stay editable, and the approved copy keeps what was approved.
+  [
+    `${planner.label}: shifts update of the shift of the approved schedule works`,
+    async () =>
+      shiftsTable("PATCH", {
+        token: await accessToken(planner),
+        query: `?id=eq.${approvalShiftId}`,
+        body: { name: `${approvalLabel}-edited`, start_minute: 420 },
+        prefer: asksForChangedRows,
+      }),
+    { status: 200, check: (rows) => rows.length === 1, describe: "the changed shift" },
+  ],
+  [
+    `${planner.label}: employees update of the person of the approved schedule works`,
+    async () =>
+      employeesTable("PATCH", {
+        token: await accessToken(planner),
+        query: `?id=eq.${approvalEmployeeId}`,
+        body: { last_name: `${approvalLabel}-edited`, fte_denominator: 2 },
+        prefer: asksForChangedRows,
+      }),
+    { status: 200, check: (rows) => rows.length === 1, describe: "the changed employee" },
+  ],
+  ...plannerReadsApproval("after the edits of the dictionary and the roster"),
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -8032,6 +8475,8 @@ const steps = [
   visit(employee, "/planner", 403),
   signOut(employee),
 
+  ...approvalDatabaseSteps,
+
   // Always last: removes every account and row this and earlier runs left behind (the tables have no delete grant for the
   // API, so only the service-role key can), which keeps the next run from ending in a 409 and the app's lists as they
   // were before. The schedules go first: their foreign keys to shifts and employees are on delete restrict, and deleting
@@ -8043,6 +8488,12 @@ const steps = [
     () => schedulesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?label=like.Smoke-*" }),
     { statusClass: 2 },
   ],
+  // The approved schedule had a record and a snapshot, which only the cascade from the schedule can have removed.
+  ...APPROVAL_TABLES.map((table) => [
+    `service role: no row of ${table} is left for the approved smoke schedule`,
+    () => restTable(table, "GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: approvalChildren() }),
+    { status: 200, check: isEmptyList, describe: "an empty list" },
+  ]),
   // The assignment schedule still held an assignment, which only the cascade through its cell and its person can have
   // removed.
   [

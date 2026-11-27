@@ -366,25 +366,25 @@ Planowany równolegle jest S-07 (`absence-entry`), implementowany PRZED tym wyci
 
 #### Automated
 
-- [x] 1.1 Testy czystych funkcji przechodzą w workerd: `npm test`
-- [x] 1.2 Linting przechodzi: `npm run lint`
-- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy czystych funkcji przechodzą w workerd: `npm test` — 066dc86
+- [x] 1.2 Linting przechodzi: `npm run lint` — 066dc86
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check` — 066dc86
 
 #### Manual
 
-- [x] 1.4 Kolejność sprawdzeń zatwierdzenia, kody błędów i polskie komunikaty oraz kształt ładunku weryfikacji zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Kolejność sprawdzeń zatwierdzenia, kody błędów i polskie komunikaty oraz kształt ładunku weryfikacji zostały przejrzane i zatwierdzone przez autora — 066dc86
 
 ### Phase 2: Baza: status, blokada i zatwierdzenie
 
 #### Automated
 
-- [ ] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
 - [ ] 2.2 Migracja stosuje się na świeżej bazie: `npx supabase db reset`
-- [ ] 2.3 Smoke z krokami bazy przechodzi lokalnie: `npm run smoke`
+- [x] 2.3 Smoke z krokami bazy przechodzi lokalnie: `npm run smoke`
 
 #### Manual
 
-- [ ] 2.4 Treść migracji (granty kolumnowe, polityki, funkcja `approve_schedule`, kody błędów, kolejność blokad, brak kluczy do `auth.users`) została przejrzana i zatwierdzona przez autora, a wynik testu dwoma połączeniami jest zapisany w notatce
+- [x] 2.4 Treść migracji (granty kolumnowe, polityki, funkcja `approve_schedule`, kody błędów, kolejność blokad, brak kluczy do `auth.users`) została przejrzana i zatwierdzona przez autora, a wynik testu dwoma połączeniami jest zapisany w notatce
 
 ### Phase 3: Dane i trasa zatwierdzania
 
