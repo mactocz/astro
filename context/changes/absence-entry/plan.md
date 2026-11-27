@@ -467,4 +467,4 @@ Planowany równolegle jest S-08 (`schedule-approval`), implementowany po scaleni
 
 - [x] 6.4 Migracja nieobecności została zastosowana na hostowanym projekcie (`npx supabase db push`, przed wdrożeniem kodu) — 14437e7
 - [x] 6.5 Po wdrożeniu (`npm run build` i `npx wrangler deploy`) strona `/absences` i znaczniki nieobecności w obsadzaniu działają na produkcji; nie uruchamiać `npm run smoke` na produkcji — 14437e7
-- [x] 6.6 Pomiar CPU strony obsadzania po wdrożeniu mieści się w limicie 10 ms na żądanie albo wynik jest zapisany w `deploy-plan.md` razem z decyzją
+- [x] 6.6 Pomiar CPU strony obsadzania po wdrożeniu mieści się w limicie 10 ms na żądanie albo wynik jest zapisany w `deploy-plan.md` razem z decyzją — b16046c
