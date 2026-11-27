@@ -1,9 +1,9 @@
 ---
 change_id: employee-invitation
 title: Employee invitation
-status: implementing
+status: implemented
 created: 2026-11-05
-updated: 2026-11-23
+updated: 2026-11-27
 archived_at: null
 ---
 
@@ -29,6 +29,12 @@ Open points for the author (none blocks the plan):
 - If `updateUser` fails after `verifyOtp` (for example `same_password`), the token is already spent and the session stays; the route answers 500 `password_not_saved` and does not sign the user out.
 - An unconfirmed account at the address of an employee that is not linked (for example after a failed clean-up) is not an `email_exists` case: Auth sends a new invitation and the route links it. Practically unreachable, because sign-up is closed.
 - `invited_at` is the clock of the Worker, not of Auth.
+
+### Deployment 2026-11-27: the hosted link lives 24 hours, not 7 days
+
+The hosted Supabase project does not accept `otp_expiry = 604800`; the author set the maximum it takes, 86400 (24 hours), and a minimum password length of 8. The author also confirmed the custom SMTP sender and an end-to-end invitation in production (4.7, 4.8).
+
+**Not done yet.** The code, the mail templates, `supabase/config.toml`, the PRD, the roadmap and the documentation still say 7 days (`INVITE_VALIDITY_DAYS` in `src/lib/services/invitation.ts`, `supabase/templates/{invite,recovery}.html`), so the production mail and the employee list promise a longer life than the link has. This needs a change of its own.
 
 ### Decision change 2026-11-23: the list shows an active account
 
