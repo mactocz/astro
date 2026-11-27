@@ -5618,6 +5618,22 @@ const approvalDatabaseSteps = [
       async () => restTable(table, "DELETE", { token: await accessToken(planner), query: approvalChildren() }),
       tableDenied(table),
     ],
+    [
+      `${planner.label}: ${table} update is rejected`,
+      async () =>
+        restTable(table, "PATCH", {
+          token: await accessToken(planner),
+          query: approvalChildren(),
+          body: { schedule_id: approvalScheduleId },
+        }),
+      tableDenied(table),
+    ],
+  ]),
+  ...["schedule_approval_shifts", "schedule_approval_employees"].map((table) => [
+    `${planner.label}: ${table} insert is rejected`,
+    async () =>
+      restTable(table, "POST", { token: await accessToken(planner), body: { schedule_id: approvalScheduleId } }),
+    tableDenied(table),
   ]),
 
   // Every write to the approved schedule.
@@ -5732,8 +5748,16 @@ const approveCall = (actor, what, options, expected) => [
   () => request(actor, approveRouteUrl(options.id?.()), { method: "POST", ...options.send() }),
   { contentType: "application/json", ...expected },
 ];
-const plannerApproveRoute = (what, keys, expected) =>
-  approveCall(planner, what, { send: () => ({ json: { confirmedKeys: keys() } }) }, expected);
+// What the page shows: its fingerprint (read from the approval section) and its assignments. Before the first visit of the
+// page there is no fingerprint, and the steps that run then are refused before it is compared.
+let approveRouteBasis = "";
+const approveBody = (confirmedKeys, long = false) => ({
+  confirmedKeys,
+  basis: approveRouteBasis,
+  assignments: [approveRouteAssignment(false), ...(long ? [approveRouteAssignment(true)] : [])],
+});
+const plannerApproveRoute = (what, keys, expected, long) =>
+  approveCall(planner, what, { send: () => ({ json: approveBody(keys(), long) }) }, expected);
 
 const plannerWritesRoute = (what, method, url, json, expected) => [
   `${planner.label}: ${method} ${what}`,
@@ -5776,7 +5800,13 @@ const approvalBlockedText = "Nie można zatwierdzić: lista wskazań ma krytyczn
 // The confirmation is opened by a click, so the HTML the server renders never carries it.
 const hasNoConfirmation = (html) => !html.includes("Zatwierdzenie jest ostateczne");
 
+const keepsApprovalBasis = (html) => {
+  approveRouteBasis = attributeOf(tagsOf(approvalSectionOf(html), "section")[0], "data-approval-basis") ?? "";
+  return /^[0-9a-f]{64}$/.test(approveRouteBasis);
+};
+
 const showsBlockedApproval = (html) =>
+  keepsApprovalBasis(html) &&
   textsOf(approvalSectionOf(html), "h2")[0] === "Zatwierdzanie" &&
   isDisabledElement(approveButtonOf(html), "button") &&
   textsOf(approvalSectionOf(html), "p").includes(approvalBlockedText) &&
@@ -5784,6 +5814,7 @@ const showsBlockedApproval = (html) =>
 const showsOpenApproval = (html) => {
   approveRouteGridHeaders = gridHeadersOf(html);
   return (
+    keepsApprovalBasis(html) &&
     !isDisabledElement(approveButtonOf(html), "button") &&
     !html.includes(approvalBlockedText) &&
     hasNoConfirmation(html) &&
@@ -5816,6 +5847,9 @@ const showsApprovedAssignPage = (html) =>
     JSON.stringify(approveRouteViolations.map((violation) => `Ostrzeżenie ${violation.reason}`)) &&
   !violationSectionOf(html).includes(`role="alert"`) &&
   approvedHoursOf(html) === "8 h z 40 h mniej o 32 h" &&
+  textsOf(html, "p").includes(
+    "Normy są z chwili zatwierdzenia: uwzględniają zatwierdzone wtedy nieobecności, których ten widok nie pokazuje.",
+  ) &&
   !html.includes(`aria-labelledby="approval-heading"`) &&
   !linksOf(html).some((link) => link.text === "Edytuj grafik") &&
   linksOf(html).some((link) => link.href === "/schedules" && link.text === "Lista grafików");
@@ -5890,12 +5924,27 @@ const approvalRouteSteps = [
   ),
 
   // The role gate.
-  approveCall(anonymous, "is refused", { send: () => ({ json: { confirmedKeys: [] } }) }, { status: 401 }),
+  approveCall(
+    anonymous,
+    "is refused",
+    { send: () => ({ json: approveBody([]) }) },
+    { status: 401, check: isError("unauthenticated") },
+  ),
   signIn(employee),
-  approveCall(employee, "is refused", { send: () => ({ json: { confirmedKeys: [] } }) }, { status: 403 }),
+  approveCall(
+    employee,
+    "is refused",
+    { send: () => ({ json: approveBody([]) }) },
+    { status: 403, check: isError("forbidden") },
+  ),
   signOut(employee),
   signIn(noRole),
-  approveCall(noRole, "is refused", { send: () => ({ json: { confirmedKeys: [] } }) }, { status: 403 }),
+  approveCall(
+    noRole,
+    "is refused",
+    { send: () => ({ json: approveBody([]) }) },
+    { status: 403, check: isError("forbidden") },
+  ),
   signOut(noRole),
 
   // The shape of the request.
@@ -5914,14 +5963,20 @@ const approvalRouteSteps = [
   approveCall(
     planner,
     "without a list of keys is refused",
-    { send: () => ({ json: { confirmedKeys: "all" } }) },
+    { send: () => ({ json: approveBody("all") }) },
+    { status: 422, check: answersError("invalid_body") },
+  ),
+  approveCall(
+    planner,
+    "without what the page shows is refused",
+    { send: () => ({ json: { confirmedKeys: [] } }) },
     { status: 422, check: answersError("invalid_body") },
   ),
   ...["not-a-uuid", unknownScheduleId].map((id) =>
     approveCall(
       planner,
       `of the schedule ${id} is not found`,
-      { id: () => id, send: () => ({ json: { confirmedKeys: [] } }) },
+      { id: () => id, send: () => ({ json: approveBody([]) }) },
       { status: 404, check: answersError("not_found") },
     ),
   ),
@@ -5934,11 +5989,16 @@ const approvalRouteSteps = [
   ),
 
   // A critical violation refuses, whatever is confirmed.
-  plannerApproveRoute("with a critical violation is refused", () => [longDayKey(), ...shortageKeys()], {
-    status: 409,
-    check: refusesApproval("critical_violations", () => [longDayKey()]),
-    describe: "critical_violations with exactly the long day",
-  }),
+  plannerApproveRoute(
+    "with a critical violation is refused",
+    () => [longDayKey(), ...shortageKeys()],
+    {
+      status: 409,
+      check: refusesApproval("critical_violations", () => [longDayKey()]),
+      describe: "critical_violations with exactly the long day",
+    },
+    true,
+  ),
   plannerWritesRoute(
     "/api/schedules/<id>/assignments takes the 10 h shift off",
     "DELETE",
@@ -5952,6 +6012,20 @@ const approvalRouteSteps = [
     approveRouteAssignPage,
     showsOpenApproval,
     "an enabled button, no confirmation yet and the draft notice",
+  ),
+
+  // What the page shows must still be what the database holds.
+  ...[
+    ["with a stale fingerprint", () => ({ basis: "0".repeat(64) })],
+    ["with assignments the database does not hold", () => ({ assignments: [] })],
+    ["with an assignment taken off since the page was loaded", () => approveBody(shortageKeys(), true)],
+  ].map(([what, change]) =>
+    approveCall(
+      planner,
+      `${what} is refused`,
+      { send: () => ({ json: { ...approveBody(shortageKeys()), ...change() } }) },
+      { status: 409, check: answersError("schedule_changed") },
+    ),
   ),
 
   // Warnings need every one of their keys.
@@ -5979,7 +6053,7 @@ const approvalRouteSteps = [
     async () => {
       const result = await request(planner, approveRouteUrl(), {
         method: "POST",
-        json: { confirmedKeys: shortageKeys() },
+        json: approveBody(shortageKeys()),
       });
       approveRouteTime = parseJson(result.body)?.approvedAt;
       return result;

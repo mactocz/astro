@@ -17,7 +17,7 @@ import {
 } from "@/lib/schedule-options";
 import { getSchedule } from "@/lib/schedules";
 import { absencesOfRoster } from "@/lib/services/absence";
-import { formatApprovalDay } from "@/lib/services/approval";
+import { approvalBasis, formatApprovalDay } from "@/lib/services/approval";
 import { PERIOD_DAYS, addDays, formatPeriod } from "@/lib/services/schedule";
 import { listShifts } from "@/lib/shifts";
 import type { AbsenceOption, AssignmentInput, EmployeeOption, ShiftOption } from "@/types";
@@ -39,6 +39,8 @@ let absenceOptions: AbsenceOption[] = [];
 // Set for an approved schedule: who approved it and when, and what the island shows instead of counting.
 let banner: string | null = null;
 let approved: ComponentProps<typeof AssignmentGrid>["approved"];
+// Set for a draft: the fingerprint of the data shown, which an approval sends back.
+let basis = "";
 if (schedule?.status === "approved") {
   // An approved schedule is shown from its approval (the copies of the shifts and people, the findings and the hours as
   // they were): the live dictionary, roster and absences are not read, so a later change of them changes nothing here.
@@ -72,6 +74,7 @@ if (schedule?.status === "approved") {
   absenceOptions = toAbsenceOptions(absencesOfRoster(overlapping, schedule.employeeIds));
   // The island gets plain data. `source` stays on the server: the page does not show it, and every entry made here is manual.
   assignments = stored.map(({ shiftId, dayOffset, employeeId }) => ({ shiftId, dayOffset, employeeId }));
+  basis = await approvalBasis({ schedule, shifts: shiftOptions, employees: employeeOptions, absences: absenceOptions });
 } else {
   // The project has no 404 page, so a missing schedule gets its own message with this status.
   Astro.response.status = 404;
@@ -125,6 +128,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
             assignments={assignments}
             absences={absenceOptions}
             approved={approved}
+            basis={basis}
             client:load
           />
         </div>

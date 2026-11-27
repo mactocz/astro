@@ -1,8 +1,8 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { assertExactCount, isUuid, logDatabaseError } from "@/lib/postgrest";
-import type { ApprovalPayload } from "@/lib/services/approval";
+import { toStoredViolations, type ApprovalPayload } from "@/lib/services/approval";
 import { compareText } from "@/lib/services/schedule";
-import type { ApprovalSnapshotEmployee, ApprovalSnapshotShift, ScheduleApproval, Violation } from "@/types";
+import type { ApprovalSnapshotEmployee, ApprovalSnapshotShift, ScheduleApproval } from "@/types";
 
 // The only module that knows the tables of an approval and the approve_schedule function. Every function runs on the
 // client it is given, i.e. on the signed-in user's session: the approval tables are readable by a planner only, and the
@@ -23,7 +23,7 @@ interface ApprovalRow {
   schedule_id: string;
   approved_at: string;
   approved_by_email: string;
-  violations: Violation[];
+  violations: unknown;
   confirmed_keys: string[];
   critical_count: number;
   warning_count: number;
@@ -112,7 +112,7 @@ export async function getApproval(supabase: SupabaseClient, scheduleId: string):
     scheduleId: row.schedule_id,
     approvedAt: row.approved_at,
     approvedByEmail: row.approved_by_email,
-    violations: row.violations,
+    violations: toStoredViolations(row.violations),
     confirmedKeys: row.confirmed_keys,
     criticalCount: row.critical_count,
     warningCount: row.warning_count,

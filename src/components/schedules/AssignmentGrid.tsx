@@ -1,6 +1,7 @@
 import { CalendarOff, Check, OctagonAlert, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { ServerError } from "@/components/auth/ServerError";
+import { useApproval } from "@/components/hooks/useApproval";
 import { assignmentKey, useAssignments } from "@/components/hooks/useAssignments";
 import { useViolations } from "@/components/hooks/useViolations";
 import { useWorkload, type WorkloadText } from "@/components/hooks/useWorkload";
@@ -39,6 +40,8 @@ interface Props {
    * approval instead of counting them. `shifts` and `employees` are then the copies of the approval.
    */
   approved?: { violations: Violation[]; hours: Record<string, WorkloadText> };
+  /** The fingerprint of the data of a draft as the page loaded it, which an approval sends back. */
+  basis: string;
 }
 
 // The first column stays in place while the days scroll. Its background is opaque (the card behind it is not), or the
@@ -54,6 +57,10 @@ const shiftButtonIdleClass = "border-white/20 bg-white/5 text-blue-100/80 hover:
 // What the paragraph under the people's table says about the column "Godziny", always. The same words are in the smoke test.
 const HOURS_NOTE =
   "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu (40 h pomniejszone o 8 h za każde święto w dzień inny niż niedziela i za każdy dzień zatwierdzonej nieobecności od poniedziałku do piątku, proporcjonalnie do etatu). Przekroczenie normy pokazuje lista wskazań.";
+
+// Added under the note on an approved schedule: the norms are frozen, and the absences behind them are not shown.
+const APPROVED_HOURS_NOTE =
+  "Normy są z chwili zatwierdzenia: uwzględniają zatwierdzone wtedy nieobecności, których ten widok nie pokazuje.";
 
 const cellKey = (shiftId: string, dayOffset: number): string => `${shiftId}/${dayOffset}`;
 
@@ -175,8 +182,9 @@ function PersonHours({ hours }: { hours: WorkloadText | undefined }) {
   );
 }
 
-export default function AssignmentGrid({ schedule, shifts, employees, assignments, absences, approved }: Props) {
+export default function AssignmentGrid({ schedule, shifts, employees, assignments, absences, approved, basis }: Props) {
   const readOnly = approved !== undefined;
+  const approval = useApproval(schedule.id);
   const { list, byEmployeeDay, coverage, busy, error, toggle } = useAssignments({
     scheduleId: schedule.id,
     staffing: schedule.staffing,
@@ -276,7 +284,14 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                                 // Not `disabled` while the request is in flight: the button would drop the keyboard focus. A
                                 // click in the meantime is ignored by the hook.
                                 aria-busy={inFlight ? true : undefined}
+                                // While the approval is on its way nothing changes under it; an open confirmation closes,
+                                // so it does not come back after the save and take the focus.
+                                aria-disabled={approval.pending ? true : undefined}
                                 onClick={() => {
+                                  if (approval.pending) {
+                                    return;
+                                  }
+                                  approval.cancel();
                                   void toggle(employee.id, column.offset, shift.id);
                                 }}
                                 className={cn(
@@ -313,6 +328,7 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
       </div>
 
       <p className="mt-2 text-xs text-blue-100/50">{HOURS_NOTE}</p>
+      {readOnly ? <p className="mt-1 text-xs text-blue-100/50">{APPROVED_HOURS_NOTE}</p> : null}
 
       <ViolationList violations={violations.violations} counts={violations.counts} failed={violations.failed} />
 
@@ -372,7 +388,9 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
 
       {readOnly ? null : (
         <ApprovalSection
-          scheduleId={schedule.id}
+          approval={approval}
+          basis={basis}
+          assignments={list}
           violations={violations.violations}
           failed={violations.failed}
           saving={busy.size > 0}

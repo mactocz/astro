@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   APPROVAL_MESSAGES,
+  MISSING_REASON,
+  approvalBasis,
+  readApprovalRequest,
+  sameAssignments,
+  toStoredViolations,
   buildApprovalPayload,
   decideApproval,
   formatApprovalDay,
@@ -232,5 +237,127 @@ describe("buildApprovalPayload", () => {
 
   it("reads no local time", () => {
     expect(localDateMethodsCalledBy(() => buildApprovalPayload(INPUT))).toStrictEqual([]);
+  });
+});
+
+describe("approvalBasis", () => {
+  const data = () => ({
+    schedule: {
+      startDate: "2026-11-02",
+      staffing: [{ shiftId: MORNING, dayOffset: 0, requiredCount: 1 }],
+      employeeIds: [ANNA],
+    },
+    shifts: [{ id: MORNING, name: "Rano", startMinute: 360, endMinute: 840 }],
+    employees: [{ id: ANNA, name: "Nowak Anna", fte: { numerator: 1, denominator: 1 } }],
+    absences: [],
+  });
+
+  it("is a SHA-256 in hex, the same for the same data", async () => {
+    const basis = await approvalBasis(data());
+
+    expect(basis).toMatch(/^[0-9a-f]{64}$/);
+    expect(await approvalBasis(data())).toBe(basis);
+  });
+
+  it("does not depend on shifts and people outside the schedule", async () => {
+    const wider = data();
+    wider.shifts.push({ id: UNUSED, name: "Inna", startMinute: 0, endMinute: 60 });
+    wider.employees.push({ id: OUTSIDER, name: "Obcy Jan", fte: { numerator: 1, denominator: 1 } });
+
+    expect(await approvalBasis(wider)).toBe(await approvalBasis(data()));
+  });
+
+  it("changes with the hours of a used shift, a name, an FTE and an absence", async () => {
+    const basis = await approvalBasis(data());
+    const [shift] = data().shifts;
+    const [person] = data().employees;
+    const changed = [
+      { ...data(), shifts: [{ ...shift, endMinute: 900 }] },
+      { ...data(), employees: [{ ...person, name: "Kowalska Anna" }] },
+      { ...data(), employees: [{ ...person, fte: { numerator: 1, denominator: 2 } }] },
+      {
+        ...data(),
+        absences: [
+          {
+            employeeId: ANNA,
+            type: "vacation" as const,
+            status: "approved" as const,
+            startDate: "2026-11-03",
+            endDate: "2026-11-03",
+          },
+        ],
+      },
+    ];
+
+    for (const input of changed) {
+      expect(await approvalBasis(input)).not.toBe(basis);
+    }
+  });
+});
+
+describe("sameAssignments", () => {
+  const first = { shiftId: MORNING, dayOffset: 0, employeeId: ANNA };
+  const second = { shiftId: NIGHT, dayOffset: 1, employeeId: JAN };
+
+  it("ignores the order", () => {
+    expect(sameAssignments([first, second], [second, first])).toBe(true);
+    expect(sameAssignments([], [])).toBe(true);
+  });
+
+  it("sees a missing, an extra and a different assignment", () => {
+    expect(sameAssignments([first, second], [first])).toBe(false);
+    expect(sameAssignments([first], [first, second])).toBe(false);
+    expect(sameAssignments([first], [{ ...first, dayOffset: 1 }])).toBe(false);
+  });
+});
+
+describe("readApprovalRequest", () => {
+  const assignment = { shiftId: MORNING, dayOffset: 0, employeeId: ANNA };
+  const body = { confirmedKeys: ["a"], basis: "b", assignments: [assignment] };
+
+  it("reads a whole request", () => {
+    expect(readApprovalRequest(body)).toStrictEqual(body);
+  });
+
+  it.each<[string, unknown]>([
+    ["nothing", null],
+    ["a list", [body]],
+    ["no keys", { basis: "b", assignments: [] }],
+    ["a key that is no string", { ...body, confirmedKeys: [1] }],
+    ["no basis", { confirmedKeys: [], assignments: [] }],
+    ["no assignments", { confirmedKeys: [], basis: "b" }],
+    ["a broken assignment", { ...body, assignments: [{ shiftId: MORNING }] }],
+  ])("refuses %s", (_label, input) => {
+    expect(readApprovalRequest(input)).toBeNull();
+  });
+});
+
+describe("toStoredViolations", () => {
+  it("keeps a stored finding as it is", () => {
+    const stored = { ...SHORTAGE_A, anchors: [{ shiftId: MORNING, dayOffset: 0, employeeId: null }] };
+
+    expect(toStoredViolations([stored])).toStrictEqual([stored]);
+  });
+
+  it("fills what a finding lacks instead of breaking the page", () => {
+    expect(toStoredViolations([{ key: "x", severity: "warning", anchors: "no" }])).toStrictEqual([
+      {
+        key: "x",
+        severity: "warning",
+        rule: "understaffed",
+        employeeId: null,
+        anchors: [],
+        reason: MISSING_REASON,
+        actual: 0,
+        limit: 0,
+        unit: "minutes",
+      },
+    ]);
+  });
+
+  it("leaves out what has no key or weight, a repeated key and a value that is no list", () => {
+    expect(toStoredViolations([null, 1, { severity: "warning" }, { key: "y" }])).toStrictEqual([]);
+    expect(toStoredViolations([SHORTAGE_A, SHORTAGE_A])).toStrictEqual([SHORTAGE_A]);
+    expect(toStoredViolations("no")).toStrictEqual([]);
   });
 });

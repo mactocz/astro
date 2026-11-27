@@ -1,5 +1,5 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
-import { isUuid, logDatabaseError } from "@/lib/postgrest";
+import { assertExactCount, isUuid, logDatabaseError } from "@/lib/postgrest";
 import { sortShifts } from "@/lib/services/shift";
 import type { Shift, ShiftInput } from "@/types";
 
@@ -49,10 +49,12 @@ function writeFailure(action: string, error: PostgrestError): { ok: false; error
 
 /** Every shift the session may see, ordered by `sortShifts`. Throws when the database fails. */
 export async function listShifts(supabase: SupabaseClient): Promise<Shift[]> {
-  const { data, error } = await supabase.from("shifts").select(COLUMNS);
+  const { data, error, count } = await supabase.from("shifts").select(COLUMNS, { count: "exact" });
   if (error) {
     throw readFailure("list", error);
   }
+  // A cut-off answer would leave a used shift out of the rules and make every approval fail.
+  assertExactCount("shifts", data.length, count, "list");
   return sortShifts(toShifts(data));
 }
 

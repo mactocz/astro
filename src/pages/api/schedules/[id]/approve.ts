@@ -9,7 +9,14 @@ import { isUuid } from "@/lib/postgrest";
 import { toAbsenceOptions, toEmployeeOptions } from "@/lib/schedule-options";
 import { getSchedule } from "@/lib/schedules";
 import { absencesOfRoster } from "@/lib/services/absence";
-import { buildApprovalPayload, decideApproval } from "@/lib/services/approval";
+import {
+  approvalBasis,
+  buildApprovalPayload,
+  decideApproval,
+  readApprovalRequest,
+  sameAssignments,
+  type ApprovalRequest,
+} from "@/lib/services/approval";
 import { safeEvaluate } from "@/lib/services/safe-evaluate";
 import { PERIOD_DAYS, addDays } from "@/lib/services/schedule";
 import { summarizeWorkload } from "@/lib/services/workload";
@@ -18,17 +25,10 @@ import type { Schedule } from "@/types";
 
 export const prerender = false;
 
-// The body is `{ confirmedKeys: string[] }`: the keys of the warnings the planner was shown and has confirmed.
-function readConfirmedKeys(body: unknown): string[] | null {
-  if (typeof body !== "object" || body === null) {
-    return null;
-  }
-  const keys = (body as Record<string, unknown>).confirmedKeys;
-  return Array.isArray(keys) && keys.every((key) => typeof key === "string") ? keys : null;
-}
-
 // Judges a draft from the data of the database, never from what the client counted, and approves it when the rules allow.
-async function approve(supabase: SupabaseClient, schedule: Schedule, confirmedKeys: string[]): Promise<Response> {
+// The body is `{ confirmedKeys, basis, assignments }`: the keys of the warnings the planner has confirmed and what the
+// page has on the screen, which must still be what the database holds.
+async function approve(supabase: SupabaseClient, schedule: Schedule, request: ApprovalRequest): Promise<Response> {
   // The same reads as the assignment page, so that the findings and their texts are the ones the planner saw.
   const [shifts, employees, assignments, overlapping] = await Promise.all([
     listShifts(supabase),
@@ -40,9 +40,15 @@ async function approve(supabase: SupabaseClient, schedule: Schedule, confirmedKe
   const people = toEmployeeOptions(employees).filter((employee) => roster.has(employee.id));
   const absences = toAbsenceOptions(absencesOfRoster(overlapping, schedule.employeeIds));
 
+  // A page opened before a change, or one that lost the answer to a click, shows something else than the database holds.
+  const basis = await approvalBasis({ schedule, shifts, employees: people, absences });
+  if (basis !== request.basis || !sameAssignments(assignments, request.assignments)) {
+    return jsonResponse(409, { error: "schedule_changed" });
+  }
+
   const { startDate, staffing } = schedule;
   const evaluation = safeEvaluate({ startDate, staffing, assignments, shifts, employees: people, absences });
-  const decision = decideApproval(evaluation, confirmedKeys);
+  const decision = decideApproval(evaluation, request.confirmedKeys);
   if (!decision.ok) {
     switch (decision.error) {
       case "rules_unavailable":
@@ -95,8 +101,8 @@ export const POST: APIRoute = async (context) => {
     return jsonResponse(404, { error: "not_found" });
   }
 
-  const confirmedKeys = readConfirmedKeys(parsed.body);
-  if (confirmedKeys === null) {
+  const request = readApprovalRequest(parsed.body);
+  if (request === null) {
     return jsonResponse(422, { error: "invalid_body" });
   }
 
@@ -108,7 +114,7 @@ export const POST: APIRoute = async (context) => {
     if (schedule.status === "approved") {
       return jsonResponse(409, { error: "schedule_approved" });
     }
-    return await approve(supabase, schedule, confirmedKeys);
+    return await approve(supabase, schedule, request);
   } catch (error) {
     // A read or a count that threw; the data modules have logged the database error. Nothing was approved.
     // eslint-disable-next-line no-console -- the only trace of the failure, visible in `wrangler tail`

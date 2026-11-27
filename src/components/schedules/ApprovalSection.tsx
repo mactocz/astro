@@ -1,11 +1,16 @@
 import { TriangleAlert } from "lucide-react";
 import { ServerError } from "@/components/auth/ServerError";
-import { useApproval } from "@/components/hooks/useApproval";
+import type { useApproval } from "@/components/hooks/useApproval";
 import { Button } from "@/components/ui/button";
-import type { Violation } from "@/types";
+import type { AssignmentInput, Violation } from "@/types";
 
 interface Props {
-  scheduleId: string;
+  /** The approval of this schedule; the grid holds it too, to lock itself while the request is on its way. */
+  approval: ReturnType<typeof useApproval>;
+  /** The fingerprint of the data the page loaded (`approvalBasis`). */
+  basis: string;
+  /** The assignments the grid shows. */
+  assignments: readonly AssignmentInput[];
   /** The findings of the live check, as the list above shows them. */
   violations: readonly Violation[];
   /** True when the rules could not be counted. */
@@ -15,9 +20,17 @@ interface Props {
 }
 
 // Why the schedule cannot be approved right now, or null when it can. The words are shown next to the disabled button.
-function blockedReason({ violations, failed, saving }: Omit<Props, "scheduleId">): string | null {
+function blockedReason({
+  violations,
+  failed,
+  saving,
+  stale,
+}: Pick<Props, "violations" | "failed" | "saving"> & { stale: boolean }): string | null {
   if (failed) {
     return "Nie można zatwierdzić: nie udało się policzyć wskazań. Odśwież stronę.";
+  }
+  if (stale) {
+    return "Odśwież stronę, zanim spróbujesz zatwierdzić ponownie.";
   }
   if (violations.some((violation) => violation.severity === "critical")) {
     return "Nie można zatwierdzić: lista wskazań ma krytyczne naruszenia.";
@@ -30,13 +43,13 @@ function blockedReason({ violations, failed, saving }: Omit<Props, "scheduleId">
  * approving is final. It lists the current warnings, and confirming sends their keys; the server counts the rules again
  * from the database and refuses when they differ.
  */
-export function ApprovalSection({ scheduleId, violations, failed, saving }: Props) {
-  const { open, pending, failure, ask, cancel, approve, reload } = useApproval(scheduleId);
-  const reason = blockedReason({ violations, failed, saving });
+export function ApprovalSection({ approval, basis, assignments, violations, failed, saving }: Props) {
+  const { open, pending, failure, ask, cancel, approve, reload } = approval;
+  const reason = blockedReason({ violations, failed, saving, stale: failure?.reload === true });
   const warnings = violations.filter((violation) => violation.severity === "warning");
 
   return (
-    <section aria-labelledby="approval-heading" className="mt-6">
+    <section aria-labelledby="approval-heading" className="mt-6" data-approval-basis={basis}>
       <h2 id="approval-heading" className="mb-1 text-lg font-semibold text-white">
         Zatwierdzanie
       </h2>
@@ -81,7 +94,11 @@ export function ApprovalSection({ scheduleId, violations, failed, saving }: Prop
               type="button"
               disabled={pending}
               onClick={() => {
-                void approve(warnings.map((warning) => warning.key));
+                void approve({
+                  confirmedKeys: warnings.map((warning) => warning.key),
+                  basis,
+                  assignments: [...assignments],
+                });
               }}
               className="rounded-lg bg-amber-300 px-4 py-2 font-medium text-slate-900 transition-colors hover:bg-amber-200"
             >
