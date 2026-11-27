@@ -413,8 +413,8 @@ Planowany równolegle jest S-07 (`absence-entry`), implementowany PRZED tym wyci
 
 #### Automated
 
-- [x] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 5.2 Smoke z krokami stron zatwierdzonego grafiku przechodzi lokalnie: `npm run smoke`
+- [x] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 9d1ec67
+- [x] 5.2 Smoke z krokami stron zatwierdzonego grafiku przechodzi lokalnie: `npm run smoke` — 9d1ec67
 
 ### Phase 6: Wdrożenie
 
