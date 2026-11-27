@@ -153,6 +153,26 @@ Decyzja: mediana mieści się w limicie Workers Free (10 ms) z zapasem, więc ar
 powrotu do Paid jak wyżej (pierwszy wynik inny niż `ok`, np. `exceededCpu`, albo błąd 1102). Pomiar p99 powtórzyć przy
 S-09 (generator), który doda obliczenia na tej samej ścieżce; jeśli wartości zbliżą się do 10 ms, przenieść
 obliczenia reguł z renderu serwerowego (`client:only`) osobną zmianą.
+
+### Czas CPU strony obsadzania po S-07 (2026-11-27)
+
+Na produkcję wdrożono `master` (`14437e7`: S-07, czyli nieobecności w regułach i w normie, razem z poprawkami przeglądu
+S-05 z PR #14) po `npx supabase db push` migracji `20261126204500_absences.sql` (stan potwierdził użytkownik; agent nie
+sprawdza produkcji, a `npm run smoke` na niej nie wolno uruchamiać). Do renderu strony `/schedules/<id>/assign` doszły
+wczytanie nieobecności grafiku, znaczniki w komórkach oraz nieobecności w regułach i w sumach godzin.
+
+Pomiar z panelu Cloudflare (Workers & Pages, `shiftly`, Metrics): mediana (p50) czasu CPU **5,41 ms** (wartość podana
+przez użytkownika), po S-05 było **4,8 ms**, czyli o około 0,6 ms więcej (około 13%). Nie zmierzono p99 ani pierwszego
+żądania w nowym izolacie, a rozmiar grafiku i to, czy użyty grafik miał nieobecności, nie zostały zapisane. Mediana z
+panelu dotyczy żądań Workera, a nie wyłącznie tej strony.
+
+Decyzja: mediana mieści się w limicie Workers Free (10 ms) z zapasem około 4,6 ms, więc architektura zostaje bez zmian;
+wyzwalacz powrotu do Paid jak wyżej (pierwszy wynik inny niż `ok`, np. `exceededCpu`, albo błąd 1102). Ryzyko dla S-08 i
+S-09: każda z tych zmian dokłada obliczenia na tej samej ścieżce (S-08 przelicza reguły na serwerze przy zatwierdzaniu i
+renderuje stronę zatwierdzonego grafiku, S-09 dokłada generator), a p99 i zimny izolat nie były nigdy zmierzone. Przy S-08
+zmierzyć p99 trasy zatwierdzania i strony obsadzania; jeśli wartości zbliżą się do 10 ms, przenieść obliczenia reguł z
+renderu serwerowego (`client:only`) osobną zmianą.
+
 ### Ustalenia poza planem
 
 - **Istnieje starszy Worker `10x-astro-starter`** (wdrożony 2026-09-01, 5 wersji, w tym 2 zmiany sekretów),
