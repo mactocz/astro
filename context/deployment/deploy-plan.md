@@ -186,9 +186,15 @@ Pomiar z panelu Cloudflare: czas CPU **7,7 ms** (wartość podana przez autora).
 dotyczy trasy zatwierdzania, strony obsadzania czy wszystkich żądań Workera, ani rozmiaru grafiku. Po S-05 mediana
 wynosiła 4,8 ms, po S-07 5,41 ms.
 
-Decyzja: wartość mieści się w limicie Workers Free (10 ms) z zapasem około 2,3 ms, więc architektura zostaje bez zmian;
-wyzwalacz powrotu do Paid jak wyżej. Zapas maleje: przed S-09 (generator) zmierzyć p50 i p99 osobno i rozstrzygnąć, czy
-obliczenia reguł przenieść z renderu serwerowego (`client:only`).
+Uzupełnienie po przeglądzie fazy 6 (wartości podane przez autora): **p50 7,19 ms**, **p99 41,55 ms**. Dotyczą żądań
+Workera, nie wyłącznie trasy zatwierdzania ani strony obsadzania; nie zapisano rozmiaru grafiku, liczby żądań w oknie
+pomiaru ani pierwszego żądania w nowym izolacie, i nie sprawdzono, czy były żądania z wynikiem `exceededCpu`.
+
+**p99 przekracza limit 10 ms planu Workers Free ponad czterokrotnie**; mediana mieści się w nim.
+
+Decyzja (potwierdzona przez autora 2026-11-27): architektura zostaje na planie Workers Free; przed S-09 (generator)
+zmierzyć p50 i p99 i rozstrzygnąć, czy obliczenia reguł przenieść z renderu serwerowego (`client:only`) osobną zmianą.
+Wyzwalacz powrotu do Paid jak wyżej (pierwszy wynik inny niż `ok`, np. `exceededCpu`, albo błąd 1102).
 
 ### Ustalenia poza planem
 
