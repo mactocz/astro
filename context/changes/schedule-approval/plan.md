@@ -379,7 +379,7 @@ Planowany równolegle jest S-07 (`absence-entry`), implementowany PRZED tym wyci
 #### Automated
 
 - [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 03523ce
-- [ ] 2.2 Migracja stosuje się na świeżej bazie: `npx supabase db reset`
+- [x] 2.2 Migracja stosuje się na świeżej bazie: `npx supabase db reset` — 9d1ec67
 - [x] 2.3 Smoke z krokami bazy przechodzi lokalnie: `npm run smoke` — 03523ce
 
 #### Manual
@@ -420,9 +420,9 @@ Planowany równolegle jest S-07 (`absence-entry`), implementowany PRZED tym wyci
 
 #### Automated
 
-- [ ] 6.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 6.2 Smoke przechodzi lokalnie: `npm run smoke`
-- [ ] 6.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
+- [x] 6.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 9d1ec67
+- [x] 6.2 Smoke przechodzi lokalnie: `npm run smoke` — 9d1ec67
+- [x] 6.3 CI na pull requeście jest zielone (job `ci` i job `smoke`) — 9d1ec67
 
 #### Manual
 
