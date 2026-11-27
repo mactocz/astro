@@ -50,7 +50,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | done |
 | S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | done |
 | S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | done        |
-| S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | in-progress |
+| S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | done |
 | S-09 | schedule-generation         | wygenerować propozycję grafiku bez nadpisywania wpisów ręcznych   | S-05, S-07, F-02 | FR-009, FR-011, US-01                         | proposed |
 | S-10 | employee-invitation         | zaprosić pracownika e-mailem; pracownik ustawia hasło z linku     | F-01, S-01    | FR-001, FR-002                                   | done |
 | S-11 | employee-own-schedule       | (pracownik) zalogować się i zobaczyć własne zmiany na telefonie   | S-10, S-08    | FR-014                                           | proposed |
@@ -216,7 +216,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Blockers:** —
 - **Unknowns:** —
 - **Risk:** Zamrożenie zatwierdzonego grafiku i zapis wskazań to zabezpieczenie PRD (naruszenie nigdy nie jest zatwierdzane po cichu); musi być gotowe, zanim pracownik cokolwiek zobaczy (S-11).
-- **Status:** in-progress
+- **Status:** done
 
 ### S-09: Generowanie propozycji grafiku
 
@@ -372,3 +372,4 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **S-07: Planista może wpisać nieobecność pracownika (urlop, L4), a grafik kolidujący z zatwierdzoną nieobecnością jest wskazany jako krytyczne naruszenie.** — Archived 2026-11-27 → `context/archive/2026-11-26-absence-entry/`. Lesson: —.
 - **S-05: Planista może zobaczyć podczas układania krytyczne naruszenia (odpoczynek dobowy, odpoczynek tygodniowy, limit 8 godzin na dobę, pułap 48 godzin w tygodniu) oraz ostrzeżenia o przekroczeniu normy tygodniowej etatu i o brakach obsady, każde z czytelnym powodem i miejscem w grafiku.** — Archived 2026-11-26 → `context/archive/2026-11-25-live-rule-violations/`. Lesson: —.
 - **S-10: Planista może zaprosić pracownika e-mailem, a pracownik może ustawić hasło z jednorazowego linku ważnego 24 godziny i się zalogować.** — Archived 2026-11-27 → `context/archive/2026-11-05-employee-invitation/`. Lesson: —.
+- **S-08: Planista może zatwierdzić grafik: krytyczne naruszenie blokuje zatwierdzenie, ostrzeżenie wymaga jawnego potwierdzenia, a zatwierdzony grafik jest zablokowany do edycji i ma zapisane wskazania.** — Archived 2026-11-27 → `context/archive/2026-11-26-schedule-approval/`. Lesson: —.
