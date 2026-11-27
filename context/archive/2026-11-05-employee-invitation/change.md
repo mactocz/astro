@@ -1,10 +1,10 @@
 ---
 change_id: employee-invitation
 title: Employee invitation
-status: impl_reviewed
+status: archived
 created: 2026-11-05
 updated: 2026-11-27
-archived_at: null
+archived_at: 2026-11-27T12:34:27Z
 ---
 
 ## Notes
