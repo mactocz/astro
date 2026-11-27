@@ -1,4 +1,5 @@
 import { useState, type SubmitEvent } from "react";
+import { APPROVAL_MESSAGES } from "@/lib/services/approval";
 import { PERIOD_DAYS, STAFFING_MAX, totalRequired, validateScheduleInput } from "@/lib/services/schedule";
 import { capLabelInput, parseCount } from "@/lib/services/schedule-form";
 import type {
@@ -101,6 +102,8 @@ function focusFirstInvalid(errors: ScheduleFieldErrors) {
 interface ErrorBody {
   errors: ScheduleFieldErrors | null;
   unknownReference: boolean;
+  /** True for a 409 `schedule_approved`: the schedule was approved in the meantime and is locked. */
+  approved: boolean;
   /** The number of assignments the save would delete, from a 409 `assignments_would_be_removed`; null for anything else. */
   removed: number | null;
 }
@@ -113,6 +116,7 @@ async function readErrorBody(response: Response): Promise<ErrorBody> {
     return {
       errors: typeof body?.errors === "object" && body.errors !== null ? body.errors : null,
       unknownReference: body?.error === "unknown_reference",
+      approved: body?.error === "schedule_approved",
       removed:
         body?.error === "assignments_would_be_removed" &&
         typeof body.removed === "number" &&
@@ -122,7 +126,7 @@ async function readErrorBody(response: Response): Promise<ErrorBody> {
           : null,
     };
   } catch {
-    return { errors: null, unknownReference: false, removed: null };
+    return { errors: null, unknownReference: false, approved: false, removed: null };
   }
 }
 
@@ -241,7 +245,7 @@ export function useScheduleForm({
         // planner, so it is a failed save like any other.
         const body = await readErrorBody(response);
         if (body.removed === null) {
-          setServerError(SAVE_ERROR);
+          setServerError(body.approved ? APPROVAL_MESSAGES.schedule_approved : SAVE_ERROR);
         } else {
           refused = { count: body.removed, value };
         }

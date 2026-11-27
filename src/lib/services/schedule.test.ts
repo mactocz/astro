@@ -910,6 +910,8 @@ describe("classifySaveFailure", () => {
     ["a removal of zero", "PT409", "0", { kind: "failed" }],
     ["a removal of a negative count", "PT409", "-2", { kind: "failed" }],
     ["a removal with details that are not a number", "PT409", "many", { kind: "failed" }],
+    ["an approved schedule", "PT423", null, { kind: "schedule_approved" }],
+    ["an approved schedule, whatever the details", "PT423", "3", { kind: "schedule_approved" }],
     ["an unknown code", "42501", "3", { kind: "failed" }],
     ["a code of PostgREST itself", "PGRST301", null, { kind: "failed" }],
     ["no code at all", undefined, undefined, { kind: "failed" }],
@@ -1080,7 +1082,16 @@ describe("validateScheduleInput repeatability", () => {
 });
 
 function summary(id: string, startDate: string, createdAt = "2026-01-01T10:00:00.000Z"): ScheduleSummary {
-  return { id, startDate, label: null, createdAt, employeeCount: 3, totalRequired: 10 };
+  return {
+    id,
+    startDate,
+    label: null,
+    createdAt,
+    employeeCount: 3,
+    totalRequired: 10,
+    status: "draft",
+    approvedAt: null,
+  };
 }
 
 const idsOf = (list: readonly { id: string }[]) => list.map((entry) => entry.id);

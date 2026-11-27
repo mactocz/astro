@@ -329,9 +329,10 @@ export function sortSchedules<T extends { id: string; startDate: string; created
 }
 
 // What `save_schedule` raises, as PostgREST reports it: PT404 for a schedule that is not there (or not visible), 23503 for
-// a foreign key violation (a shift or an employee that does not exist) and PT409 for a save that would drop assignments,
-// whose `details` holds how many.
+// a foreign key violation (a shift or an employee that does not exist), PT409 for a save that would drop assignments,
+// whose `details` holds how many, and PT423 for a schedule that is approved and so locked (S-08).
 const SAVE_NOT_FOUND = "PT404";
+const SAVE_SCHEDULE_APPROVED = "PT423";
 const SAVE_FOREIGN_KEY_VIOLATION = "23503";
 const SAVE_REMOVAL_UNCONFIRMED = "PT409";
 
@@ -348,9 +349,13 @@ export function classifySaveFailure(
   | { kind: "not_found" }
   | { kind: "unknown_reference" }
   | { kind: "removal_unconfirmed"; removed: number }
+  | { kind: "schedule_approved" }
   | { kind: "failed" } {
   if (code === SAVE_NOT_FOUND) {
     return { kind: "not_found" };
+  }
+  if (code === SAVE_SCHEDULE_APPROVED) {
+    return { kind: "schedule_approved" };
   }
   if (code === SAVE_FOREIGN_KEY_VIOLATION) {
     return { kind: "unknown_reference" };

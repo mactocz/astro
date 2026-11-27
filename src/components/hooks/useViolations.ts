@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { summarizeViolations } from "@/lib/services/rules";
-import { safeEvaluate } from "@/lib/services/safe-evaluate";
+import { safeEvaluate, type SafeEvaluation } from "@/lib/services/safe-evaluate";
 import { groupViolationsByEmployee, groupViolationsByEmployeeDay } from "@/lib/services/violation-view";
-import type { AbsenceOption, AssignmentInput, EmployeeOption, Schedule, ShiftOption } from "@/types";
+import type { AbsenceOption, AssignmentInput, EmployeeOption, Schedule, ShiftOption, Violation } from "@/types";
 
 /**
  * The violations of the live check for the current state of the assignment grid, counted again whenever the assignments
@@ -20,6 +20,8 @@ import type { AbsenceOption, AssignmentInput, EmployeeOption, Schedule, ShiftOpt
  * `failed` is true when the rules threw (a start date or an FTE they reject, which the constraints of the database keep out
  * today): then `violations` is empty, `counts` are zero and both maps are empty, and the view must say that nothing was
  * checked rather than show "no violations".
+ *
+ * `stored` are the findings saved with an approval (S-08): when given they are shown as they are and nothing is counted.
  */
 export function useViolations({
   schedule,
@@ -27,17 +29,21 @@ export function useViolations({
   employees,
   list,
   absences,
+  stored,
 }: {
   schedule: Pick<Schedule, "startDate" | "staffing">;
   shifts: readonly ShiftOption[];
   employees: readonly EmployeeOption[];
   list: readonly AssignmentInput[];
   absences: readonly AbsenceOption[];
+  stored?: readonly Violation[];
 }) {
   const { startDate, staffing } = schedule;
 
   return useMemo(() => {
-    const result = safeEvaluate({ startDate, staffing, assignments: list, shifts, employees, absences });
+    const result: SafeEvaluation = stored
+      ? { ok: true, violations: [...stored] }
+      : safeEvaluate({ startDate, staffing, assignments: list, shifts, employees, absences });
     const violations = result.ok ? result.violations : [];
     return {
       violations,
@@ -46,5 +52,5 @@ export function useViolations({
       byEmployee: groupViolationsByEmployee(violations),
       failed: !result.ok,
     };
-  }, [startDate, staffing, shifts, employees, list, absences]);
+  }, [startDate, staffing, shifts, employees, list, absences, stored]);
 }

@@ -25,6 +25,9 @@ if (!shift) {
       <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-2xl font-bold text-transparent">
         Edytuj zmianę
       </h1>
+      <p class="mb-4 text-sm text-blue-100/60">
+        Zatwierdzone grafiki zachowują własną kopię danych zmiany, więc ta edycja ich nie zmieni.
+      </p>
       <ShiftForm shift={shift} client:load />
     </div>
   ) : (

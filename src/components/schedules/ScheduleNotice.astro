@@ -2,10 +2,19 @@
 // Decision D6 (work-time-rules.md): a weekly draft must not be taken for the formal work-time schedule. Shown above the
 // schedule list and above the schedule form. The text is one string (not wrapped markup), so the page carries it on one
 // line and the smoke test can look for it.
-const NOTICE =
+const DRAFT_NOTICE =
   "To szkic grafiku tygodniowego. Nie zastępuje rozkładu czasu pracy, który zgodnie z art. 129 § 3 Kodeksu pracy obejmuje co najmniej miesiąc i powinien być przekazany pracownikowi z tygodniowym wyprzedzeniem.";
+// The variant for an approved schedule (S-08): it no longer is a draft, and the legal reservation stays.
+const APPROVED_NOTICE =
+  "Zatwierdzony grafik tygodniowy. Nie zastępuje formalnego rozkładu czasu pracy (art. 129 § 3), który obejmuje co najmniej miesiąc i jest przekazywany pracownikom z tygodniowym wyprzedzeniem.";
+
+interface Props {
+  approved?: boolean;
+}
+
+const notice = Astro.props.approved ? APPROVED_NOTICE : DRAFT_NOTICE;
 ---
 
 <div role="note" class="mb-6 rounded-xl border border-amber-300/20 bg-amber-300/10 px-4 py-3 text-sm text-amber-100/90">
-  {NOTICE}
+  {notice}
 </div>

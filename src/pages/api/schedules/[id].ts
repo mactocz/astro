@@ -43,6 +43,10 @@ export const PUT: APIRoute = async (context) => {
   if (result.error === "not_found") {
     return jsonResponse(404, { error: "not_found" });
   }
+  // An approved schedule is final (S-08); nothing was stored.
+  if (result.error === "schedule_approved") {
+    return jsonResponse(409, { error: "schedule_approved" });
+  }
   // The save would delete assignments with a cell or a person and nobody confirmed it; nothing was stored.
   if (result.error === "removal_unconfirmed") {
     return jsonResponse(409, { error: "assignments_would_be_removed", removed: result.removed });

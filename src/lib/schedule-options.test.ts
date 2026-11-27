@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { toAbsenceOptions, toEmployeeOptions, toShiftOptions, unavailableShift } from "@/lib/schedule-options";
+import {
+  snapshotEmployeeOptions,
+  snapshotHours,
+  snapshotShiftOptions,
+  toAbsenceOptions,
+  toEmployeeOptions,
+  toShiftOptions,
+  unavailableShift,
+} from "@/lib/schedule-options";
 import type { Absence, Employee, Fte, Shift } from "@/types";
 
 // An employee with everything the roster holds. The options must keep only the id, the name and the FTE: the page hands
@@ -243,5 +251,44 @@ describe("unavailableShift", () => {
 
   it("gives a new object each time", () => {
     expect(unavailableShift(ID)).not.toBe(unavailableShift(ID));
+  });
+});
+
+describe("the options of an approved schedule", () => {
+  const night = { shiftId: "a", name: "Nocna", startMinute: 1320, endMinute: 360 };
+  const morning = { shiftId: "b", name: "Poranna", startMinute: 360, endMinute: 840 };
+  const zofia = {
+    employeeId: "c",
+    displayName: "Żak Zofia",
+    fte: { numerator: 1, denominator: 2 },
+    workedMinutes: 480,
+    normMinutes: 1200,
+  };
+  const lukasz = {
+    employeeId: "d",
+    displayName: "Łoś Łukasz",
+    fte: { numerator: 1, denominator: 1 },
+    workedMinutes: 2400,
+    normMinutes: 2400,
+  };
+
+  it("gives the shifts of the copy in the order of the shift list, with the same fields as a live shift", () => {
+    expect(snapshotShiftOptions([night, morning])).toStrictEqual(
+      toShiftOptions([shift("b", "Poranna", 360, 840), shift("a", "Nocna", 1320, 360)]),
+    );
+  });
+
+  it("gives the people of the copy by name in Polish order, without the hours", () => {
+    expect(snapshotEmployeeOptions([zofia, lukasz])).toStrictEqual([
+      { id: "d", name: "Łoś Łukasz", fte: { numerator: 1, denominator: 1 } },
+      { id: "c", name: "Żak Zofia", fte: { numerator: 1, denominator: 2 } },
+    ]);
+  });
+
+  it("words the stored hours like the live column", () => {
+    expect(snapshotHours([zofia, lukasz])).toStrictEqual({
+      c: { total: "8 h z 20 h", difference: "mniej o 12 h" },
+      d: { total: "40 h z 40 h", difference: "równo z normą" },
+    });
   });
 });

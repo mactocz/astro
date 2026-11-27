@@ -17,6 +17,8 @@ export type WorkloadText = ReturnType<typeof formatWorkload>;
  * status, because exceeding the norm is the `weekly_norm` warning of the live rules. `absences` (S-07) lower the norm of their
  * person (an approved one, a day from Monday to Friday that is not a holiday), from the same data and the same days as the
  * `weekly_norm` warning, so the column and the warning never give two norms for one week.
+ *
+ * `stored` are the texts of the hours saved with an approval (S-08): when given they are returned and nothing is counted.
  */
 export function useWorkload({
   schedule,
@@ -24,16 +26,21 @@ export function useWorkload({
   employees,
   list,
   absences,
+  stored,
 }: {
   schedule: Pick<Schedule, "startDate" | "employeeIds">;
   shifts: readonly ShiftOption[];
   employees: readonly EmployeeOption[];
   list: readonly AssignmentInput[];
   absences: readonly AbsenceOption[];
+  stored?: Partial<Record<string, WorkloadText>>;
 }): Partial<Record<string, WorkloadText>> {
   const { startDate, employeeIds } = schedule;
 
   return useMemo(() => {
+    if (stored) {
+      return stored;
+    }
     const roster = new Set(employeeIds);
     try {
       const rows = summarizeWorkload({
@@ -50,5 +57,5 @@ export function useWorkload({
       // the rules could not be computed either, so the rest of the island keeps working.
       return {};
     }
-  }, [startDate, employeeIds, shifts, employees, list, absences]);
+  }, [startDate, employeeIds, shifts, employees, list, absences, stored]);
 }

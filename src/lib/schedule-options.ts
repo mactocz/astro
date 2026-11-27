@@ -1,5 +1,15 @@
-import { endsNextDay, formatDuration, formatShiftTimes, shiftDurationMinutes } from "@/lib/services/shift";
-import type { Absence, AbsenceOption, Employee, EmployeeOption, Shift, ShiftOption } from "@/types";
+import { endsNextDay, formatDuration, formatShiftTimes, shiftDurationMinutes, sortShifts } from "@/lib/services/shift";
+import { formatWorkload } from "@/lib/services/workload";
+import type {
+  Absence,
+  AbsenceOption,
+  ApprovalSnapshotEmployee,
+  ApprovalSnapshotShift,
+  Employee,
+  EmployeeOption,
+  Shift,
+  ShiftOption,
+} from "@/types";
 
 // What the schedule islands receive: plain data with the times already formatted and the minutes the work-time rules
 // count with, and for the people the name and the FTE (which those rules need), so that an e-mail address never travels
@@ -48,4 +58,50 @@ export function toAbsenceOptions(absences: readonly Absence[]): AbsenceOption[] 
  */
 export function unavailableShift(id: string): ShiftOption {
   return { id, name: "(niedostępne)", times: "", endsNextDay: false, duration: "", startMinute: 0, endMinute: 0 };
+}
+
+// An approved schedule is shown from the copy made at the approval, never from the live dictionary and roster, so a later
+// edit of a shift or of a person does not change what the page says. The three functions below give that copy the shapes
+// the island already takes.
+
+/** The shifts of an approval as options, in the order of the shift list. */
+export function snapshotShiftOptions(shifts: readonly ApprovalSnapshotShift[]): ShiftOption[] {
+  // The copy has no creation time; one fixed value for all leaves the last tie of the order to the id.
+  const createdAt = "1970-01-01T00:00:00.000Z";
+  return toShiftOptions(
+    sortShifts(
+      shifts.map(({ shiftId, name, startMinute, endMinute }) => ({
+        id: shiftId,
+        name,
+        startMinute,
+        endMinute,
+        createdAt,
+      })),
+    ),
+  );
+}
+
+const nameCollator = new Intl.Collator("pl");
+
+/** The people of an approval as options, by name (Polish collation) and then by id. */
+export function snapshotEmployeeOptions(employees: readonly ApprovalSnapshotEmployee[]): EmployeeOption[] {
+  return employees
+    .map((employee) => ({
+      id: employee.employeeId,
+      name: employee.displayName,
+      fte: { numerator: employee.fte.numerator, denominator: employee.fte.denominator },
+    }))
+    .sort((a, b) => nameCollator.compare(a.name, b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/** The texts of the column "Godziny" from the hours stored at the approval, by employee id. */
+export function snapshotHours(
+  employees: readonly ApprovalSnapshotEmployee[],
+): Record<string, ReturnType<typeof formatWorkload>> {
+  return Object.fromEntries(
+    employees.map(({ employeeId, workedMinutes, normMinutes }) => [
+      employeeId,
+      formatWorkload({ employeeId, workedMinutes, normMinutes, differenceMinutes: workedMinutes - normMinutes }),
+    ]),
+  );
 }

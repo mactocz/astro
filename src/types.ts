@@ -67,6 +67,9 @@ export interface Schedule extends ScheduleInput {
   id: string;
   /** ISO timestamp set by the database. */
   createdAt: string;
+  status: ScheduleStatus;
+  /** ISO timestamp of the approval, or null for a draft. */
+  approvedAt: string | null;
 }
 
 /** One row of the schedule list. */
@@ -79,10 +82,67 @@ export interface ScheduleSummary {
   employeeCount: number;
   /** The sum of the required counts over the whole grid. */
   totalRequired: number;
+  status: ScheduleStatus;
+  /** ISO timestamp of the approval, or null for a draft. */
+  approvedAt: string | null;
 }
 
 export type ScheduleField = "startDate" | "label" | "staffing" | "employeeIds";
 export type ScheduleFieldErrors = Partial<Record<ScheduleField, string>>;
+
+/** Where a schedule stands: still editable, or approved, which is final and locks it. */
+export type ScheduleStatus = "draft" | "approved";
+
+/** A shift as it was when the schedule was approved; a later edit of the dictionary does not change it. */
+export interface ApprovalSnapshotShift {
+  shiftId: string;
+  name: string;
+  /** Minutes after midnight (0 to 1439), as in `ShiftInput`. */
+  startMinute: number;
+  /** Minutes after midnight (0 to 1439), as in `ShiftInput`; an end earlier than the start means the next day. */
+  endMinute: number;
+}
+
+/** A person of the schedule as they were when it was approved, with the hours counted then. */
+export interface ApprovalSnapshotEmployee {
+  employeeId: string;
+  /** "Last name First name", as in `EmployeeOption`. */
+  displayName: string;
+  fte: Fte;
+  workedMinutes: number;
+  normMinutes: number;
+}
+
+/** The record of an approval: who, when, the findings frozen as they were and the snapshot of shifts and people. */
+export interface ScheduleApproval {
+  scheduleId: string;
+  /** ISO timestamp set by the database. */
+  approvedAt: string;
+  approvedByEmail: string;
+  violations: Violation[];
+  confirmedKeys: string[];
+  criticalCount: number;
+  warningCount: number;
+  shifts: ApprovalSnapshotShift[];
+  employees: ApprovalSnapshotEmployee[];
+}
+
+/**
+ * The data the approval route judged. The database compares it, set by set, with the live rows under a lock, so that
+ * nothing is approved that was not checked.
+ */
+export interface ApprovalInputs {
+  startDate: string;
+  staffing: StaffingCell[];
+  employeeIds: string[];
+  assignments: AssignmentInput[];
+  /** The shifts of the staffing cells only. */
+  shifts: { id: string; name: string; startMinute: number; endMinute: number }[];
+  /** The people of the roster only. */
+  employees: EmployeeOption[];
+  /** The absences of the people of the roster, of every status. */
+  absences: AbsenceOption[];
+}
 
 /** Why an employee is away: leave, sick leave (L4) or another absence. Only whole days, and no free text (L4 is health data). */
 export type AbsenceType = "vacation" | "sick_leave" | "other";
