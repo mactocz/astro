@@ -426,6 +426,6 @@ Planowany równolegle jest S-07 (`absence-entry`), implementowany PRZED tym wyci
 
 #### Manual
 
-- [ ] 6.4 Migracja zatwierdzania została zastosowana na hostowanym projekcie (`npx supabase db push`, przed wdrożeniem kodu)
-- [ ] 6.5 Po wdrożeniu (`npm run build` i `npx wrangler deploy`) zatwierdzenie grafiku testowego i tryb tylko do odczytu działają na produkcji (zatwierdzenie jest nieodwracalne, więc użyć grafiku testowego, którego nie da się później usunąć); nie uruchamiać `npm run smoke` na produkcji
-- [ ] 6.6 Pomiar CPU trasy zatwierdzania i strony obsadzania po wdrożeniu mieści się w limicie 10 ms na żądanie albo wynik jest zapisany w `deploy-plan.md` razem z decyzją
+- [x] 6.4 Migracja zatwierdzania została zastosowana na hostowanym projekcie (`npx supabase db push`, przed wdrożeniem kodu)
+- [x] 6.5 Po wdrożeniu (`npm run build` i `npx wrangler deploy`) zatwierdzenie grafiku testowego i tryb tylko do odczytu działają na produkcji (zatwierdzenie jest nieodwracalne, więc użyć grafiku testowego, którego nie da się później usunąć); nie uruchamiać `npm run smoke` na produkcji
+- [x] 6.6 Pomiar CPU trasy zatwierdzania i strony obsadzania po wdrożeniu mieści się w limicie 10 ms na żądanie albo wynik jest zapisany w `deploy-plan.md` razem z decyzją

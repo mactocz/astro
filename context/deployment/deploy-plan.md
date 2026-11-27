@@ -175,6 +175,21 @@ renderuje stronę zatwierdzonego grafiku, S-09 dokłada generator), a p99 i zimn
 zmierzyć p99 trasy zatwierdzania i strony obsadzania; jeśli wartości zbliżą się do 10 ms, przenieść obliczenia reguł z
 renderu serwerowego (`client:only`) osobną zmianą.
 
+### Czas CPU po S-08 (2026-11-27)
+
+Na produkcję wdrożono `master` (`bca10f0`: S-08 razem z poprawkami przeglądów S-10 z PR #18 i S-08 z PR #19) po
+`npx supabase db push` migracji `20261127084657_schedule_approval.sql` i `20261127130000_employee_account_email_lock.sql`.
+Autor potwierdził (2026-11-27), że zatwierdzenie grafiku testowego i tryb tylko do odczytu działają na produkcji, a
+zatwierdzenie z nieaktualnej karty jest odrzucane.
+
+Pomiar z panelu Cloudflare: czas CPU **7,7 ms** (wartość podana przez autora). Nie zapisano, który to percentyl, czy
+dotyczy trasy zatwierdzania, strony obsadzania czy wszystkich żądań Workera, ani rozmiaru grafiku. Po S-05 mediana
+wynosiła 4,8 ms, po S-07 5,41 ms.
+
+Decyzja: wartość mieści się w limicie Workers Free (10 ms) z zapasem około 2,3 ms, więc architektura zostaje bez zmian;
+wyzwalacz powrotu do Paid jak wyżej. Zapas maleje: przed S-09 (generator) zmierzyć p50 i p99 osobno i rozstrzygnąć, czy
+obliczenia reguł przenieść z renderu serwerowego (`client:only`).
+
 ### Ustalenia poza planem
 
 - **Istnieje starszy Worker `10x-astro-starter`** (wdrożony 2026-09-01, 5 wersji, w tym 2 zmiany sekretów),
