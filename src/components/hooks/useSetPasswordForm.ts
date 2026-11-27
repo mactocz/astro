@@ -9,6 +9,7 @@ export type SetPasswordFieldErrors = Partial<Record<SetPasswordField, string>>;
 const INVALID_LINK_ERROR = "Link wygasł lub został już użyty. Poproś planistę o nowe zaproszenie.";
 const NOT_SAVED_ERROR = "Nie udało się zapisać hasła, a link został już zużyty. Poproś planistę o nowe zaproszenie.";
 const SAVE_ERROR = "Nie udało się ustawić hasła. Spróbuj ponownie.";
+const TRY_AGAIN_ERROR = "Nie udało się teraz sprawdzić linku. Spróbuj ponownie za kilka minut.";
 const MISMATCH_ERROR = "Hasła nie są takie same.";
 
 const FIELD_ORDER: readonly SetPasswordField[] = ["password", "passwordRepeat"];
@@ -87,8 +88,10 @@ export function useSetPasswordForm({ tokenHash, type }: { tokenHash: string; typ
         focusFirstInvalid(errors);
       } else if (answer?.error === "invalid_link") {
         setServerError(INVALID_LINK_ERROR);
-      } else if (answer?.error === "password_not_saved") {
+      } else if (answer?.error === "password_not_saved" || answer?.error === "same_password") {
         setServerError(typeof answer.message === "string" ? answer.message : NOT_SAVED_ERROR);
+      } else if (answer?.error === "try_again") {
+        setServerError(TRY_AGAIN_ERROR);
       } else {
         setServerError(SAVE_ERROR);
       }

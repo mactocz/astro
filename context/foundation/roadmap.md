@@ -233,7 +233,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 
 ### S-10: Zaproszenie pracownika
 
-- **Outcome:** Planista może zaprosić pracownika e-mailem, a pracownik może ustawić hasło z jednorazowego linku ważnego 7 dni i się zalogować.
+- **Outcome:** Planista może zaprosić pracownika e-mailem, a pracownik może ustawić hasło z jednorazowego linku ważnego 24 godziny i się zalogować.
 - **Change ID:** employee-invitation
 - **PRD refs:** FR-001, FR-002
 - **Prerequisites:** F-01, S-01

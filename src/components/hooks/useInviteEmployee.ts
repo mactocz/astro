@@ -7,7 +7,16 @@ const INVITE_ERROR = "Nie udało się wysłać zaproszenia. Spróbuj ponownie.";
 // The error codes of POST /api/employees/<id>/invite that the planner can act on.
 const ERROR_MESSAGES: ReadonlyMap<string, string> = new Map([
   ["account_exists", "Na ten adres istnieje już konto spoza Shiftly"],
+  [
+    "account_mismatch",
+    "Konto pracownika ma inny adres e-mail niż ten zapisany. Wyjaśnij to w panelu Supabase przed wysłaniem.",
+  ],
   ["mail_failed", "Nie udało się wysłać maila; sprawdź konfigurację poczty"],
+  ["rate_limited", "Wysłano zbyt wiele wiadomości w krótkim czasie. Spróbuj ponownie za kilka minut."],
+  [
+    "sent_not_recorded",
+    "Wiadomość została wysłana, ale nie udało się zapisać daty. Nie wysyłaj ponownie: poprzedni link przestałby działać.",
+  ],
   ["no_email", "Pracownik nie ma adresu e-mail. Dodaj go w edycji pracownika."],
   ["not_configured", "Zaproszenia nie są skonfigurowane na serwerze."],
   ["not_found", "Nie znaleziono pracownika. Odśwież stronę."],

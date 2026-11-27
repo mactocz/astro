@@ -112,7 +112,7 @@ Osoba główna: kierownik zespołu w małej lub średniej firmie z pracą zmiano
 ## Non-Functional Requirements
 
 - System nie przyjmuje haseł krótszych niż 8 znaków ani takich, które nie zawierają znaku specjalnego, cyfry i dużej litery.
-- Link z zaproszenia można użyć jeden raz i wygasa po 7 dniach.
+- Link z zaproszenia można użyć jeden raz i wygasa po 24 godzinach.
 - Pracownik widzi wyłącznie własne dane (zmiany, nieobecności, wnioski); dane innych osób są dla niego niedostępne.
 - Po zmianie grafiku wynik kontroli reguł jest widoczny dla planisty w czasie < 3 s (dla grafiku tygodniowego małego zespołu).
 - Grafik pracownika jest czytelny i możliwy do przeglądania na ekranie telefonu (responsywność).

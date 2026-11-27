@@ -10,6 +10,8 @@ const COLUMNS =
   "id, first_name, last_name, email, fte_numerator, fte_denominator, created_at, user_id, invited_at, activated_at";
 // The e-mail is the only unique column besides the primary key, so this code always means a taken address.
 const UNIQUE_VIOLATION = "23505";
+// The trigger employees_keep_account_email refuses a new e-mail for an employee with an account.
+const EMAIL_LOCKED = "PT409";
 
 export const EMAIL_TAKEN_MESSAGE = "Ten adres e-mail jest już przypisany do innego pracownika.";
 
@@ -28,7 +30,7 @@ interface EmployeeRow {
 
 type WriteResult<Failure extends string> = { ok: true; employee: Employee } | { ok: false; error: Failure };
 export type CreateEmployeeResult = WriteResult<"email_taken" | "failed">;
-export type UpdateEmployeeResult = WriteResult<"email_taken" | "not_found" | "failed">;
+export type UpdateEmployeeResult = WriteResult<"email_taken" | "email_locked" | "not_found" | "failed">;
 
 function toEmployees(data: unknown): Employee[] {
   return (data as EmployeeRow[]).map((row) => ({
@@ -112,29 +114,46 @@ export async function updateEmployee(
   }
   const { data, error } = await supabase.from("employees").update(toRow(input)).eq("id", id).select(COLUMNS);
   if (error) {
-    return writeFailure("update", error);
+    // The route checks first; this answers an invitation that linked an account between that check and the write.
+    return error.code === EMAIL_LOCKED ? { ok: false, error: "email_locked" } : writeFailure("update", error);
   }
   const employee = toEmployees(data).at(0);
   return employee ? { ok: true, employee } : { ok: false, error: "not_found" };
 }
 
+/** The id of the employee linked to this Auth account, or null. Throws when the database fails. */
+export async function findEmployeeIdByUserId(supabase: SupabaseClient, userId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("employees").select("id").eq("user_id", userId);
+  if (error) {
+    throw readFailure("find_by_user", error);
+  }
+  return (data as { id: string }[]).at(0)?.id ?? null;
+}
+
 /**
- * Stores the time of the latest invitation and, when given, the id of the Auth account the employee is linked to. No
- * session may write these two columns, so `admin` must be the service-role client the invitation route passes in. A new
- * link to an account also clears `activated_at`: that account has not set a password yet, and an activation left over
- * from an account that was removed in the dashboard must not carry over. False when the database fails or no row has
- * this id.
+ * Stores the time of the latest invitation and, when given, the Auth account the employee is linked to. No session may
+ * write these two columns, so `admin` must be the service-role client the invitation route passes in. A new link also
+ * clears `activated_at`: that account has not set a password yet, and an activation left over from an account that was
+ * removed in the dashboard must not carry over. A link is written only while the row still has the address the mail went
+ * to and the account it had when the route read it, so a change made in the meantime is not overwritten. False when the
+ * database fails or no such row is left.
  */
 export async function recordInvitation(
   admin: SupabaseClient,
   id: string,
-  record: { userId?: string; invitedAt: string },
+  record: { invitedAt: string; link?: { userId: string; email: string; previousUserId: string | null } },
 ): Promise<boolean> {
+  const { invitedAt, link } = record;
   const changes = {
-    invited_at: record.invitedAt,
-    ...(record.userId === undefined ? {} : { user_id: record.userId, activated_at: null }),
+    invited_at: invitedAt,
+    ...(link === undefined ? {} : { user_id: link.userId, activated_at: null }),
   };
-  const { data, error } = await admin.from("employees").update(changes).eq("id", id).select("id");
+  let query = admin.from("employees").update(changes).eq("id", id);
+  if (link !== undefined) {
+    query = query.eq("email", link.email);
+    query = link.previousUserId === null ? query.is("user_id", null) : query.eq("user_id", link.previousUserId);
+  }
+  const { data, error } = await query.select("id");
   if (error) {
     logDatabaseError("employees", "invite", error);
     return false;

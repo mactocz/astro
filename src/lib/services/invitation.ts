@@ -1,9 +1,16 @@
 import type { InviteAccountState, InviteAction, InviteStatus } from "@/types";
 
-/** How long the link in an invitation e-mail works; it matches `otp_expiry` (604800 s) in `supabase/config.toml`. */
-export const INVITE_VALIDITY_DAYS = 7;
+/**
+ * How long the link in an invitation e-mail works; it matches `otp_expiry` (86400 s) in `supabase/config.toml`, the
+ * longest life the hosted project accepts.
+ */
+export const INVITE_VALIDITY_HOURS = 24;
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+// Auth stamps both times with its own clock. For an account made by this invitation they are apart by the time it took
+// to send the mail; for an account that existed before, by its age.
+const FRESH_ACCOUNT_MS = 60 * 1000;
 
 function isSet(value: string | null | undefined): boolean {
   return typeof value === "string" && value !== "";
@@ -38,7 +45,7 @@ export function decideInviteAction(state: InviteAccountState): InviteAction {
 /**
  * The account as shown in the employee list. `no_account` without a linked account. `active` once the employee has set
  * a password from a link (a usable `activatedAt`, whatever `invitedAt` says). Otherwise the invitation: `no_account`
- * without a usable `invitedAt`, else the link is valid for `INVITE_VALIDITY_DAYS` from `invitedAt` (the end moment
+ * without a usable `invitedAt`, else the link is valid for `INVITE_VALIDITY_HOURS` from `invitedAt` (the end moment
  * itself still counts as valid). `now` is passed in, so the result depends on the arguments only. The timestamps come
  * back as UTC ISO.
  */
@@ -60,7 +67,7 @@ export function inviteStatus(
   if (Number.isNaN(invitedMs)) {
     return { kind: "no_account" };
   }
-  const validUntilMs = invitedMs + INVITE_VALIDITY_DAYS * DAY_MS;
+  const validUntilMs = invitedMs + INVITE_VALIDITY_HOURS * HOUR_MS;
   return {
     kind: "invited",
     invitedAt: new Date(invitedMs).toISOString(),
@@ -117,6 +124,42 @@ export function parseSetPasswordLink(
     return null;
   }
   return { tokenHash, type: linkType };
+}
+
+/**
+ * True when an account that Auth handed back for an invitation was made by that very invitation: nothing but such an
+ * account may be removed when a later step fails. An account that had a role before is never one, and neither is one
+ * whose times cannot be read, so a doubt always keeps the account.
+ */
+export function isFreshInvitedAccount(user: {
+  created_at?: string | null;
+  invited_at?: string | null;
+  app_metadata?: Record<string, unknown> | null;
+}): boolean {
+  if (user.app_metadata?.role !== undefined) {
+    return false;
+  }
+  const apart = Date.parse(user.invited_at ?? "") - Date.parse(user.created_at ?? "");
+  return Math.abs(apart) <= FRESH_ACCOUNT_MS;
+}
+
+/** True when the role of an account lets the invitation make it an employee account: it has none, or it is one. */
+export function mayBecomeEmployee(user: { app_metadata?: Record<string, unknown> | null }): boolean {
+  const role = user.app_metadata?.role;
+  return role === undefined || role === "employee";
+}
+
+/** What a failed `verifyOtp` says about the link: only a refusal of Auth means the link itself does not work. */
+export function classifyVerifyFailure(status: number | undefined): "invalid_link" | "rate_limited" | "unavailable" {
+  if (status === 429) {
+    return "rate_limited";
+  }
+  return status !== undefined && status >= 400 && status < 500 ? "invalid_link" : "unavailable";
+}
+
+/** True when the account behind an employee has the employee's address (compared like `emailChangeBlocked` does). */
+export function accountEmailMatches(accountEmail: string | null | undefined, employeeEmail: string): boolean {
+  return normalizeEmail(accountEmail ?? null) === normalizeEmail(employeeEmail);
 }
 
 function normalizeEmail(email: string | null): string | null {

@@ -205,7 +205,7 @@ katalogu repozytorium, z dostępem do hostowanego projektu Supabase i do konta C
 2. **[U]** Sekret Workera: `npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY`. Wartość to klucz `service_role` hostowanego
    projektu (dashboard Supabase, Settings, API); wpisuje użytkownik, nie trafia do czatu, repozytorium ani logów. Używa go
    wyłącznie `src/lib/supabase-admin.ts` w trasie `src/pages/api/employees/[id]/invite.ts`.
-3. **[U]** Ustawienia Auth hostowanego projektu: `otp_expiry` 604800 (link ważny 7 dni), minimalna długość hasła 8,
+3. **[U]** Ustawienia Auth hostowanego projektu: `otp_expiry` 86400 (link ważny 24 godziny), minimalna długość hasła 8,
    `site_url` i adresy przekierowań ustawione na adres Workera (`https://shiftly.mto-astro.workers.dev` i
    `https://shiftly.mto-astro.workers.dev/**`), szablony maili `invite` i `recovery` z `supabase/templates/` wraz z tytułami
    z `supabase/config.toml`.
@@ -214,9 +214,8 @@ katalogu repozytorium, z dostępem do hostowanego projektu Supabase i do konta C
      projektu, nazwy pól według jego dokumentacji).
    - Uwaga: lokalny `config.toml` ma `site_url` i adresy przekierowań na `http://localhost:4321`, a `config push` stosuje
      wartości z pliku, więc różnicę trzeba przejrzeć przed zatwierdzeniem, żeby nie nadpisać adresów produkcji.
-   - Uwaga: dokumentacja Supabase odradza `otp_expiry` powyżej 86400 s i dopuszcza dłuższy czas tylko przez Management API.
-     Jeśli hostowany projekt odrzuci 604800, decyzja wraca do autora (24 godziny ze zmianą wymagania w PRD albo własny
-     token).
+   - Hostowany projekt nie przyjął 604800 (7 dni); autor ustawił 86400 (2026-11-27) i wymaganie w PRD zmieniono na
+     24 godziny. Po zmianie szablonów w repozytorium trzeba je ponownie wkleić w dashboardzie, bo kod ich nie wdraża.
 4. **Bramka (przed wdrożeniem kodu S-10 na produkcję):** własny nadawca SMTP skonfigurowany w Supabase: dostawca, domena
    nadawcy i limit wysyłek podniesiony ponad domyślne 30 na godzinę (tyle Supabase ustawia po podłączeniu własnego SMTP).
    Domyślny SMTP Supabase wysyła wyłącznie do członków zespołu organizacji i ma limit 2 maile na godzinę, więc bez własnego
@@ -230,6 +229,14 @@ katalogu repozytorium, z dostępem do hostowanego projektu Supabase i do konta C
    `npx wrangler tail --format pretty`: wynik `ok`, brak `exceededCpu` (czas oczekiwania na Auth i bazę nie liczy się do
    limitu CPU; wyzwalacz powrotu do planu Paid jak w "Decyzja o planie konta"). **Nie uruchamiać `npm run smoke` na
    produkcji:** skrypt odmawia hosta innego niż lokalny, a poza tym tworzy konta `@example.com` i używa klucza service-role.
+
+### Po przeglądzie implementacji (2026-11-27)
+
+- Migracja `20261127130000_employee_account_email_lock.sql` (trigger blokujący zmianę e-maila pracownika z kontem):
+  `npx supabase db push`, najlepiej przed wdrożeniem kodu. Jest addytywna, a starsza wersja kodu działa z nią bez zmian.
+- **Konto-sierota.** Gdy zaproszenie przerwie się w połowie, w Auth może zostać konto bez powiązania, a po jego
+  potwierdzeniu każde zaproszenie odpowiada 409 `account_exists`. Naprawa ręczna: dashboard Supabase, Authentication,
+  Users, usunąć konto (jego id wypisuje `npx wrangler tail` w wierszu `invitation cleanup ...`) i zaprosić ponownie.
 
 ### Zaakceptowane ryzyka
 

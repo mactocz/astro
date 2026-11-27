@@ -229,9 +229,9 @@ max_frequency = "1s"
 # Number of characters used in the email OTP.
 otp_length = 6
 # Number of seconds before the email OTP expires (defaults to 1 hour).
-# This also bounds the invitation and password-reset links; the PRD wants them valid for 7 days. Supabase advises
-# against more than 86400, so the hosted project needs the same value set through the Management API.
-otp_expiry = 604800
+# This also bounds the invitation and password-reset links; the PRD wants them valid for 24 hours, the longest life the
+# hosted project accepts.
+otp_expiry = 86400
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]

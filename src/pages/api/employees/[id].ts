@@ -53,6 +53,9 @@ export const PUT: APIRoute = async (context) => {
   if (result.error === "not_found") {
     return jsonResponse(404, { error: "not_found" });
   }
+  if (result.error === "email_locked") {
+    return jsonResponse(422, { errors: { email: EMAIL_LOCKED_MESSAGE } });
+  }
   if (result.error === "email_taken") {
     return jsonResponse(409, { errors: { email: EMAIL_TAKEN_MESSAGE } });
   }
