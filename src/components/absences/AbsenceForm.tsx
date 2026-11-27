@@ -17,6 +17,8 @@ interface Props {
 
 const hintClass = "mt-1 text-xs text-blue-100/50";
 const RANGE_HINT_ID = "absence-range";
+const TYPE_HINT_ID = "absence-type-hint";
+const TYPE_HINT = "Inna nieobecność jest traktowana jak usprawiedliwiona: obniża normę tygodniową tak samo jak urlop.";
 const PERSON_LOCKED_ID = "employeeId-locked";
 const UNKNOWN_PERSON = "Nieznany pracownik";
 const RANGE_HINT = `Dozwolone daty: ${SCHEDULE_MIN_DATE} do ${SCHEDULE_MAX_DATE}. Nieobecność obejmuje cały pierwszy i cały ostatni dzień.`;
@@ -35,12 +37,15 @@ interface SelectFieldProps {
   placeholder: string;
   options: readonly { value: string; label: string }[];
   error?: string;
+  /** The id of a hint outside the field that describes it; it joins the id of the error, which comes first. */
+  describedBy?: string;
 }
 
 // A native list, like the one that adds a shift to the staffing grid: it works with the keyboard and on a phone without any
 // script. FormField has no list, so the label, the error and the aria attributes of its input are repeated here.
-function SelectField({ id, label, value, onChange, placeholder, options, error }: SelectFieldProps) {
+function SelectField({ id, label, value, onChange, placeholder, options, error, describedBy }: SelectFieldProps) {
   const errorId = `${id}-error`;
+  const describedByIds = [error ? errorId : undefined, describedBy].filter(Boolean).join(" ");
   return (
     <div>
       <label htmlFor={id} className="mb-1 block text-sm text-blue-100/80">
@@ -54,7 +59,7 @@ function SelectField({ id, label, value, onChange, placeholder, options, error }
           onChange(e.target.value);
         }}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={describedByIds || undefined}
         className={cn(
           "w-full rounded-lg border bg-white/10 px-3 py-2 text-white [color-scheme:dark] transition-colors focus:ring-2 focus:outline-none",
           error ? "border-red-400/60 focus:ring-red-400" : "border-white/20 focus:ring-purple-400",
@@ -113,17 +118,23 @@ export default function AbsenceForm({ employees, absence }: Props) {
         />
       )}
 
-      <SelectField
-        id="type"
-        label="Rodzaj nieobecności"
-        value={values.type}
-        onChange={(value) => {
-          setField("type", value);
-        }}
-        placeholder="Wybierz rodzaj nieobecności"
-        options={ABSENCE_TYPES}
-        error={fieldErrors.type}
-      />
+      <div>
+        <SelectField
+          id="type"
+          label="Rodzaj nieobecności"
+          value={values.type}
+          onChange={(value) => {
+            setField("type", value);
+          }}
+          placeholder="Wybierz rodzaj nieobecności"
+          options={ABSENCE_TYPES}
+          error={fieldErrors.type}
+          describedBy={TYPE_HINT_ID}
+        />
+        <p id={TYPE_HINT_ID} className={hintClass}>
+          {TYPE_HINT}
+        </p>
+      </div>
 
       <div>
         <div className="grid gap-4 sm:grid-cols-2">

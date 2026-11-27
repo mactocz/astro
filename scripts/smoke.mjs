@@ -1444,6 +1444,8 @@ const absenceIdsOfTheRun = () =>
     neighbourAbsenceId,
     requestedApiAbsenceId,
     rejectedApiAbsenceId,
+    // The absence of 2021 of the list steps (the planner removed it; it is asked for as well, which does no harm).
+    oldApiAbsenceId,
     // The absences of the two schedules of the assignment page steps (the ones the steps removed are asked for as well).
     ...Object.values(absAbsenceIds),
   ].filter(isUuidText);
@@ -3581,34 +3583,42 @@ const absenceDays = {
   changed: `02.06${EN_DASH}03.06.2090`,
   moved: `08.06${EN_DASH}12.06.2090`,
 };
+// The number of days (both ends included) that the list writes after the range, in the cell and on the card; the label of the
+// edit link names the range alone.
+const absenceLengths = { created: "5 dni", changed: "2 dni", moved: "5 dni" };
 const listedA = (stateName) => ({
   id: () => apiAbsenceId,
   type: absenceTypeLabels[absenceStates[stateName].type],
   days: absenceDays[stateName],
+  length: absenceLengths[stateName],
   status: "Zatwierdzona",
 });
 const listedNeighbour = {
   id: () => neighbourAbsenceId,
   type: absenceTypeLabels.other,
   days: "13.07.2090",
+  length: "1 dzień",
   status: "Zatwierdzona",
 };
 const listedRequested = {
   id: () => requestedApiAbsenceId,
   type: absenceTypeLabels.sick_leave,
   days: `03.08${EN_DASH}07.08.2090`,
+  length: "5 dni",
   status: "Wnioskowana",
 };
 const listedRejected = {
   id: () => rejectedApiAbsenceId,
   type: absenceTypeLabels.vacation,
   days: `07.09${EN_DASH}09.09.2090`,
+  length: "3 dni",
   status: "Odrzucona",
 };
 const showsListedAbsence = (listed) => (html) => {
   const items = absenceListItems(html, listed.id());
   const row = items.find((item) => item.startsWith("<tr"));
   const card = items.find((item) => item.startsWith("<li"));
+  const daysText = `${listed.days} (${listed.length})`;
   const edit = [
     {
       href: `/absences/${listed.id()}`,
@@ -3620,8 +3630,8 @@ const showsListedAbsence = (listed) => (html) => {
     items.length === 2 &&
     row !== undefined &&
     card !== undefined &&
-    sameList(cellsOf(row), [absencePersonName, listed.type, listed.days, listed.status, "Edytuj"]) &&
-    sameList(textsOf(card, "p"), [absencePersonName, listed.type, listed.days, `Status: ${listed.status}`]) &&
+    sameList(cellsOf(row), [absencePersonName, listed.type, daysText, listed.status, "Edytuj"]) &&
+    sameList(textsOf(card, "p"), [absencePersonName, listed.type, daysText, `Status: ${listed.status}`]) &&
     sameList(linksOf(row), edit) &&
     sameList(linksOf(card), edit)
   );
@@ -3653,6 +3663,60 @@ const showsAbsenceListFrame = (html) => {
 const hidesAbsenceEmails = (html) =>
   [apiEmployee, secondApiEmployee].every((person) => !html.includes(person.email.toLowerCase()));
 
+// The two views of the list: by default the absences that ended in the last twelve months or are still going on, and with
+// "?all=1" every absence. Each says which one it is (a paragraph with data-absence-view-note) and links to the other one (the
+// link with data-absence-view-link); a list cut at 500 rows adds a note of its own (data-absence-truncated-note), which a
+// short list never has.
+const RECENT_VIEW_NOTE = "Pokazano nieobecności zakończone w ostatnich 12 miesiącach lub trwające.";
+const ALL_VIEW_NOTE = "Pokazano wszystkie nieobecności.";
+const recentViewLink = { href: "/absences?all=1", text: "Pokaż starsze" };
+const allViewLink = { href: "/absences", text: "Pokaż tylko ostatnie 12 miesięcy" };
+const elementsWithAttribute = (html, name, attribute) =>
+  elementsOf(html, name).filter((element) => hasAttribute(tagsOf(element, name)[0], attribute));
+const viewNotesOf = (html) => elementsWithAttribute(html, "p", "data-absence-view-note").map(textOf);
+const viewLinksOf = (html) =>
+  elementsWithAttribute(html, "a", "data-absence-view-link").map((link) => ({
+    href: attributeOf(tagsOf(link, "a")[0], "href"),
+    text: textOf(link),
+  }));
+const hasNoTruncatedNote = (html) =>
+  elementsWithAttribute(html, "p", "data-absence-truncated-note").length === 0 && !html.includes("Lista jest obcięta");
+// The row of an absence of 2021 (long over), written by the service role for the second API employee: it is outside the default
+// view and inside the full one. `recentViewRows` is the number of rows the default view had, read before the full view is.
+let oldApiAbsenceId;
+let recentViewRows;
+const oldApiAbsenceBody = () => absenceBody({ type: "vacation", startDate: "2021-05-03", endDate: "2021-05-14" });
+const listedOld = {
+  id: () => oldApiAbsenceId,
+  type: absenceTypeLabels.vacation,
+  days: `03.05${EN_DASH}14.05.2021`,
+  length: "12 dni",
+  status: "Zatwierdzona",
+};
+const isNotInList = (html, id) => !listedRowIds(html).includes(id) && absenceListItems(html, id).length === 0;
+const showsRecentAbsenceView = (html) =>
+  showsAbsenceListFrame(html) &&
+  sameList(viewNotesOf(html), [RECENT_VIEW_NOTE]) &&
+  sameList(viewLinksOf(html), [recentViewLink]) &&
+  hasNoTruncatedNote(html) &&
+  isNotInList(html, oldApiAbsenceId);
+const showsAllAbsenceView = (html) =>
+  showsAbsenceListFrame(html) &&
+  sameList(viewNotesOf(html), [ALL_VIEW_NOTE]) &&
+  sameList(viewLinksOf(html), [allViewLink]) &&
+  hasNoTruncatedNote(html) &&
+  listedRowIds(html).length === recentViewRows + 1 &&
+  listsInStartOrder(() => [rejectedApiAbsenceId, requestedApiAbsenceId, neighbourAbsenceId, oldApiAbsenceId])(html) &&
+  showsListedAbsence(listedOld)(html);
+const absenceViewExcerpt = (html) =>
+  JSON.stringify({
+    h1: textsOf(html, "h1"),
+    notes: viewNotesOf(html),
+    links: viewLinksOf(html),
+    rows: listedRowIds(html).length,
+    old: listedRowIds(html).includes(oldApiAbsenceId),
+  });
+
 // The lists of a form: the entries of a <select> (the value, the text and whether it is the selected one), or undefined when
 // the page has no <select> with this id.
 const selectOptionsOf = (html, id) => {
@@ -3676,6 +3740,22 @@ const hasRangeHint = (html) =>
   elementsOf(html, "p").some(
     (element) => attributeOf(tagsOf(element, "p")[0], "id") === "absence-range" && textOf(element) === absenceRangeHint,
   );
+// The hint under the list of types (it says what "Inna nieobecność" does to the norm) and the list that points to it: the
+// paragraph has the id absence-type-hint and exactly this text, and the aria-describedby of the select holds that id.
+const absenceTypeHint =
+  "Inna nieobecność jest traktowana jak usprawiedliwiona: obniża normę tygodniową tak samo jak urlop.";
+const hasTypeHint = (html) => {
+  const select = tagsOf(html, "select").find((tag) => attributeOf(tag, "id") === "type");
+  const hints = elementsOf(html, "p").filter(
+    (element) => attributeOf(tagsOf(element, "p")[0], "id") === "absence-type-hint",
+  );
+  return (
+    select !== undefined &&
+    (attributeOf(select, "aria-describedby") ?? "").split(" ").includes("absence-type-hint") &&
+    hints.length === 1 &&
+    textOf(hints[0]) === absenceTypeHint
+  );
+};
 // A date field: type date with the bounds of the schedule rules, the value it should hold, and the range hint that describes it.
 const isDateField = (html, id, value) => {
   const tag = inputById(html, id);
@@ -3696,6 +3776,11 @@ const formExcerpt = (html) =>
       labels: textsOf(html, "label"),
       person: selectOptionsOf(html, "employeeId") ?? inputById(html, "employeeId"),
       type: selectOptionsOf(html, "type"),
+      typeHint: elementsOf(html, "p").filter((element) =>
+        (attributeOf(tagsOf(element, "p")[0], "id") ?? "").startsWith("absence-type"),
+      ),
+      typeSelect: tagsOf(html, "select").find((tag) => attributeOf(tag, "id") === "type"),
+      status: statusLineOf(html),
       startDate: inputById(html, "startDate"),
       endDate: inputById(html, "endDate"),
       buttons: textsOf(html, "button"),
@@ -3725,6 +3810,7 @@ const showsNewAbsenceForm = (html) => {
     ) &&
     sameList(plainOptions(types), absenceTypeOptions) &&
     [...people, ...types].every((option) => !option.selected || option.value === "") &&
+    hasTypeHint(html) &&
     isDateField(html, "startDate", "") &&
     isDateField(html, "endDate", "") &&
     hasRangeHint(html) &&
@@ -3732,8 +3818,18 @@ const showsNewAbsenceForm = (html) => {
     hasCancelLink(html)
   );
 };
+// The status of the absence on the edit page, as words and read-only: one paragraph with data-absence-status, "Status: ..."
+// between the heading and the form (the first field of the form is the label of the person).
+const statusLineOf = (html) => elementsWithAttribute(html, "p", "data-absence-status").map(textOf);
+const showsStatusLine = (status) => (html) => {
+  const heading = html.indexOf("<h1");
+  const line = html.indexOf("data-absence-status");
+  const form = html.indexOf('for="employeeId"');
+  return sameList(statusLineOf(html), [`Status: ${status}`]) && heading !== -1 && heading < line && line < form;
+};
 // The form that corrects A, in the state `stateName`: the person as read-only text (no list), the type selected, the two days,
-// the range hint, the button that saves, the button that starts the removal and not the question that follows it.
+// the range hint, the button that saves, the button that starts the removal and not the question that follows it, and the
+// status of A (always approved) as read-only words.
 const showsEditAbsenceForm = (stateName) => (html) => {
   const state = absenceStates[stateName];
   const person = inputById(html, "employeeId");
@@ -3753,6 +3849,8 @@ const showsEditAbsenceForm = (stateName) => (html) => {
       types.filter((option) => option.selected).map((option) => option.value),
       [state.type],
     ) &&
+    hasTypeHint(html) &&
+    showsStatusLine("Zatwierdzona")(html) &&
     isDateField(html, "startDate", state.startDate) &&
     isDateField(html, "endDate", state.endDate) &&
     hasRangeHint(html) &&
@@ -3791,7 +3889,7 @@ const absenceListPage = (describe, bodyCheck, excerpt) =>
   visitAbsencePage(`/absences shows ${describe}`, () => "/absences", { status: 200, bodyCheck, describe, excerpt });
 const listsAbsence = (name, listed) =>
   absenceListPage(
-    `${name} as a table row and as a card: the person, the type, the days, the status as words and the edit link`,
+    `${name} as a table row and as a card: the person, the type, the days with their number ("(5 dni)", "(1 dzień)"), the status as words and the edit link (whose label names the range alone)`,
     showsListedAbsence(listed),
     listedExcerpt(listed),
   );
@@ -3870,11 +3968,21 @@ const absenceRouteSteps = [
   absenceListPage("no e-mail address of the two API employees", hidesAbsenceEmails, (html) =>
     JSON.stringify(textsOf(html, "td")),
   ),
+  // The default view says which view it is and links to the full one, and no note says the list is cut at 500 rows.
+  absenceListPage(
+    `the default view: the note "${RECENT_VIEW_NOTE}" and the link "Pokaż starsze" to /absences?all=1`,
+    (html) =>
+      showsAbsenceListFrame(html) &&
+      sameList(viewNotesOf(html), [RECENT_VIEW_NOTE]) &&
+      sameList(viewLinksOf(html), [recentViewLink]) &&
+      hasNoTruncatedNote(html),
+    absenceViewExcerpt,
+  ),
   visitAbsencePage("/absences/new shows the form that adds an absence", () => "/absences/new", {
     status: 200,
     bodyCheck: showsNewAbsenceForm,
     describe:
-      "the lists of the people and of the three types with nothing picked, two empty date fields from 2020-01-01 to 2099-12-31 with the range hint, and the buttons",
+      "the lists of the people and of the three types with nothing picked, the hint under the list of types (absence-type-hint, named by the aria-describedby of the list), two empty date fields from 2020-01-01 to 2099-12-31 with the range hint, and the buttons",
     excerpt: formExcerpt,
   }),
   visitAbsencePage("/absences/new lists the people without an e-mail address", () => "/absences/new", {
@@ -3884,9 +3992,22 @@ const absenceRouteSteps = [
     excerpt: formExcerpt,
   }),
   absenceEditPage(
-    "the stored values of A: the person as read-only text, the type, the two days, the range hint and the removal button",
+    "the stored values of A: its status as read-only words (Status: Zatwierdzona, between the heading and the form), the person as read-only text, the type with its hint, the two days, the range hint and the removal button",
     "created",
   ),
+  // The status of the two rows that only the service role can write, on the edit page of each: shown as words, read-only.
+  visitAbsencePage("/absences/<id> of R shows the status Wnioskowana", () => `/absences/${requestedApiAbsenceId}`, {
+    status: 200,
+    bodyCheck: showsStatusLine("Wnioskowana"),
+    describe: 'exactly one paragraph "Status: Wnioskowana" between the heading and the form',
+    excerpt: formExcerpt,
+  }),
+  visitAbsencePage("/absences/<id> of J shows the status Odrzucona", () => `/absences/${rejectedApiAbsenceId}`, {
+    status: 200,
+    bodyCheck: showsStatusLine("Odrzucona"),
+    describe: 'exactly one paragraph "Status: Odrzucona" between the heading and the form',
+    excerpt: formExcerpt,
+  }),
   absenceEditPage(
     "only the person of the absence by name, no e-mail address and nobody else of the roster",
     "created",
@@ -4099,6 +4220,75 @@ const absenceRouteSteps = [
       excerpt: (html) => JSON.stringify({ h1: textsOf(html, "h1"), links: linksOf(html) }),
     },
   ),
+
+  // The two views of the list. An absence of 2021 (long over) is written for the second API employee by the service role: the
+  // default view (the absences that ended in the last twelve months or still go on) leaves it out, the full view (?all=1) shows
+  // it, last, with its days and their number, and each view links to the other one. The planner then removes it again, so the
+  // exact reads of the absences of that person that follow are not disturbed, and the final check asks for its id as well.
+  serviceRoleInsertsAbsences(
+    "writes an absence of 2021 for the second API employee",
+    () => [oldApiAbsenceBody()],
+    ([id]) => {
+      oldApiAbsenceId = id;
+    },
+    "the vacation of 2021-05-03 to 2021-05-14 of the second API employee, approved",
+  ),
+  [
+    `${planner.label}: GET /absences leaves the absence of 2021 out of the default view`,
+    async () => {
+      const result = await request(planner, "/absences");
+      recentViewRows = listedRowIds(result.body).length;
+      return result;
+    },
+    {
+      status: 200,
+      cacheControl: "no-store",
+      bodyCheck: showsRecentAbsenceView,
+      describe:
+        'the default view: the heading "Nieobecności (n)" with n the rows of the table, the note and the link "Pokaż starsze" (/absences?all=1), no note of a cut list and no row of the absence of 2021',
+      excerpt: absenceViewExcerpt,
+    },
+  ],
+  visitAbsencePage(
+    "/absences?all=1 shows the absence of 2021 as well, last, and links back to the default view",
+    () => "/absences?all=1",
+    {
+      status: 200,
+      bodyCheck: showsAllAbsenceView,
+      describe: `the full view: the heading "Nieobecności (n)" with n the rows of the table, which are the rows of the default view and the one of 2021 (n + 1), the note "${ALL_VIEW_NOTE}", the link "Pokaż tylko ostatnie 12 miesięcy" (/absences), the rows J, R, N and the one of 2021 in that order, and that row with its days "03.05${EN_DASH}14.05.2021 (12 dni)"`,
+      excerpt: absenceViewExcerpt,
+    },
+  ),
+  visitAbsencePage(
+    "/absences?all=true is the default view: only the value 1 asks for the full one",
+    () => "/absences?all=true",
+    {
+      status: 200,
+      bodyCheck: showsRecentAbsenceView,
+      describe: "the default view again: its note and link, and no row of the absence of 2021",
+      excerpt: absenceViewExcerpt,
+    },
+  ),
+  plannerDeletesAbsence(
+    "/api/absences/<id> removes the absence of 2021",
+    () => `/api/absences/${oldApiAbsenceId}`,
+    wasWritten,
+  ),
+  plannerReadsApiAbsences(
+    "is back to N, R and J after the absence of 2021 is removed",
+    null,
+    "the three neighbours N, R and J: only the absence of 2021 is gone",
+  ),
+  visitAbsencePage("/absences?all=1 no longer shows the absence of 2021", () => "/absences?all=1", {
+    status: 200,
+    bodyCheck: (html) =>
+      showsAbsenceListFrame(html) &&
+      sameList(viewNotesOf(html), [ALL_VIEW_NOTE]) &&
+      isNotInList(html, oldApiAbsenceId) &&
+      listedRowIds(html).length === recentViewRows,
+    describe: "the full view with exactly the rows of the default view: the absence of 2021 is gone",
+    excerpt: absenceViewExcerpt,
+  }),
 ];
 
 // The absences on the assignment page (S-07). Two schedules of their own, with people of their own (the e-mails and names start

@@ -161,6 +161,8 @@ S-05 z PR #14) po `npx supabase db push` migracji `20261126204500_absences.sql` 
 sprawdza produkcji, a `npm run smoke` na niej nie wolno uruchamiać). Do renderu strony `/schedules/<id>/assign` doszły
 wczytanie nieobecności grafiku, znaczniki w komórkach oraz nieobecności w regułach i w sumach godzin.
 
+Po wdrożeniu autor potwierdził (2026-11-27), że `/absences` oraz znaczniki nieobecności w komórkach strony obsadzania działają na produkcji.
+
 Pomiar z panelu Cloudflare (Workers & Pages, `shiftly`, Metrics): mediana (p50) czasu CPU **5,41 ms** (wartość podana
 przez użytkownika), po S-05 było **4,8 ms**, czyli o około 0,6 ms więcej (około 13%). Nie zmierzono p99 ani pierwszego
 żądania w nowym izolacie, a rozmiar grafiku i to, czy użyty grafik miał nieobecności, nie zostały zapisane. Mediana z

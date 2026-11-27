@@ -1,13 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
   ABSENCE_TYPES,
+  absenceDayCount,
   absenceInterval,
   absenceMarkers,
+  absenceStatusLabel,
+  absenceStatusRank,
   absenceTypeLabel,
+  absencesOfRoster,
   dayOffsetOf,
   excusedWeekdays,
+  formatAbsenceDays,
   formatAbsenceMarker,
   formatAbsenceRange,
+  formatDayAndMonth,
+  isAbsenceConfirmed,
+  isAbsenceJudged,
+  lowerFirst,
   rangesOverlap,
   sortAbsences,
   validateAbsenceInput,
@@ -79,6 +88,67 @@ describe("ABSENCE_TYPES and absenceTypeLabel", () => {
     ["other", "Inna nieobecność"],
   ])("labels %s as %j", (type, label) => {
     expect(absenceTypeLabel(type)).toBe(label);
+  });
+});
+
+describe("absenceStatusLabel", () => {
+  it.each<[AbsenceStatus, string]>([
+    ["approved", "Zatwierdzona"],
+    ["requested", "Wnioskowana"],
+    ["rejected", "Odrzucona"],
+  ])("labels %s as %j", (status, label) => {
+    expect(absenceStatusLabel(status)).toBe(label);
+  });
+
+  it("gives a different label to each status", () => {
+    const statuses: Record<AbsenceStatus, true> = { approved: true, requested: true, rejected: true };
+    const labels = (Object.keys(statuses) as AbsenceStatus[]).map(absenceStatusLabel);
+
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+});
+
+describe("what a status means for the rules", () => {
+  // Written as a record on every status: a new member of AbsenceStatus does not compile here until it is given a row.
+  const expected: Record<AbsenceStatus, { judged: boolean; confirmed: boolean; rank: number }> = {
+    approved: { judged: true, confirmed: true, rank: 0 },
+    requested: { judged: true, confirmed: false, rank: 1 },
+    rejected: { judged: false, confirmed: false, rank: 2 },
+  };
+
+  it.each<AbsenceStatus>(["approved", "requested", "rejected"])("treats %s as decided", (status) => {
+    expect({
+      judged: isAbsenceJudged(status),
+      confirmed: isAbsenceConfirmed(status),
+      rank: absenceStatusRank(status),
+    }).toStrictEqual(expected[status]);
+  });
+
+  it("ranks an approved absence before a requested one", () => {
+    expect(absenceStatusRank("approved")).toBeLessThan(absenceStatusRank("requested"));
+  });
+});
+
+describe("lowerFirst", () => {
+  it.each<[string, string]>([
+    ["Urlop", "urlop"],
+    ["Zwolnienie lekarskie (L4)", "zwolnienie lekarskie (L4)"],
+    ["Inna nieobecność", "inna nieobecność"],
+    ["", ""],
+    ["urlop", "urlop"],
+  ])("writes %j as %j and leaves the rest of the text alone", (text, lowered) => {
+    expect(lowerFirst(text)).toBe(lowered);
+  });
+});
+
+describe("formatDayAndMonth", () => {
+  it.each<[string, string]>([
+    ["2026-11-02", "02.11"],
+    ["2026-12-24", "24.12"],
+    ["2020-01-01", "01.01"],
+    ["2099-12-31", "31.12"],
+  ])("writes %s as %s", (isoDate, text) => {
+    expect(formatDayAndMonth(isoDate)).toBe(text);
   });
 });
 
@@ -525,6 +595,77 @@ describe("formatAbsenceRange", () => {
     ["an empty end", "2026-11-02", ""],
   ])("throws a RangeError for %s", (_label, startDate, endDate) => {
     expect(() => formatAbsenceRange({ startDate, endDate })).toThrow(RangeError);
+  });
+});
+
+describe("absenceDayCount", () => {
+  it.each<{ label: string; startDate: string; endDate: string; days: number }>([
+    { label: "a single day", startDate: "2026-11-02", endDate: "2026-11-02", days: 1 },
+    { label: "two days", startDate: "2026-11-02", endDate: "2026-11-03", days: 2 },
+    { label: "three days", startDate: "2026-11-24", endDate: "2026-11-26", days: 3 },
+    { label: "a working week", startDate: "2026-11-02", endDate: "2026-11-06", days: 5 },
+    { label: "a whole week with the weekend", startDate: "2026-11-02", endDate: "2026-11-08", days: 7 },
+    { label: "days in two months", startDate: "2026-10-28", endDate: "2026-11-02", days: 6 },
+    { label: "days over New Year", startDate: "2026-12-29", endDate: "2027-01-04", days: 7 },
+    { label: "29 February of a leap year", startDate: "2024-02-28", endDate: "2024-03-01", days: 3 },
+    {
+      label: "the same days of a year that is not a leap year",
+      startDate: "2026-02-28",
+      endDate: "2026-03-01",
+      days: 2,
+    },
+    { label: "a whole leap year", startDate: "2024-01-01", endDate: "2024-12-31", days: 366 },
+    { label: "a whole year that is not a leap year", startDate: "2026-01-01", endDate: "2026-12-31", days: 365 },
+    { label: "the days of a daylight saving change", startDate: "2026-03-28", endDate: "2026-03-30", days: 3 },
+    { label: "the last accepted day", startDate: "2099-12-31", endDate: "2099-12-31", days: 1 },
+    // 80 years of 365 days, and 20 leap days (2020, 2024, ..., 2096; 2100 is out of range).
+    { label: "the whole accepted range", startDate: "2020-01-01", endDate: "2099-12-31", days: 29_220 },
+  ])("counts $label, $startDate to $endDate, as $days", ({ startDate, endDate, days }) => {
+    expect(absenceDayCount({ startDate, endDate })).toBe(days);
+  });
+
+  it("counts both ends: one day more than the days between them", () => {
+    expect(absenceDayCount({ startDate: "2026-11-02", endDate: "2026-11-02" })).toBe(
+      dayOffsetOf("2026-11-02", "2026-11-02") + 1,
+    );
+  });
+
+  it("gives the same number whatever the days are around it", () => {
+    for (const startDate of ["2026-11-02", "2027-11-02", "2028-11-02"]) {
+      expect(absenceDayCount({ startDate, endDate: startDate })).toBe(1);
+    }
+  });
+
+  it.each<[string, string, string]>([
+    ["a start after 2099", "2100-01-01", "2100-01-02"],
+    ["an end before 2020", "2019-12-30", "2019-12-31"],
+    ["an impossible day", "2026-02-30", "2026-03-02"],
+    ["an empty end", "2026-11-02", ""],
+  ])("throws a RangeError for %s", (_label, startDate, endDate) => {
+    expect(() => absenceDayCount({ startDate, endDate })).toThrow(RangeError);
+  });
+});
+
+describe("formatAbsenceDays", () => {
+  it.each<[number, string]>([
+    [1, "1 dzień"],
+    [2, "2 dni"],
+    [3, "3 dni"],
+    [5, "5 dni"],
+    [12, "12 dni"],
+    [22, "22 dni"],
+    [365, "365 dni"],
+    [29_220, "29220 dni"],
+  ])("writes %d as %j", (count, text) => {
+    expect(formatAbsenceDays(count)).toBe(text);
+  });
+
+  it("writes the length of a range as the list shows it, next to its days", () => {
+    const absence = { startDate: "2026-11-24", endDate: "2026-11-26" };
+
+    expect(`${formatAbsenceRange(absence)} (${formatAbsenceDays(absenceDayCount(absence))})`).toBe(
+      `24.11${DASH}26.11.2026 (3 dni)`,
+    );
   });
 });
 
@@ -1131,6 +1272,61 @@ describe("absenceMarkers", () => {
     }
   });
 
+  describe("a night shift that runs into the next day", () => {
+    // The two orders disagree here, on purpose and for now: the cell of a day names the strongest absence that covers that
+    // day, while the reason of a violation names the strongest absence that the interval of the shift overlaps, and a night
+    // shift of day 1 (22:00 to 06:00 of day 2) overlaps the absences of both days. These tests pin that difference, so that it
+    // changes only when somebody decides it should; for a shift within one day the two always agree (the test above).
+    const night = { id: "s-night", name: "Nocna", startMinute: 1320, endMinute: 360 };
+    const absenceViolationsOf = (absences: readonly AbsenceOption[]) =>
+      evaluateSchedule({
+        startDate: WEEK,
+        staffing: [],
+        assignments: [{ shiftId: "s-night", dayOffset: 1, employeeId: ANNA }],
+        shifts: [night],
+        employees: [{ id: ANNA, name: "Kowalska Anna", fte: { numerator: 1, denominator: 1 } }],
+        absences,
+      }).filter(({ rule }) => rule === "absence" || rule === "absence_requested");
+
+    it("names the requested absence of its own day in the cell and the approved one of the next day in the critical reason", () => {
+      // Day 1 is Tuesday 03.11: a requested vacation covers it, and an approved sick leave starts on day 2 (Wednesday 04.11).
+      const requested = option(ANNA, "vacation", "requested", "2026-11-03", "2026-11-03");
+      const approved = option(ANNA, "sick_leave", "approved", "2026-11-04", "2026-11-06");
+
+      for (const absences of [
+        [requested, approved],
+        [approved, requested],
+      ]) {
+        const markers = absenceMarkers(WEEK, absences);
+        const violations = absenceViolationsOf(absences);
+
+        expect(markers[employeeDayKey(ANNA, 1)]).toStrictEqual(requested);
+        expect(formatAbsenceMarker(markers[employeeDayKey(ANNA, 1)])).toBe("Nieobecność: urlop (niezatwierdzona)");
+        expect(markers[employeeDayKey(ANNA, 2)]).toStrictEqual(approved);
+        expect(violations).toHaveLength(1);
+        expect(violations[0].rule).toBe("absence");
+        expect(violations[0].severity).toBe("critical");
+        expect(violations[0].reason).toContain(`przypada na zwolnienie lekarskie (L4) (04.11${DASH}06.11.2026).`);
+        expect(violations[0].reason).not.toContain("niezatwierdzon");
+      }
+    });
+
+    it("has a critical violation but no marker in the cell of its day when only the next day is an absence", () => {
+      const approved = option(ANNA, "other", "approved", "2026-11-04", "2026-11-05");
+
+      const markers = absenceMarkers(WEEK, [approved]);
+      const violations = absenceViolationsOf([approved]);
+
+      expect(employeeDayKey(ANNA, 1) in markers).toBe(false);
+      expect(markers[employeeDayKey(ANNA, 2)]).toStrictEqual(approved);
+      expect(violations).toHaveLength(1);
+      expect(violations[0].rule).toBe("absence");
+      expect(violations[0].severity).toBe("critical");
+      expect(violations[0].anchors).toStrictEqual([{ shiftId: "s-night", dayOffset: 1, employeeId: ANNA }]);
+      expect(violations[0].reason).toContain(`przypada na inną nieobecność (04.11${DASH}05.11.2026).`);
+    });
+  });
+
   it("gives each value as a new object with exactly the five fields of an option, whatever the input carries", () => {
     const row = {
       ...option(ANNA, "vacation", "approved", "2026-11-03", "2026-11-04"),
@@ -1231,8 +1427,96 @@ describe("the time zone", () => {
         { employeeId: ANNA, type: "vacation", status: "approved", startDate: "2100-01-01", endDate: "2100-01-02" },
       ]);
       formatAbsenceMarker({ type: "sick_leave", status: "requested" });
+      absenceDayCount({ startDate: "2024-02-28", endDate: "2024-03-01" });
+      absenceDayCount({ startDate: "2020-01-01", endDate: "2099-12-31" });
+      formatAbsenceDays(3);
     });
 
     expect(called).toStrictEqual([]);
+  });
+});
+
+describe("absencesOfRoster", () => {
+  const CEZARY = "3a4b5c6d-7e8f-4a0b-9c1d-2e3f4a5b6c7d";
+
+  function stored(id: string, employeeId: string): Absence {
+    return {
+      id,
+      employeeId,
+      type: "vacation",
+      status: "approved",
+      startDate: "2026-11-03",
+      endDate: "2026-11-05",
+      createdAt: "2026-11-01T10:00:00.000Z",
+    };
+  }
+
+  const rows = [
+    stored("a-1", ANNA),
+    stored("a-2", BARTEK),
+    stored("a-3", ANNA),
+    stored("a-4", CEZARY),
+    stored("a-5", BARTEK),
+  ];
+
+  it("keeps the absences of the people of the roster, in the order they come in, and drops the others", () => {
+    expect(absencesOfRoster(rows, [ANNA, CEZARY]).map(({ id }) => id)).toStrictEqual(["a-1", "a-3", "a-4"]);
+  });
+
+  it("passes the rows themselves through, not copies", () => {
+    const [first] = absencesOfRoster(rows, [ANNA]);
+
+    expect(first).toBe(rows[0]);
+  });
+
+  it("gives nothing for an empty roster", () => {
+    expect(absencesOfRoster(rows, [])).toStrictEqual([]);
+  });
+
+  it("gives nothing when nobody of the roster is absent", () => {
+    expect(absencesOfRoster(rows, ["00000000-0000-4000-8000-000000000000"])).toStrictEqual([]);
+  });
+
+  it("gives nothing for no absences", () => {
+    expect(absencesOfRoster([], [ANNA, BARTEK])).toStrictEqual([]);
+  });
+
+  it("does not mind an id that is listed twice in the roster", () => {
+    expect(absencesOfRoster(rows, [BARTEK, BARTEK]).map(({ id }) => id)).toStrictEqual(["a-2", "a-5"]);
+  });
+
+  it("does not match an id that only differs in letter case, as the roster holds the ids the database gave", () => {
+    expect(absencesOfRoster(rows, [ANNA.toUpperCase()])).toStrictEqual([]);
+  });
+
+  it("works on a list row with only the person, and keeps whatever else it carries", () => {
+    const list = [
+      { employeeId: ANNA, note: "first" },
+      { employeeId: BARTEK, note: "second" },
+    ];
+
+    expect(absencesOfRoster(list, [BARTEK])).toStrictEqual([{ employeeId: BARTEK, note: "second" }]);
+  });
+
+  it("gives the same rows for repeated calls and for any order of the roster", () => {
+    const roster = [ANNA, BARTEK, CEZARY];
+
+    const kept = expectDeterministic((people: readonly string[]) => absencesOfRoster(rows, people), roster, {
+      variants: [1, 2, 3, 4].map((seed) => seededShuffle(roster, seed)),
+    });
+
+    expect(kept).toHaveLength(rows.length);
+  });
+
+  it("returns a new list and leaves the rows and the roster unchanged", () => {
+    const input = Object.freeze(rows.map((row) => Object.freeze({ ...row })));
+    const roster = Object.freeze([ANNA]);
+    const before = structuredClone({ input, roster });
+
+    const kept = absencesOfRoster(input, roster);
+
+    expect(structuredClone({ input, roster })).toStrictEqual(before);
+    expect(kept).not.toBe(input);
+    expect(Object.isFrozen(kept)).toBe(false);
   });
 });

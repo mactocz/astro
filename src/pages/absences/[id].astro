@@ -5,7 +5,7 @@ import DeleteAbsenceButton from "@/components/absences/DeleteAbsenceButton";
 import { getAbsence } from "@/lib/absences";
 import { getEmployee } from "@/lib/employees";
 import { toEmployeeOptions } from "@/lib/schedule-options";
-import { absenceTypeLabel, formatAbsenceRange } from "@/lib/services/absence";
+import { absenceStatusLabel, absenceTypeLabel, formatAbsenceRange } from "@/lib/services/absence";
 
 const { supabase } = Astro.locals;
 if (!supabase) {
@@ -35,9 +35,13 @@ Astro.response.headers.set("Cache-Control", "no-store");
 <PlannerLayout title={absence ? "Edytuj nieobecność" : "Nie znaleziono nieobecności"}>
   {absence ? (
     <div class="mx-auto w-full max-w-lg rounded-2xl border border-white/10 bg-white/10 p-6 backdrop-blur-xl sm:p-8">
-      <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-2xl font-bold text-transparent">
+      <h1 class="mb-2 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-2xl font-bold text-transparent">
         Edytuj nieobecność
       </h1>
+      {/* The status is shown, not edited (no session may write it), so that a planner never changes an absence blind. */}
+      <p data-absence-status class="mb-6 text-sm text-blue-100/80">
+        Status: {absenceStatusLabel(absence.status)}
+      </p>
       <AbsenceForm
         employees={people}
         absence={{

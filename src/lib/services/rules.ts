@@ -1,8 +1,14 @@
 import {
   absenceInterval,
+  absenceStatusRank,
   absenceTypeLabel,
   excusedWeekdays,
+  formatAbsenceDays,
   formatAbsenceRange,
+  formatDayAndMonth,
+  isAbsenceConfirmed,
+  isAbsenceJudged,
+  lowerFirst,
   rangesOverlap,
 } from "@/lib/services/absence";
 import { summarizeCoverage } from "@/lib/services/assignment";
@@ -209,7 +215,7 @@ function compareSegments(a: Segment, b: Segment): number {
 // the same whatever the order of the input.
 function compareAbsenceSpans(a: AbsenceSpan, b: AbsenceSpan): number {
   return (
-    Number(a.absence.status !== "approved") - Number(b.absence.status !== "approved") ||
+    absenceStatusRank(a.absence.status) - absenceStatusRank(b.absence.status) ||
     a.start - b.start ||
     b.end - a.end ||
     compareText(a.absence.type, b.absence.type)
@@ -220,7 +226,7 @@ function compareAbsenceSpans(a: AbsenceSpan, b: AbsenceSpan): number {
 function absencesByEmployee(startDate: string, absences: readonly AbsenceOption[]): Map<string, AbsenceSpan[]> {
   const byEmployee = new Map<string, AbsenceSpan[]>();
   for (const absence of absences) {
-    if (absence.status === "rejected") {
+    if (!isAbsenceJudged(absence.status)) {
       continue;
     }
     const span: AbsenceSpan = { absence, ...absenceInterval(startDate, absence) };
@@ -524,23 +530,16 @@ function weeklyRest({ timelines, nameOf, dayLabel, period }: Context): Violation
 // "święto 11.11", "święta 11.11 i 12.11" or "święta 24.12, 25.12 i 26.12": the dates of the holidays of a week (never more
 // than seven days apart, so with no year).
 function formatHolidays(holidays: readonly string[]): string {
-  const dates = holidays.map(dayAndMonth);
+  const dates = holidays.map(formatDayAndMonth);
   const last = dates[dates.length - 1];
   const list = dates.length === 1 ? last : `${dates.slice(0, -1).join(", ")} i ${last}`;
   return `${dates.length === 1 ? "święto" : "święta"} ${list}`;
 }
 
-// "02.11" for "2026-11-02": the day and the month of a date of the week of a schedule (no year, as the days are never more
-// than seven days apart).
-function dayAndMonth(date: string): string {
-  return `${date.slice(8, 10)}.${date.slice(5, 7)}`;
-}
-
 // "nieobecność (1 dzień: 02.11)" or "nieobecność (3 dni: 02.11, 03.11, 05.11)": the days of Monday to Friday that an approved
 // absence took off the norm. There are one to five of them, so only "dzień" and "dni" occur.
 function formatExcusedDays(excusedDays: readonly string[]): string {
-  const count = excusedDays.length === 1 ? "1 dzień" : `${excusedDays.length} dni`;
-  return `nieobecność (${count}: ${excusedDays.map(dayAndMonth).join(", ")})`;
+  return `nieobecność (${formatAbsenceDays(excusedDays.length)}: ${excusedDays.map(formatDayAndMonth).join(", ")})`;
 }
 
 // What the norm was lowered by, for the end of "po pomniejszeniu o ...": the holidays, the days of absence or both ("święto
@@ -629,9 +628,6 @@ const ABSENCE_ACCUSATIVE = {
   other: "inną nieobecność",
 } as const satisfies Record<AbsenceType, string>;
 
-// "urlop" for "Urlop": a label in the middle of a sentence. Only the first letter is lowered, so the "L4" of a sick leave stays.
-const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
-
 // One violation for each assignment that overlaps an absence of its person, however many absences it overlaps: the strongest
 // one decides the weight and is the one the reason names (`compareAbsenceSpans` puts it first). The anchor is the assignment
 // alone, so the key holds the person and the assignment and nothing about the absence. `actual` is how many minutes of the
@@ -654,7 +650,7 @@ function absenceCollisions({ timelines, absences, nameOf, describe }: Context): 
       const head = `${nameOf(employeeId)}: zmiana ${describe(segment)} przypada na`;
       const anchors = [anchorOf(segment)];
       violations.push(
-        absence.status === "approved"
+        isAbsenceConfirmed(absence.status)
           ? criticalViolation(
               "absence",
               employeeId,

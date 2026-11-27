@@ -2,11 +2,12 @@
 import PlannerLayout from "@/layouts/PlannerLayout.astro";
 import AssignmentGrid from "@/components/schedules/AssignmentGrid";
 import ScheduleNotice from "@/components/schedules/ScheduleNotice.astro";
-import { absencesOfRoster, listAbsencesOverlapping } from "@/lib/absences";
+import { listAbsencesOverlapping } from "@/lib/absences";
 import { listAssignments } from "@/lib/assignments";
 import { listEmployees } from "@/lib/employees";
 import { toAbsenceOptions, toEmployeeOptions, toShiftOptions } from "@/lib/schedule-options";
 import { getSchedule } from "@/lib/schedules";
+import { absencesOfRoster } from "@/lib/services/absence";
 import { PERIOD_DAYS, addDays, formatPeriod } from "@/lib/services/schedule";
 import { listShifts } from "@/lib/shifts";
 import type { AbsenceOption, AssignmentInput, EmployeeOption, ShiftOption } from "@/types";
