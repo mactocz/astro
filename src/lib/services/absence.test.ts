@@ -2,19 +2,31 @@ import { describe, expect, it } from "vitest";
 import {
   ABSENCE_TYPES,
   absenceInterval,
+  absenceMarkers,
   absenceTypeLabel,
   dayOffsetOf,
   excusedWeekdays,
+  formatAbsenceMarker,
   formatAbsenceRange,
   rangesOverlap,
   sortAbsences,
   validateAbsenceInput,
 } from "@/lib/services/absence";
+import { employeeDayKey } from "@/lib/services/assignment";
 import { holidaysInWeek } from "@/lib/services/calendar";
+import { evaluateSchedule } from "@/lib/services/rules";
 import { shiftInterval } from "@/lib/services/work-hours";
 import { expectDeterministic, seededShuffle } from "@/lib/testing/determinism";
 import { localDateMethodsCalledBy } from "@/lib/testing/local-time";
-import type { Absence, AbsenceField, AbsenceFieldErrors, AbsenceInput, AbsenceStatus, AbsenceType } from "@/types";
+import type {
+  Absence,
+  AbsenceField,
+  AbsenceFieldErrors,
+  AbsenceInput,
+  AbsenceOption,
+  AbsenceStatus,
+  AbsenceType,
+} from "@/types";
 
 const ANNA = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
 const BARTEK = "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a";
@@ -876,6 +888,323 @@ describe("sortAbsences", () => {
   });
 });
 
+describe("formatAbsenceMarker", () => {
+  it.each<[AbsenceType, string]>([
+    ["vacation", "Nieobecność: urlop"],
+    ["sick_leave", "Nieobecność: zwolnienie lekarskie (L4)"],
+    ["other", "Nieobecność: inna nieobecność"],
+  ])("says %s as %j for an approved absence", (type, text) => {
+    expect(formatAbsenceMarker({ type, status: "approved" })).toBe(text);
+  });
+
+  it.each<[AbsenceType, string]>([
+    ["vacation", "Nieobecność: urlop (niezatwierdzona)"],
+    ["sick_leave", "Nieobecność: zwolnienie lekarskie (L4) (niezatwierdzona)"],
+    ["other", "Nieobecność: inna nieobecność (niezatwierdzona)"],
+  ])("says %s as %j for a requested absence, so that the words carry the difference", (type, text) => {
+    expect(formatAbsenceMarker({ type, status: "requested" })).toBe(text);
+  });
+
+  it("never names a weight of a violation: a day of absence is information, the rules say the rest", () => {
+    for (const { value } of ABSENCE_TYPES) {
+      for (const status of ["approved", "requested"] as const) {
+        expect(formatAbsenceMarker({ type: value, status })).not.toMatch(/Krytyczne|Ostrzeżenie/);
+      }
+    }
+  });
+});
+
+describe("absenceMarkers", () => {
+  // The week of Monday 2 November 2026 (days 0 to 6, Monday to Sunday), which has no holiday in it.
+  const WEEK = "2026-11-02";
+
+  function option(
+    employeeId: string,
+    type: AbsenceType,
+    status: AbsenceStatus,
+    startDate: string,
+    endDate: string = startDate,
+  ): AbsenceOption {
+    return { employeeId, type, status, startDate, endDate };
+  }
+
+  // The days of a person that the result has a cell for, as day offsets in order.
+  function daysOf(markers: Record<string, AbsenceOption>, employeeId: string): number[] {
+    return Object.keys(markers)
+      .filter((key) => key.startsWith(`${employeeId}/`))
+      .map((key) => Number(key.slice(employeeId.length + 1)))
+      .sort((a, b) => a - b);
+  }
+
+  it("gives nothing for no absence", () => {
+    expect(absenceMarkers(WEEK, [])).toStrictEqual({});
+  });
+
+  it("gives the absence for each day it covers, under the key of the person and the day, and for no other day", () => {
+    const vacation = option(ANNA, "vacation", "approved", "2026-11-03", "2026-11-05");
+
+    expect(absenceMarkers(WEEK, [vacation])).toStrictEqual({
+      [employeeDayKey(ANNA, 1)]: vacation,
+      [employeeDayKey(ANNA, 2)]: vacation,
+      [employeeDayKey(ANNA, 3)]: vacation,
+    });
+  });
+
+  it.each<{ label: string; startDate: string; endDate: string; days: number[] }>([
+    { label: "one day in the middle", startDate: "2026-11-04", endDate: "2026-11-04", days: [2] },
+    { label: "one day, the first of the schedule", startDate: "2026-11-02", endDate: "2026-11-02", days: [0] },
+    {
+      label: "one day, the last of the schedule (a Sunday)",
+      startDate: "2026-11-08",
+      endDate: "2026-11-08",
+      days: [6],
+    },
+    { label: "a weekend only: it is marked as well", startDate: "2026-11-07", endDate: "2026-11-08", days: [5, 6] },
+    {
+      label: "an absence that begins before the schedule",
+      startDate: "2026-10-28",
+      endDate: "2026-11-03",
+      days: [0, 1],
+    },
+    { label: "an absence that ends after the schedule", startDate: "2026-11-07", endDate: "2026-11-20", days: [5, 6] },
+    {
+      label: "an absence that covers the whole week and more",
+      startDate: "2026-10-30",
+      endDate: "2026-11-15",
+      days: [0, 1, 2, 3, 4, 5, 6],
+    },
+    {
+      label: "an absence that ends on the day before the schedule",
+      startDate: "2026-10-26",
+      endDate: "2026-11-01",
+      days: [],
+    },
+    {
+      label: "an absence that begins on the day after the schedule",
+      startDate: "2026-11-09",
+      endDate: "2026-11-13",
+      days: [],
+    },
+    { label: "an absence long before the schedule", startDate: "2025-01-01", endDate: "2025-01-31", days: [] },
+  ])("marks the days of $label: $startDate to $endDate", ({ startDate, endDate, days }) => {
+    const markers = absenceMarkers(WEEK, [option(ANNA, "other", "approved", startDate, endDate)]);
+
+    expect(daysOf(markers, ANNA)).toStrictEqual(days);
+    expect(Object.keys(markers)).toHaveLength(days.length);
+  });
+
+  it("keeps the days of each person apart", () => {
+    const anna = option(ANNA, "vacation", "approved", "2026-11-02", "2026-11-03");
+    const bartek = option(BARTEK, "sick_leave", "approved", "2026-11-03", "2026-11-04");
+
+    const markers = absenceMarkers(WEEK, [bartek, anna]);
+
+    expect(markers).toStrictEqual({
+      [employeeDayKey(ANNA, 0)]: anna,
+      [employeeDayKey(ANNA, 1)]: anna,
+      [employeeDayKey(BARTEK, 1)]: bartek,
+      [employeeDayKey(BARTEK, 2)]: bartek,
+    });
+  });
+
+  it("leaves a rejected absence out", () => {
+    expect(absenceMarkers(WEEK, [option(ANNA, "vacation", "rejected", "2026-11-02", "2026-11-06")])).toStrictEqual({});
+  });
+
+  it("gives a day of a rejected absence to the approved one that covers it, and to nobody when none does", () => {
+    const rejected = option(ANNA, "vacation", "rejected", "2026-11-02", "2026-11-06");
+    const approved = option(ANNA, "other", "approved", "2026-11-04", "2026-11-04");
+
+    expect(absenceMarkers(WEEK, [rejected, approved])).toStrictEqual({ [employeeDayKey(ANNA, 2)]: approved });
+  });
+
+  it("gives a requested absence on its own, with its status, so that the grid can say it is not approved", () => {
+    const requested = option(ANNA, "vacation", "requested", "2026-11-05", "2026-11-06");
+
+    const markers = absenceMarkers(WEEK, [requested]);
+
+    expect(markers).toStrictEqual({ [employeeDayKey(ANNA, 3)]: requested, [employeeDayKey(ANNA, 4)]: requested });
+    expect(markers[employeeDayKey(ANNA, 3)].status).toBe("requested");
+  });
+
+  // [the stronger one, the other one] for the day 2026-11-04 (day 2): both cover it. Each pair is tried in both orders.
+  it.each<{ label: string; stronger: AbsenceOption; weaker: AbsenceOption }>([
+    {
+      label: "an approved absence over a requested one that starts earlier and lasts longer",
+      stronger: option(ANNA, "other", "approved", "2026-11-04", "2026-11-04"),
+      weaker: option(ANNA, "vacation", "requested", "2026-11-02", "2026-11-08"),
+    },
+    {
+      label: "an approved absence over a requested one with the same days and a type that sorts first",
+      stronger: option(ANNA, "vacation", "approved", "2026-11-03", "2026-11-05"),
+      weaker: option(ANNA, "other", "requested", "2026-11-03", "2026-11-05"),
+    },
+    {
+      label: "the one that starts earlier, of two approved ones",
+      stronger: option(ANNA, "vacation", "approved", "2026-11-02", "2026-11-04"),
+      weaker: option(ANNA, "sick_leave", "approved", "2026-11-03", "2026-11-08"),
+    },
+    {
+      label: "the one that starts earlier, of two requested ones",
+      stronger: option(ANNA, "vacation", "requested", "2026-11-03", "2026-11-04"),
+      weaker: option(ANNA, "other", "requested", "2026-11-04", "2026-11-08"),
+    },
+    {
+      label: "the one that lasts longer, of two approved ones that start on the same day",
+      stronger: option(ANNA, "sick_leave", "approved", "2026-11-03", "2026-11-06"),
+      weaker: option(ANNA, "vacation", "approved", "2026-11-03", "2026-11-04"),
+    },
+    {
+      label: "the type that sorts first, of two approved ones with the same days",
+      stronger: option(ANNA, "sick_leave", "approved", "2026-11-03", "2026-11-05"),
+      weaker: option(ANNA, "vacation", "approved", "2026-11-03", "2026-11-05"),
+    },
+  ])("names $label", ({ stronger, weaker }) => {
+    const key = employeeDayKey(ANNA, 2);
+
+    expect(absenceMarkers(WEEK, [stronger, weaker])[key]).toStrictEqual(stronger);
+    expect(absenceMarkers(WEEK, [weaker, stronger])[key]).toStrictEqual(stronger);
+  });
+
+  it("names, day by day, the strongest absence that covers that day", () => {
+    const vacation = option(ANNA, "vacation", "approved", "2026-11-02", "2026-11-04");
+    const requested = option(ANNA, "other", "requested", "2026-11-04", "2026-11-06");
+    const sick = option(ANNA, "sick_leave", "approved", "2026-11-04", "2026-11-04");
+
+    expect(absenceMarkers(WEEK, [requested, sick, vacation])).toStrictEqual({
+      [employeeDayKey(ANNA, 0)]: vacation,
+      [employeeDayKey(ANNA, 1)]: vacation,
+      // 4 November: the vacation starts earliest of the approved ones, so it beats the sick leave and the requested absence.
+      [employeeDayKey(ANNA, 2)]: vacation,
+      [employeeDayKey(ANNA, 3)]: requested,
+      [employeeDayKey(ANNA, 4)]: requested,
+    });
+  });
+
+  it("names the absence that the reason of the violation names", () => {
+    // The grid and the list of violations must not give two different absences for one cell: this is the drift guard between
+    // the order of `absenceMarkers` and the order the rules rank the absences of a person in. Both types read the same in the
+    // marker and in the reason ("urlop", "zwolnienie lekarskie (L4)"), so the text of the reason can be searched for them.
+    const word = (type: AbsenceType) => formatAbsenceMarker({ type, status: "approved" }).replace("Nieobecność: ", "");
+    const reasonOf = ({ type, status, startDate, endDate }: AbsenceOption) =>
+      status === "approved"
+        ? `przypada na ${word(type)} (${formatAbsenceRange({ startDate, endDate })}).`
+        : `przypada na nieobecność jeszcze niezatwierdzoną (${word(type)}, ${formatAbsenceRange({ startDate, endDate })}).`;
+    const pairs: [AbsenceOption, AbsenceOption][] = [
+      [
+        option(ANNA, "vacation", "approved", "2026-11-02", "2026-11-04"),
+        option(ANNA, "sick_leave", "approved", "2026-11-03", "2026-11-06"),
+      ],
+      [
+        option(ANNA, "sick_leave", "approved", "2026-11-03", "2026-11-05"),
+        option(ANNA, "vacation", "approved", "2026-11-03", "2026-11-03"),
+      ],
+      [
+        option(ANNA, "sick_leave", "approved", "2026-11-03", "2026-11-05"),
+        option(ANNA, "vacation", "approved", "2026-11-03", "2026-11-05"),
+      ],
+      [
+        option(ANNA, "vacation", "requested", "2026-11-02", "2026-11-08"),
+        option(ANNA, "sick_leave", "approved", "2026-11-03", "2026-11-03"),
+      ],
+      [
+        option(ANNA, "vacation", "requested", "2026-11-03", "2026-11-05"),
+        option(ANNA, "sick_leave", "requested", "2026-11-03", "2026-11-05"),
+      ],
+    ];
+
+    for (const pair of pairs) {
+      for (const absences of [pair, [pair[1], pair[0]]]) {
+        const marked = absenceMarkers(WEEK, absences)[employeeDayKey(ANNA, 1)];
+        const violations = evaluateSchedule({
+          startDate: WEEK,
+          staffing: [],
+          assignments: [{ shiftId: "s-1", dayOffset: 1, employeeId: ANNA }],
+          shifts: [{ id: "s-1", name: "Poranna", startMinute: 360, endMinute: 840 }],
+          employees: [{ id: ANNA, name: "Kowalska Anna", fte: { numerator: 1, denominator: 1 } }],
+          absences,
+        }).filter(({ rule }) => rule === "absence" || rule === "absence_requested");
+
+        expect(violations).toHaveLength(1);
+        expect(violations[0].reason).toContain(reasonOf(marked));
+      }
+    }
+  });
+
+  it("gives each value as a new object with exactly the five fields of an option, whatever the input carries", () => {
+    const row = {
+      ...option(ANNA, "vacation", "approved", "2026-11-03", "2026-11-04"),
+      id: "a-1",
+      createdAt: "2026-11-01T10:00:00Z",
+    };
+
+    const markers = absenceMarkers(WEEK, [row]);
+
+    for (const marker of Object.values(markers)) {
+      expect(Object.keys(marker).sort()).toStrictEqual(["employeeId", "endDate", "startDate", "status", "type"]);
+      expect(marker).not.toBe(row);
+    }
+    expect(JSON.stringify(markers)).not.toContain("a-1");
+    expect(JSON.stringify(markers)).not.toContain("createdAt");
+  });
+
+  it("lists the keys in code-unit order and gives the same object for repeated calls and for any order of the input", () => {
+    const roster = [
+      option(BARTEK, "sick_leave", "approved", "2026-11-03", "2026-11-04"),
+      option(ANNA, "vacation", "approved", "2026-11-02", "2026-11-03"),
+      option(ANNA, "other", "requested", "2026-11-03", "2026-11-06"),
+      option(ANNA, "sick_leave", "approved", "2026-11-03", "2026-11-03"),
+      option(ANNA, "vacation", "rejected", "2026-11-05", "2026-11-08"),
+      option(BARTEK, "other", "approved", "2026-10-20", "2026-11-02"),
+      option(ANNA, "other", "approved", "2026-11-12", "2026-11-13"),
+    ];
+
+    const markers = expectDeterministic(
+      (absences: readonly AbsenceOption[]) => absenceMarkers(WEEK, absences),
+      roster,
+      { variants: [1, 2, 3, 4, 5, 6].map((seed) => seededShuffle(roster, seed)) },
+    );
+
+    expect(Object.keys(markers)).toStrictEqual([...Object.keys(markers)].sort());
+    // Anna: days 0 to 4 (the rejected absence and the one in the week after are left out); Bartek: days 0 to 2.
+    expect(Object.keys(markers)).toHaveLength(8);
+    // Day 1 of Anna: the vacation (approved, starts first) beats the sick leave of the same day and the requested absence.
+    expect(markers[employeeDayKey(ANNA, 1)].type).toBe("vacation");
+    expect(markers[employeeDayKey(ANNA, 3)].status).toBe("requested");
+    expect(employeeDayKey(ANNA, 5) in markers).toBe(false);
+  });
+
+  it("leaves the absences unchanged, whether they are frozen or not", () => {
+    const absences = Object.freeze(
+      [
+        option(ANNA, "vacation", "approved", "2026-11-02", "2026-11-04"),
+        option(ANNA, "other", "requested", "2026-11-03", "2026-11-05"),
+      ].map((entry) => Object.freeze(entry)),
+    );
+    const before = structuredClone(absences);
+
+    const markers = absenceMarkers(WEEK, absences);
+
+    expect(structuredClone(absences)).toStrictEqual(before);
+    expect(Object.isFrozen(markers)).toBe(false);
+    expect(Object.keys(markers)).toHaveLength(4);
+  });
+
+  it("gives the days of a week that reaches into 2100 from the last accepted day", () => {
+    // Thursday 31 December 2099 is day 0, Friday 1 January 2100 day 1, Saturday 2 January 2100 day 2.
+    const absence = option(ANNA, "vacation", "approved", "2100-01-01", "2100-01-02");
+
+    expect(daysOf(absenceMarkers("2099-12-31", [absence]), ANNA)).toStrictEqual([1, 2]);
+  });
+
+  it.each(["", "2026-02-30", "2019-12-31", "2100-01-01", "2026-11-02 "])(
+    "throws a RangeError for the start date %j",
+    (startDate) => {
+      expect(() => absenceMarkers(startDate, [])).toThrow(RangeError);
+    },
+  );
+});
+
 describe("the time zone", () => {
   it("calls no method of Date that reads or writes the local time", () => {
     const called = localDateMethodsCalledBy(() => {
@@ -894,6 +1223,14 @@ describe("the time zone", () => {
         { id: "a", startDate: "2026-11-02" },
         { id: "b", startDate: "2026-11-03" },
       ]);
+      absenceMarkers("2026-11-02", [
+        { employeeId: ANNA, type: "vacation", status: "approved", startDate: "2026-10-30", endDate: "2026-11-03" },
+        { employeeId: ANNA, type: "other", status: "requested", startDate: "2026-11-03", endDate: "2026-11-20" },
+      ]);
+      absenceMarkers("2099-12-31", [
+        { employeeId: ANNA, type: "vacation", status: "approved", startDate: "2100-01-01", endDate: "2100-01-02" },
+      ]);
+      formatAbsenceMarker({ type: "sick_leave", status: "requested" });
     });
 
     expect(called).toStrictEqual([]);

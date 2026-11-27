@@ -20,7 +20,10 @@
 // shift button of which person is on and which violations of the work-time rules the page lists for it: a schedule of
 // four people, one for each rule scenario, is read down to the counter, every item with its reason, the marks of the
 // day cells and what goes when one assignment is taken off, and, on schedules of their own, the hours of each person
-// against the weekly norm of their FTE, down to the text of the column "Godziny", also in a week with a holiday; and
+// against the weekly norm of their FTE, down to the text of the column "Godziny", also in a week with a holiday, and, on
+// two more schedules, the absences of the people (a shift on a day of an approved absence is a critical item, one on a day of
+// a requested absence a warning, a rejected absence counts for nothing, an approved one lowers the norm, the day cells name
+// the absence as text, and removing an absence takes away only what it caused); and
 // the pages that list employees for the schedule form and the assignment grid carry no e-mail address), that the
 // invitation mails link to the set-password page, the whole invitation flow (invite, invite again, password reset, a
 // foreign account, the tokens from the admin API instead of the mails, the new employee's session, the activation time
@@ -1441,6 +1444,8 @@ const absenceIdsOfTheRun = () =>
     neighbourAbsenceId,
     requestedApiAbsenceId,
     rejectedApiAbsenceId,
+    // The absences of the two schedules of the assignment page steps (the ones the steps removed are asked for as well).
+    ...Object.values(absAbsenceIds),
   ].filter(isUuidText);
 
 // A row of the table has exactly these seven columns: there is no text column, an L4 is health data.
@@ -2535,7 +2540,8 @@ const noPersonalViolations = [apiEmployeeName, secondApiEmployeeName].map((perso
 // person's FTE, on two lines (two divs, with one space between them in the markup), so that the text of the cell without its
 // tags reads "<worked> z <norm> <difference>", for instance "8 h z 32 h mniej o 24 h". The worked hours are the full durations
 // of the shifts that start in the schedule (a night shift on the last day counts in full), the norm is 40 h of a full FTE less
-// 8 h for each holiday on a day other than Sunday in the seven days, times the FTE, and the difference is in words ("mniej o",
+// 8 h for each holiday on a day other than Sunday in the seven days (and, since S-07, for each day from Monday to Friday that is
+// no holiday and that an approved absence of the person covers), times the FTE, and the difference is in words ("mniej o",
 // "więcej o", or "równo z normą"). A person without a shift reads "0 min z <norm>". Every step writes the texts out for the
 // data of its schedule, so a wrong person, sum, norm or difference fails.
 const hoursColumnOf = (html) =>
@@ -2588,7 +2594,7 @@ const hoursCellsExcerpt = (html) => JSON.stringify({ header: hoursHeaderOf(html)
 // The paragraph under the people's table: what the column is made of and what it leaves out. It is one text node, so the page
 // holds it as one string, between the people's table and the section of the list of violations.
 const hoursNote =
-  "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu (40 h pomniejszone o 8 h za każde święto w dzień inny niż niedziela, proporcjonalnie do etatu). Nieobecności nie są jeszcze uwzględnione. Przekroczenie normy pokazuje lista wskazań.";
+  "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu (40 h pomniejszone o 8 h za każde święto w dzień inny niż niedziela i za każdy dzień zatwierdzonej nieobecności od poniedziałku do piątku, proporcjonalnie do etatu). Przekroczenie normy pokazuje lista wskazań.";
 const hasHoursNote = (html) => {
   const at = html.indexOf(hoursNote);
   const sectionAt = html.indexOf('aria-labelledby="violations-heading"');
@@ -4095,6 +4101,954 @@ const absenceRouteSteps = [
   ),
 ];
 
+// The absences on the assignment page (S-07). Two schedules of their own, with people of their own (the e-mails and names start
+// with "smoke-" / "Smoke-", so the final cleanup finds them), all on a full FTE and one shift a day or two. Both start before
+// 2026-11-15, so the steps of the schedule list keep their result. The week of Monday 02.11.2026 has no holiday (the norm of a
+// full FTE is 40 h), the week from Tuesday 10.11.2026 has the holiday of Wednesday 11.11 (32 h). The planner puts the people on
+// the cells through the assignment route and writes the approved absences through the app (`POST /api/absences`); the
+// requested and the rejected ones can only be written by the service role, as no session may write a status. The page steps read
+// the HTML of `/schedules/<id>/assign` and compare it with the data written out here: the counter and every item of the list
+// (the weight and the whole reason, in the order of the rules), the column "Wskazania", the notes under the buttons of the day
+// cells (the absence as text, then the mark of a violation), and the column "Godziny". A first state, before any absence is
+// written, shows that the absences are what changes the page; the neighbour steps then remove one absence at a time
+// (`DELETE /api/absences/<id>`) and read the page again, so what goes is what that absence caused and nothing else.
+// The week schedule (M is the shift of the API steps, 06:00-14:00, V ends exactly at midnight, 16:00-00:00, and U runs across it,
+// 18:00-02:00, both of 8 h and made by the steps):
+//   hit     (a)  M on days 0 and 2, vacation 03.11-05.11 approved: day 2 is critical, day 0 is not; the norm is 16 h (3 days)
+//   req     (b)  M on day 1, vacation 03.11-04.11 requested: a warning, and the norm stays 40 h
+//   rej     (c)  M on days 1 and 2, vacation 02.11-06.11 rejected: nothing at all, and the norm stays 40 h
+//   night   (d)  U on day 1 (18:00 to 02:00 on day 2), other 04.11-05.11 approved: the night runs into the first day of the
+//                absence, so it is critical although the cell of day 1 is not a day of absence
+//   edge    (d)  V on day 2 (ends at 00:00 of day 3), sick leave 05.11-06.11 approved: it ends exactly where the absence starts,
+//                so there is nothing
+//   tail    (d)  U on day 6 (runs to 02:00 of day 7), vacation 09.11-10.11 approved, outside the seven days: critical (the
+//                absences are read for the day after the schedule as well) and the norm stays 40 h
+//   mix     (e)  M on days 2 and 3, vacation 02.11-08.11 requested and other 04.11 approved: day 2 is critical (the approved
+//                absence is the strongest), day 3 a warning; the day cells name the approved one on day 2
+//   two     (e)  M on days 2 and 4, vacation 03.11-05.11 and sick leave 04.11-06.11, both approved: one item for each shift
+//                (the one that starts earlier is named on day 2), the norm is 8 h (4 days, each counted once) and 16 h is over it
+//   norm    (f)  M on days 0, 4 and 5, vacation 03.11-05.11 approved: the norm is 16 h and 24 h is over it (a warning)
+//   weekend (f)  M on days 0 and 1, other 07.11-08.11 approved (Saturday and Sunday): the norm stays 40 h
+//   none         nobody and nothing: the person with no absence and no shift
+// The holiday schedule (M on days 4 and 6, that is Saturday 14.11 and Monday 16.11):
+//   hol     (f)  M on day 4, vacation 10.11-13.11 approved (a holiday in the middle): 40 h less the holiday and the 3 other
+//                working days is 8 h, so 8 h is equal to the norm
+//   holover (f)  M on days 4 and 6, sick leave 10.11-13.11 approved: 16 h is over the same norm of 8 h (a warning that names both)
+//   holonly (f)  M on day 4, other 11.11 approved, the day of the holiday only: the holiday is counted once, so the norm is 32 h
+const absScheduleLabel = `Smoke-${runId}-absences`;
+const absHolidayScheduleLabel = `Smoke-${runId}-absences-holiday`;
+const absWeek = {
+  startDate: "2026-11-02",
+  period: `02.11${EN_DASH}08.11.2026`,
+  days: ["pon. 02.11", "wt. 03.11", "śr. 04.11", "czw. 05.11", "pt. 06.11", "sob. 07.11", "niedz. 08.11"],
+};
+const absHoliday = {
+  startDate: "2026-11-10",
+  period: `10.11${EN_DASH}16.11.2026`,
+  days: ["wt. 10.11", "śr. 11.11", "czw. 12.11", "pt. 13.11", "sob. 14.11", "niedz. 15.11", "pon. 16.11"],
+};
+let absScheduleId;
+let absHolidayScheduleId;
+const absScheduleIdOf = () => absScheduleId;
+const absHolidayScheduleIdOf = () => absHolidayScheduleId;
+
+// The two shifts the steps make: one that ends at 00:00 (the end is the start of the next day, a boundary the absence must not
+// cross) and one that crosses midnight and is no longer than 8 h (so that no rule of the hours of a day joins the list).
+const absEveningShift = { name: `Smoke-${runId}-Wieczorna`, startTime: "16:00", endTime: "00:00" };
+const absNightShift = { name: `Smoke-${runId}-Nocka`, startTime: "18:00", endTime: "02:00" };
+let absEveningShiftId;
+let absNightShiftId;
+const absShifts = {
+  M: rulesShifts.M,
+  V: { name: absEveningShift.name, hours: shiftHours("16:00", "00:00"), id: () => absEveningShiftId },
+  U: { name: absNightShift.name, hours: shiftHours("18:00", "02:00"), id: () => absNightShiftId },
+};
+const plannerCreatesAbsShift = (what, input, startMinute, endMinute, remember) => [
+  `${planner.label}: POST /api/shifts creates ${what}`,
+  async () => {
+    const result = await request(planner, "/api/shifts", { method: "POST", json: input });
+    remember(parseJson(result.body)?.shift?.id);
+    return result;
+  },
+  {
+    status: 201,
+    contentType: "application/json",
+    check: (body) =>
+      typeof body.shift.id === "string" &&
+      body.shift.name === input.name &&
+      body.shift.startMinute === startMinute &&
+      body.shift.endMinute === endMinute,
+    describe: `the shift ${input.startTime}-${input.endTime} (minutes ${startMinute} to ${endMinute}) with its own id`,
+  },
+];
+
+const absWeekRoster = ["hit", "req", "rej", "night", "edge", "tail", "mix", "two", "norm", "weekend", "none"];
+const absHolidayRoster = ["hol", "holover", "holonly"];
+const absPeople = Object.fromEntries(
+  [...absWeekRoster, ...absHolidayRoster].map((who) => [
+    who,
+    {
+      firstName: "Ala",
+      lastName: `Smoke-${runId}-abs-${who}`,
+      email: `smoke-${runId}-abs-${who}@example.com`,
+      fteNumerator: 1,
+      fteDenominator: 1,
+    },
+  ]),
+);
+const absIds = {};
+const absName = (who) => personName(absPeople[who]);
+
+// [person, shift, day] of the assignments the steps add, one request each. The staffing of every cell is the number of people
+// put on it, so no shortage and no excess is in the way of what the steps look at.
+const absAssignments = [
+  ["hit", "M", 0],
+  ["hit", "M", 2],
+  ["req", "M", 1],
+  ["rej", "M", 1],
+  ["rej", "M", 2],
+  ["night", "U", 1],
+  ["edge", "V", 2],
+  ["tail", "U", 6],
+  ["mix", "M", 2],
+  ["mix", "M", 3],
+  ["two", "M", 2],
+  ["two", "M", 4],
+  ["norm", "M", 0],
+  ["norm", "M", 4],
+  ["norm", "M", 5],
+  ["weekend", "M", 0],
+  ["weekend", "M", 1],
+];
+const absHolidayAssignments = [
+  ["hol", "M", 4],
+  ["holover", "M", 4],
+  ["holover", "M", 6],
+  ["holonly", "M", 4],
+];
+const absStaffing = (assignments) => {
+  const counts = new Map();
+  for (const [, shift, day] of assignments) {
+    counts.set(`${shift}/${day}`, (counts.get(`${shift}/${day}`) ?? 0) + 1);
+  }
+  return [...counts].map(([cell, count]) => {
+    const [shift, day] = cell.split("/");
+    return { shiftId: absShifts[shift].id(), dayOffset: Number(day), requiredCount: count };
+  });
+};
+const absSchedule = () => ({
+  startDate: absWeek.startDate,
+  label: absScheduleLabel,
+  staffing: absStaffing(absAssignments),
+  employeeIds: absWeekRoster.map((who) => absIds[who]),
+});
+const absHolidaySchedule = () => ({
+  startDate: absHoliday.startDate,
+  label: absHolidayScheduleLabel,
+  staffing: absStaffing(absHolidayAssignments),
+  employeeIds: absHolidayRoster.map((who) => absIds[who]),
+});
+const plannerCreatesAbsSchedule = (what, state, remember) => [
+  `${planner.label}: POST /api/schedules creates ${what}`,
+  async () => {
+    const result = await request(planner, "/api/schedules", { method: "POST", json: state() });
+    remember(parseJson(result.body)?.id);
+    return result;
+  },
+  {
+    status: 201,
+    contentType: "application/json",
+    cacheControl: "no-store",
+    check: (body) => isUuidText(body.id) && Object.keys(body).length === 1,
+    describe: "the id of the new schedule and nothing else",
+  },
+];
+
+const absAssignmentsUrl = (id) => () => `/api/schedules/${id()}/assignments`;
+const absBody = ([who, shift, day]) => ({
+  shiftId: absShifts[shift].id(),
+  dayOffset: day,
+  employeeId: absIds[who],
+});
+const absTag = ([who, shift, day]) => `${who}/${shift}/${day}`;
+const plannerAddsAbsAssignment = (id, assignment) =>
+  plannerCallsAssignments(
+    "POST",
+    `adds ${absTag(assignment)}`,
+    absAssignmentsUrl(id),
+    () => ({ json: absBody(assignment) }),
+    wasWritten,
+  );
+// The rows of the assignment table of a schedule are exactly `expected`, each with the source the column defaults to.
+const isAbsAssignments = (id, expected) => (rows) =>
+  Array.isArray(rows) &&
+  rows.every((row) => row.schedule_id === id() && row.source === "manual") &&
+  sameItems(
+    rows.map((row) => assignmentKey(row.shift_id, row.day_offset, row.employee_id)),
+    expected.map((assignment) => {
+      const { shiftId, dayOffset, employeeId } = absBody(assignment);
+      return assignmentKey(shiftId, dayOffset, employeeId);
+    }),
+  );
+const plannerReadsAbsAssignments = (id, name, expected, what) => [
+  `${planner.label}: schedule_assignments of ${name} read`,
+  async () => assignmentsTable("GET", { token: await accessToken(planner), query: `?schedule_id=eq.${id()}` }),
+  {
+    status: 200,
+    check: isAbsAssignments(id, expected),
+    describe: `exactly the assignments of ${what}, all with source manual`,
+  },
+];
+
+// The absences. `who` is a person, `status` is what the table holds. The ids are only known once the create steps have run.
+const absAbsences = {
+  hit: { who: "hit", type: "vacation", status: "approved", startDate: "2026-11-03", endDate: "2026-11-05" },
+  req: { who: "req", type: "vacation", status: "requested", startDate: "2026-11-03", endDate: "2026-11-04" },
+  rej: { who: "rej", type: "vacation", status: "rejected", startDate: "2026-11-02", endDate: "2026-11-06" },
+  night: { who: "night", type: "other", status: "approved", startDate: "2026-11-04", endDate: "2026-11-05" },
+  edge: { who: "edge", type: "sick_leave", status: "approved", startDate: "2026-11-05", endDate: "2026-11-06" },
+  tail: { who: "tail", type: "vacation", status: "approved", startDate: "2026-11-09", endDate: "2026-11-10" },
+  mixReq: { who: "mix", type: "vacation", status: "requested", startDate: "2026-11-02", endDate: "2026-11-08" },
+  mixOk: { who: "mix", type: "other", status: "approved", startDate: "2026-11-04", endDate: "2026-11-04" },
+  twoVac: { who: "two", type: "vacation", status: "approved", startDate: "2026-11-03", endDate: "2026-11-05" },
+  twoSick: { who: "two", type: "sick_leave", status: "approved", startDate: "2026-11-04", endDate: "2026-11-06" },
+  norm: { who: "norm", type: "vacation", status: "approved", startDate: "2026-11-03", endDate: "2026-11-05" },
+  weekend: { who: "weekend", type: "other", status: "approved", startDate: "2026-11-07", endDate: "2026-11-08" },
+  hol: { who: "hol", type: "vacation", status: "approved", startDate: "2026-11-10", endDate: "2026-11-13" },
+  holover: { who: "holover", type: "sick_leave", status: "approved", startDate: "2026-11-10", endDate: "2026-11-13" },
+  holonly: { who: "holonly", type: "other", status: "approved", startDate: "2026-11-11", endDate: "2026-11-11" },
+};
+const absAbsenceIds = {};
+const absAllKeys = Object.keys(absAbsences);
+const absApprovedKeys = absAllKeys.filter((key) => absAbsences[key].status === "approved");
+const absWithout = (removed) => absAllKeys.filter((key) => !removed.includes(key));
+// The same absence as the app takes it, and as the table holds it (a row has the id and every column).
+const absAbsenceJson = (key) => {
+  const { who, type, startDate, endDate } = absAbsences[key];
+  return { employeeId: absIds[who], type, startDate, endDate };
+};
+const absAbsenceBody = (key) => {
+  const { who, type, status, startDate, endDate } = absAbsences[key];
+  return { employee_id: absIds[who], type, status, start_date: startDate, end_date: endDate };
+};
+const absAbsenceRow = (key) => storedAbsence(absAbsenceIds[key], absAbsenceBody(key));
+const plannerAddsAbsAbsence = (key) =>
+  plannerCreatesAbsence(
+    `creates the absence ${key} of the absence schedules`,
+    () => ({ json: absAbsenceJson(key) }),
+    (id) => {
+      absAbsenceIds[key] = id;
+    },
+    {
+      check: (body) =>
+        isUuidText(body.absence.id) &&
+        body.absence.status === "approved" &&
+        body.absence.employeeId === absIds[absAbsences[key].who] &&
+        body.absence.type === absAbsences[key].type &&
+        body.absence.startDate === absAbsences[key].startDate &&
+        body.absence.endDate === absAbsences[key].endDate,
+      describe: `{ absence } of ${absAbsences[key].who}: ${absAbsences[key].type} on ${absAbsences[key].startDate} to ${absAbsences[key].endDate}, approved`,
+    },
+  );
+// A status other than approved is what no session may write, so the service role writes it.
+const serviceRoleAddsAbsAbsence = (key) =>
+  serviceRoleInsertsAbsences(
+    `writes the ${absAbsences[key].status} absence ${key} of the absence schedules`,
+    () => [absAbsenceBody(key)],
+    ([id]) => {
+      absAbsenceIds[key] = id;
+    },
+    `the ${absAbsences[key].status} ${absAbsences[key].type} of ${absAbsences[key].who}`,
+  );
+// Every absence of the people of both schedules, which must be exactly the ones of `keys`.
+const plannerReadsAbsAbsences = (name, keys, what) => [
+  `${planner.label}: absences of the absence schedules read ${name}`,
+  async () =>
+    absencesTable("GET", {
+      token: await accessToken(planner),
+      query: `?employee_id=in.(${Object.values(absIds).join(",")})`,
+    }),
+  {
+    status: 200,
+    check: isAbsences(() => keys.map(absAbsenceRow)),
+    describe: `exactly ${what}, each with the seven columns of the table`,
+  },
+];
+// The absences the neighbour steps remove, in this order: the week schedule first, then the holiday one. A step removes one more
+// and reads the table: only that absence is gone, and every other row is there with every column as it was.
+const absRemovalOrder = ["hit", "twoVac", "mixOk", "night", "tail", "holover"];
+const absRemovedUpTo = (key) => absRemovalOrder.slice(0, absRemovalOrder.indexOf(key) + 1);
+const plannerRemovesAbsAbsence = (key) => [
+  plannerDeletesAbsence(
+    `/api/absences/<id> removes the absence ${key}`,
+    () => `/api/absences/${absAbsenceIds[key]}`,
+    wasWritten,
+  ),
+  plannerReadsAbsAbsences(
+    `holds the rest after the DELETE of ${key}`,
+    absWithout(absRemovedUpTo(key)),
+    `the ${absAllKeys.length - absRemovedUpTo(key).length} absences that are left: every one but ${absRemovedUpTo(key).join(", ")}`,
+  ),
+];
+
+// What the page must say, written out the way the rules word it (src/lib/services/rules.ts): the type of an absence after
+// "przypada na", in the middle of a sentence and in the marker of a cell, and the days of an absence for people.
+const absAccusative = { vacation: "urlop", sick_leave: "zwolnienie lekarskie (L4)", other: "inną nieobecność" };
+const absLowerLabel = { vacation: "urlop", sick_leave: "zwolnienie lekarskie (L4)", other: "inna nieobecność" };
+const absDate = (isoDate) => `${isoDate.slice(8, 10)}.${isoDate.slice(5, 7)}`;
+const absRange = ({ startDate, endDate }) =>
+  startDate === endDate
+    ? `${absDate(startDate)}.${startDate.slice(0, 4)}`
+    : `${absDate(startDate)}${EN_DASH}${absDate(endDate)}.${endDate.slice(0, 4)}`;
+// What a day cell says of the absence: the type in words, and "(niezatwierdzona)" for one that is not approved yet.
+const absMarker = ({ type, status }) =>
+  `Nieobecność: ${absLowerLabel[type]}${status === "approved" ? "" : " (niezatwierdzona)"}`;
+// The marker of the absence `key` on each of `days`, as { day: text }.
+const awayOf = (key, days) => Object.fromEntries(days.map((day) => [day, absMarker(absAbsences[key])]));
+
+const ABS_RULES_ORDER = [
+  "daily_rest",
+  "daily_hours",
+  "weekly_hours",
+  "weekly_rest",
+  "absence",
+  "weekly_norm",
+  "understaffed",
+  "absence_requested",
+];
+// The order of the rules (the weight, the rule, the person by id, then the day of the first anchor), as `compareItems` has it
+// for the rules schedule.
+const absCompareItems = (a, b) =>
+  SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity) ||
+  ABS_RULES_ORDER.indexOf(a.rule) - ABS_RULES_ORDER.indexOf(b.rule) ||
+  compareIds(absIds[a.who], absIds[b.who]) ||
+  a.day - b.day;
+const absListOf = (items) =>
+  [...items].sort(absCompareItems).map((item) => `${SEVERITY_WORDS[item.severity]} ${item.reason}`);
+const absCell = (shift, day) => `${absShifts[shift].name} (${absWeek.days[day]}, ${absShifts[shift].hours})`;
+// A shift that overlaps an absence of its person: critical for an approved one, a warning for a requested one.
+const absCollisionItem = (who, shift, day, key) => {
+  const absence = absAbsences[key];
+  const approved = absence.status === "approved";
+  const head = `${absName(who)}: zmiana ${absCell(shift, day)} przypada na`;
+  return ruleItem(
+    approved ? "critical" : "warning",
+    approved ? "absence" : "absence_requested",
+    who,
+    day,
+    approved
+      ? `${head} ${absAccusative[absence.type]} (${absRange(absence)}).`
+      : `${head} nieobecność jeszcze niezatwierdzoną (${absLowerLabel[absence.type]}, ${absRange(absence)}).`,
+  );
+};
+// The week above the norm that an approved absence (and a holiday) has lowered; the FTE is full.
+const absNormItem = (who, total, limit, lowered, period = absWeek.period) =>
+  ruleItem(
+    "warning",
+    "weekly_norm",
+    who,
+    0,
+    `${absName(who)}: w tygodniu grafiku (${period}) łączny czas pracy ${total}, norma tygodniowa (pełny etat) to ${limit} po pomniejszeniu o ${lowered}.`,
+  );
+const absItems = {
+  hit: () => absCollisionItem("hit", "M", 2, "hit"),
+  req: () => absCollisionItem("req", "M", 1, "req"),
+  night: () => absCollisionItem("night", "U", 1, "night"),
+  tail: () => absCollisionItem("tail", "U", 6, "tail"),
+  mixOkOnDay2: () => absCollisionItem("mix", "M", 2, "mixOk"),
+  mixReqOnDay2: () => absCollisionItem("mix", "M", 2, "mixReq"),
+  mixReqOnDay3: () => absCollisionItem("mix", "M", 3, "mixReq"),
+  twoVacOnDay2: () => absCollisionItem("two", "M", 2, "twoVac"),
+  twoSickOnDay2: () => absCollisionItem("two", "M", 2, "twoSick"),
+  twoSickOnDay4: () => absCollisionItem("two", "M", 4, "twoSick"),
+  norm: () => absNormItem("norm", "24 h", "16 h", "nieobecność (3 dni: 03.11, 04.11, 05.11)"),
+  twoNorm: () => absNormItem("two", "16 h", "8 h", "nieobecność (4 dni: 03.11, 04.11, 05.11, 06.11)"),
+  holoverNorm: () =>
+    absNormItem("holover", "16 h", "8 h", "święto 11.11 i nieobecność (3 dni: 10.11, 12.11, 13.11)", absHoliday.period),
+};
+
+// What the page says about each person in a state: the text of the column "Wskazania", the marks of the cells ({ day: text },
+// the violations that sit on an assignment of that day), the markers of the absences ({ day: text }) and the column "Godziny".
+const quiet = { column: "brak", marks: {}, away: {} };
+// Before any absence is written: no item, nobody is away, and the norm of everybody is the 40 h of the week.
+const absBaselinePeople = {
+  hit: { ...quiet, hours: "16 h z 40 h mniej o 24 h" },
+  req: { ...quiet, hours: "8 h z 40 h mniej o 32 h" },
+  rej: { ...quiet, hours: "16 h z 40 h mniej o 24 h" },
+  night: { ...quiet, hours: "8 h z 40 h mniej o 32 h" },
+  edge: { ...quiet, hours: "8 h z 40 h mniej o 32 h" },
+  tail: { ...quiet, hours: "8 h z 40 h mniej o 32 h" },
+  mix: { ...quiet, hours: "16 h z 40 h mniej o 24 h" },
+  two: { ...quiet, hours: "16 h z 40 h mniej o 24 h" },
+  norm: { ...quiet, hours: "24 h z 40 h mniej o 16 h" },
+  weekend: { ...quiet, hours: "16 h z 40 h mniej o 24 h" },
+  none: { ...quiet, hours: "0 min z 40 h mniej o 40 h" },
+};
+const absAllPeople = {
+  ...absBaselinePeople,
+  // (a) day 2 is on the absence and critical, day 0 is not; the 3 days take the norm down to 16 h, which 16 h equals.
+  hit: {
+    column: "1 krytyczne",
+    marks: { 2: "Krytyczne: 1" },
+    away: awayOf("hit", [1, 2, 3]),
+    hours: "16 h z 16 h równo z normą",
+  },
+  // (b) a requested absence warns and lowers nothing.
+  req: {
+    column: "1 ostrzeżenie",
+    marks: { 1: "Ostrzeżenie: 1" },
+    away: awayOf("req", [1, 2]),
+    hours: "8 h z 40 h mniej o 32 h",
+  },
+  // (c) a rejected absence is nowhere: the baseline of the person stays.
+  // (d) the mark is on day 1 (the shift), the absence markers on days 2 and 3 (the absence); 2 days take 16 h off the norm.
+  night: {
+    column: "1 krytyczne",
+    marks: { 1: "Krytyczne: 1" },
+    away: awayOf("night", [2, 3]),
+    hours: "8 h z 24 h mniej o 16 h",
+  },
+  // (d) a shift that ends exactly where the absence starts is no violation; the absence still lowers the norm by its 2 days.
+  edge: { ...quiet, away: awayOf("edge", [3, 4]), hours: "8 h z 24 h mniej o 16 h" },
+  // (d) the absence is outside the seven days: no marker, no lower norm, but the night of day 6 runs into it.
+  tail: { column: "1 krytyczne", marks: { 6: "Krytyczne: 1" }, away: {}, hours: "8 h z 40 h mniej o 32 h" },
+  // (e) the approved absence is the strongest on day 2 and is named in the cell; the rest of the week is the requested one.
+  mix: {
+    column: "1 krytyczne, 1 ostrzeżenie",
+    marks: { 2: "Krytyczne: 1", 3: "Ostrzeżenie: 1" },
+    away: { ...awayOf("mixReq", [0, 1, 3, 4, 5, 6]), ...awayOf("mixOk", [2]) },
+    hours: "16 h z 32 h mniej o 16 h",
+  },
+  // (e) the vacation starts earlier, so it is the one named on days 1 to 3; the sick leave is on day 4 alone. The union of the
+  // two is 4 working days, counted once each: the norm is 8 h.
+  two: {
+    column: "2 krytyczne, 1 ostrzeżenie",
+    marks: { 2: "Krytyczne: 1", 4: "Krytyczne: 1" },
+    away: { ...awayOf("twoVac", [1, 2, 3]), ...awayOf("twoSick", [4]) },
+    hours: "16 h z 8 h więcej o 8 h",
+  },
+  // (f) 3 working days of absence: the norm is 16 h and 24 h is a warning against it; the shifts are on other days.
+  norm: {
+    column: "1 ostrzeżenie",
+    marks: {},
+    away: awayOf("norm", [1, 2, 3]),
+    hours: "24 h z 16 h więcej o 8 h",
+  },
+  // (f) an absence on Saturday and Sunday is marked and takes nothing off the norm.
+  weekend: { ...quiet, away: awayOf("weekend", [5, 6]), hours: "16 h z 40 h mniej o 24 h" },
+};
+
+// The states of the week schedule the steps read: the one before any absence, the one with every absence, and then one state
+// for each absence removed (cumulatively), each differing from the one before it in the person of that absence only.
+const absWeekStates = [
+  {
+    what: "before any absence is written",
+    people: absBaselinePeople,
+    counter: noViolationsCounter,
+    items: () => [],
+    listDescribe: 'the counter "Brak wskazań" and no item: the same shifts and nobody away',
+  },
+  {
+    what: "with all twelve absences of the week",
+    people: absAllPeople,
+    counter: "Wskazania: 6 krytycznych, 4 ostrzeżenia",
+    items: () => [
+      absItems.hit(),
+      absItems.night(),
+      absItems.tail(),
+      absItems.mixOkOnDay2(),
+      absItems.twoVacOnDay2(),
+      absItems.twoSickOnDay4(),
+      absItems.norm(),
+      absItems.twoNorm(),
+      absItems.req(),
+      absItems.mixReqOnDay3(),
+    ],
+    listDescribe:
+      'the counter "Wskazania: 6 krytycznych, 4 ostrzeżenia" and the ten items in the order of the rules: critical absences (hit on day 2, night on day 1 across midnight, tail on day 6 into the day after the schedule, mix on day 2 with the approved absence, two on days 2 and 4 each with the absence that starts earlier there), then the warnings (norm and two over the lowered norm, then the requested absences of req on day 1 and of mix on day 3); none for rej, edge and weekend',
+  },
+  {
+    what: "after the absence of hit is removed",
+    removed: ["hit"],
+    people: { ...absAllPeople, hit: absBaselinePeople.hit },
+    counter: "Wskazania: 5 krytycznych, 4 ostrzeżenia",
+    items: () => [
+      absItems.night(),
+      absItems.tail(),
+      absItems.mixOkOnDay2(),
+      absItems.twoVacOnDay2(),
+      absItems.twoSickOnDay4(),
+      absItems.norm(),
+      absItems.twoNorm(),
+      absItems.req(),
+      absItems.mixReqOnDay3(),
+    ],
+    listDescribe:
+      'the counter "Wskazania: 5 krytycznych, 4 ostrzeżenia": the item of hit is gone and the nine others are as before',
+  },
+  {
+    what: "after the vacation of two is removed too",
+    removed: ["hit", "twoVac"],
+    people: {
+      ...absAllPeople,
+      hit: absBaselinePeople.hit,
+      two: {
+        column: "2 krytyczne",
+        marks: { 2: "Krytyczne: 1", 4: "Krytyczne: 1" },
+        away: awayOf("twoSick", [2, 3, 4]),
+        hours: "16 h z 16 h równo z normą",
+      },
+    },
+    counter: "Wskazania: 5 krytycznych, 3 ostrzeżenia",
+    items: () => [
+      absItems.night(),
+      absItems.tail(),
+      absItems.mixOkOnDay2(),
+      absItems.twoSickOnDay2(),
+      absItems.twoSickOnDay4(),
+      absItems.norm(),
+      absItems.req(),
+      absItems.mixReqOnDay3(),
+    ],
+    listDescribe:
+      'the counter "Wskazania: 5 krytycznych, 3 ostrzeżenia": two still has two critical items, now both with the sick leave (04.11-06.11), and the warning about its norm is gone (3 days: 16 h of 16 h)',
+  },
+  {
+    what: "after the approved absence of mix is removed too",
+    removed: ["hit", "twoVac", "mixOk"],
+    people: {
+      ...absAllPeople,
+      hit: absBaselinePeople.hit,
+      two: {
+        column: "2 krytyczne",
+        marks: { 2: "Krytyczne: 1", 4: "Krytyczne: 1" },
+        away: awayOf("twoSick", [2, 3, 4]),
+        hours: "16 h z 16 h równo z normą",
+      },
+      mix: {
+        column: "2 ostrzeżenia",
+        marks: { 2: "Ostrzeżenie: 1", 3: "Ostrzeżenie: 1" },
+        away: awayOf("mixReq", [0, 1, 2, 3, 4, 5, 6]),
+        hours: "16 h z 40 h mniej o 24 h",
+      },
+    },
+    counter: "Wskazania: 4 krytyczne, 4 ostrzeżenia",
+    items: () => [
+      absItems.night(),
+      absItems.tail(),
+      absItems.twoSickOnDay2(),
+      absItems.twoSickOnDay4(),
+      absItems.norm(),
+      absItems.req(),
+      absItems.mixReqOnDay2(),
+      absItems.mixReqOnDay3(),
+    ],
+    listDescribe:
+      'the counter "Wskazania: 4 krytyczne, 4 ostrzeżenia": only the requested absence is left to mix, so both of its shifts are warnings with the requested absence (02.11-08.11) and the critical item is gone',
+  },
+  {
+    what: "after the absence of night is removed too",
+    removed: ["hit", "twoVac", "mixOk", "night"],
+    people: {
+      ...absAllPeople,
+      hit: absBaselinePeople.hit,
+      night: absBaselinePeople.night,
+      two: {
+        column: "2 krytyczne",
+        marks: { 2: "Krytyczne: 1", 4: "Krytyczne: 1" },
+        away: awayOf("twoSick", [2, 3, 4]),
+        hours: "16 h z 16 h równo z normą",
+      },
+      mix: {
+        column: "2 ostrzeżenia",
+        marks: { 2: "Ostrzeżenie: 1", 3: "Ostrzeżenie: 1" },
+        away: awayOf("mixReq", [0, 1, 2, 3, 4, 5, 6]),
+        hours: "16 h z 40 h mniej o 24 h",
+      },
+    },
+    counter: "Wskazania: 3 krytyczne, 4 ostrzeżenia",
+    items: () => [
+      absItems.tail(),
+      absItems.twoSickOnDay2(),
+      absItems.twoSickOnDay4(),
+      absItems.norm(),
+      absItems.req(),
+      absItems.mixReqOnDay2(),
+      absItems.mixReqOnDay3(),
+    ],
+    listDescribe:
+      'the counter "Wskazania: 3 krytyczne, 4 ostrzeżenia": the night across midnight of night is gone with its absence',
+  },
+  {
+    what: "after the absence of tail is removed too",
+    removed: ["hit", "twoVac", "mixOk", "night", "tail"],
+    people: {
+      ...absAllPeople,
+      hit: absBaselinePeople.hit,
+      night: absBaselinePeople.night,
+      tail: absBaselinePeople.tail,
+      two: {
+        column: "2 krytyczne",
+        marks: { 2: "Krytyczne: 1", 4: "Krytyczne: 1" },
+        away: awayOf("twoSick", [2, 3, 4]),
+        hours: "16 h z 16 h równo z normą",
+      },
+      mix: {
+        column: "2 ostrzeżenia",
+        marks: { 2: "Ostrzeżenie: 1", 3: "Ostrzeżenie: 1" },
+        away: awayOf("mixReq", [0, 1, 2, 3, 4, 5, 6]),
+        hours: "16 h z 40 h mniej o 24 h",
+      },
+    },
+    counter: "Wskazania: 2 krytyczne, 4 ostrzeżenia",
+    items: () => [
+      absItems.twoSickOnDay2(),
+      absItems.twoSickOnDay4(),
+      absItems.norm(),
+      absItems.req(),
+      absItems.mixReqOnDay2(),
+      absItems.mixReqOnDay3(),
+    ],
+    listDescribe:
+      'the counter "Wskazania: 2 krytyczne, 4 ostrzeżenia": the item of tail (the night of day 6 into the day after the schedule) is gone, and the hours of tail are as before because that absence was outside the seven days',
+  },
+];
+
+// The holiday week: the two states of it, with every absence and after the one of holover is removed.
+const absHolidayPeople = {
+  hol: { ...quiet, away: awayOf("hol", [0, 1, 2, 3]), hours: "8 h z 8 h równo z normą" },
+  holover: {
+    column: "1 ostrzeżenie",
+    marks: {},
+    away: awayOf("holover", [0, 1, 2, 3]),
+    hours: "16 h z 8 h więcej o 8 h",
+  },
+  holonly: { ...quiet, away: awayOf("holonly", [1]), hours: "8 h z 32 h mniej o 24 h" },
+};
+const absHolidayStates = [
+  {
+    what: "with the three absences",
+    people: absHolidayPeople,
+    counter: "Wskazania: 1 ostrzeżenie",
+    items: () => [absItems.holoverNorm()],
+    listDescribe:
+      'the counter "Wskazania: 1 ostrzeżenie" and one item: holover over the norm of 8 h, lowered by the holiday 11.11 and by 3 days of absence (10.11, 12.11 and 13.11, the holiday not counted again)',
+  },
+  {
+    what: "after the absence of holover is removed",
+    removed: ["holover"],
+    people: {
+      ...absHolidayPeople,
+      holover: { ...quiet, away: {}, hours: "16 h z 32 h mniej o 16 h" },
+    },
+    counter: noViolationsCounter,
+    items: () => [],
+    listDescribe: 'the counter "Brak wskazań" and no item: 16 h is under the norm of 32 h (the holiday only)',
+  },
+];
+
+// What a state says, as the page is compared with it.
+const absColumnsOf = (state) =>
+  Object.entries(state.people)
+    .map(([who, view]) => ({ person: absName(who), violations: view.column }))
+    .sort(byPerson);
+const absHoursOf = (state) =>
+  Object.entries(state.people).map(([who, view]) => ({ person: absName(who), hours: view.hours }));
+// The notes under the buttons of each day cell, as { person, notes } for each person who has one, notes being { day: [texts] }:
+// the absence first, then the mark of the violations, as the cell lays them out.
+const absNotesExpected = (state) =>
+  Object.entries(state.people)
+    .map(([who, view]) => ({
+      person: absName(who),
+      notes: Object.fromEntries(
+        Array.from({ length: DAY_CELLS }, (_unused, day) => [
+          day,
+          [view.away[day], view.marks[day]].filter((text) => text !== undefined),
+        ]).filter(([, texts]) => texts.length > 0),
+      ),
+    }))
+    .filter(({ notes }) => Object.keys(notes).length > 0)
+    .sort(byPerson);
+// The same read from the page. A note is one element (a div) in the cell next to the container of the buttons, so the text of the
+// cell without its buttons, taken element by element, is what the cell says: no two notes run into each other.
+const cellNotesOf = (cell) => textsOf(withoutButtons(cell), "div").filter((text) => text !== "");
+const absNotesOnPage = (html) =>
+  bodyRowsOf(cutAtCoverage(html)[0])
+    .map(({ header, cells }) => ({
+      person: header,
+      notes: Object.fromEntries(
+        cells
+          .slice(0, DAY_CELLS)
+          .map((cell, day) => [day, cellNotesOf(cell)])
+          .filter(([, texts]) => texts.length > 0),
+      ),
+    }))
+    .filter(({ notes }) => Object.keys(notes).length > 0)
+    .sort(byPerson);
+const describeAbsColumns = (state) =>
+  `the column "Wskazania" reading ${Object.entries(state.people)
+    .map(([who, view]) => `"${view.column}" for ${who}`)
+    .join(", ")}`;
+
+const visitAbsWeekPage = (expected) => visitAssignPage("the absences schedule", absScheduleIdOf, expected);
+const visitAbsHolidayPage = (expected) =>
+  visitAssignPage("the absences schedule with a holiday", absHolidayScheduleIdOf, expected);
+
+// The four steps that read one state: the counter and the list, the column "Wskazania", the notes of the day cells and the
+// column "Godziny".
+const absStateSteps = (visitPage, state) => [
+  visitPage({
+    bodyCheck: (html) => showsViolations(absListOf(state.items()), state.counter)(html),
+    describe: `${state.what}: ${state.listDescribe}`,
+    excerpt: violationsExcerpt,
+  }),
+  visitPage({
+    bodyCheck: (html) => JSON.stringify(violationColumnOf(html)) === JSON.stringify(absColumnsOf(state)),
+    describe: `${state.what}: ${describeAbsColumns(state)}`,
+    excerpt: (html) => JSON.stringify(violationColumnOf(html), null, 1),
+  }),
+  visitPage({
+    bodyCheck: (html) => JSON.stringify(absNotesOnPage(html)) === JSON.stringify(absNotesExpected(state)),
+    describe: `${state.what}: the notes under the buttons of the day cells exactly ${JSON.stringify(absNotesExpected(state))}`,
+    excerpt: (html) => JSON.stringify(absNotesOnPage(html), null, 1),
+  }),
+  visitPage({
+    bodyCheck: showsHoursColumn(absHoursOf(state)),
+    describe: `${state.what}: ${describeHoursRows(absHoursOf(state))}`,
+    excerpt: hoursColumnExcerpt,
+  }),
+];
+
+// What the page is, whatever the state: a row of nine cells for each person (the markers are text in the cells of the days, so
+// no cell and no table is added), the people's table with no role and no live region, and no id of an absence or e-mail address
+// in the page (the island gets the person, the type, the status and the two days of an absence, and nothing else).
+const absRowsOf = (roster) => (html) =>
+  JSON.stringify(gridOf(html).map(({ person, cells }) => ({ person, cells }))) ===
+  JSON.stringify(roster.map((who) => ({ person: absName(who), cells: GRID_ROW_CELLS })).sort(byPerson));
+const absTableOf = (html) => elementsOf(cutAtCoverage(html)[0], "table")[0] ?? "";
+const hasNoLiveRegionInTable = (html) => {
+  const table = absTableOf(html);
+  return table !== "" && !/\srole=/.test(table) && !/\saria-live=/.test(table);
+};
+const hidesAbsenceData = (roster) => (html) => {
+  const ids = Object.values(absAbsenceIds);
+  return (
+    ids.length === absAllKeys.length &&
+    ids.every((id) => isUuidText(id) && !html.includes(id)) &&
+    roster.every((who) => !html.toLowerCase().includes(absPeople[who].email))
+  );
+};
+const absPressedFor = (assignments, days) =>
+  assignments
+    .map(([who, shift, day]) =>
+      buttonLabel(absName(who), days[day], `${absShifts[shift].name} ${absShifts[shift].hours}`),
+    )
+    .sort();
+const showsAbsPressed = (assignments, days) => (html) =>
+  JSON.stringify(pressedLabelsOf(html)) === JSON.stringify(absPressedFor(assignments, days));
+// The coverage table counts the people on the cells whether they are away or not ("x z y" does not change): one row for each of
+// `expected`, a [shift key, counters] pair, found by the name and the hours of its shift.
+const showsAbsCoverage = (expected) => (html) => {
+  const rows = coverageRowsOf(html);
+  return (
+    rows.length === expected.length &&
+    expected.every(([shift, counters]) => {
+      const { name, hours } = absShifts[shift];
+      const found = rows.filter((row) => row.header.startsWith(name) && row.header.includes(hours));
+      return (
+        found.length === 1 &&
+        found[0].cells.length === 7 &&
+        found[0].cells.every((text, day) => (day in counters ? text === counters[day] : text.endsWith(noCellWords)))
+      );
+    })
+  );
+};
+const absCoverage = [
+  ["M", { 0: "3 z 3", 1: "3 z 3", 2: "4 z 4", 3: "1 z 1", 4: "2 z 2", 5: "1 z 1" }],
+  ["V", { 2: "1 z 1" }],
+  ["U", { 1: "1 z 1", 6: "1 z 1" }],
+];
+
+const absencePageSteps = [
+  // The shifts, the people and the two schedules, made through the app like the schedules above.
+  plannerCreatesAbsShift(
+    "the evening shift of the absence schedules, which ends exactly at midnight",
+    absEveningShift,
+    960,
+    0,
+    (id) => {
+      absEveningShiftId = id;
+    },
+  ),
+  plannerCreatesAbsShift(
+    "the night shift of the absence schedules, of 8 h across midnight",
+    absNightShift,
+    1080,
+    120,
+    (id) => {
+      absNightShiftId = id;
+    },
+  ),
+  ...[...absWeekRoster, ...absHolidayRoster].map((who) =>
+    plannerCreatesEmployee(`the employee ${who} of the absence schedules`, absPeople[who], (id) => {
+      absIds[who] = id;
+    }),
+  ),
+  plannerCreatesAbsSchedule("the absences schedule", absSchedule, (id) => {
+    absScheduleId = id;
+  }),
+  ...plannerReadsSchedule(
+    "shows the absences schedule",
+    absSchedule,
+    "the absences schedule (the cells of 3 shifts, 11 people)",
+    absScheduleIdOf,
+  ),
+  plannerCreatesAbsSchedule("the absences schedule with a holiday", absHolidaySchedule, (id) => {
+    absHolidayScheduleId = id;
+  }),
+  ...plannerReadsSchedule(
+    "shows the absences schedule with a holiday",
+    absHolidaySchedule,
+    "the absences schedule with a holiday (2 cells of 1 shift, 3 people)",
+    absHolidayScheduleIdOf,
+  ),
+  ...absAssignments.map((assignment) => plannerAddsAbsAssignment(absScheduleIdOf, assignment)),
+  plannerReadsAbsAssignments(
+    absScheduleIdOf,
+    "the absences schedule",
+    absAssignments,
+    "the absences schedule: seventeen assignments of ten people (none for none)",
+  ),
+  ...absHolidayAssignments.map((assignment) => plannerAddsAbsAssignment(absHolidayScheduleIdOf, assignment)),
+  plannerReadsAbsAssignments(
+    absHolidayScheduleIdOf,
+    "the absences schedule with a holiday",
+    absHolidayAssignments,
+    "the absences schedule with a holiday: four assignments of three people",
+  ),
+
+  // The page before any absence exists: no item, no marker, and the norm of everybody is the 40 h of the week. What the steps
+  // below show is then what the absences changed.
+  ...absStateSteps(visitAbsWeekPage, absWeekStates[0]),
+
+  // The absences: the approved ones through the app, the requested and the rejected ones by the service role.
+  ...absApprovedKeys.map(plannerAddsAbsAbsence),
+  ...absAllKeys.filter((key) => !absApprovedKeys.includes(key)).map(serviceRoleAddsAbsAbsence),
+  plannerReadsAbsAbsences(
+    "shows all fifteen absences",
+    absAllKeys,
+    "the fifteen absences of the people of the two schedules (twelve approved, req and mixReq requested, rej rejected)",
+  ),
+
+  // The page with every absence: what the page is, then each state.
+  visitAbsWeekPage({
+    bodyCheck: showsAssignHeading(absWeek.period, absScheduleLabel),
+    describe: `the title and heading "Obsadzanie grafiku", the period ${absWeek.period} and the label of the absences schedule`,
+    excerpt: headingExcerpt,
+  }),
+  visitAbsWeekPage({
+    bodyCheck: showsGridHeaders(["Pracownik", ...absWeek.days, "Wskazania", "Godziny"]),
+    describe: `the header row of the people's table: "Pracownik", the seven days from ${absWeek.days[0]} to ${absWeek.days[6]}, then the columns "Wskazania" and "Godziny" last, and no other table before the coverage section`,
+    excerpt: (html) => JSON.stringify(gridHeadersOf(html)),
+  }),
+  visitAbsWeekPage({
+    bodyCheck: absRowsOf(absWeekRoster),
+    describe: `a row for each of the eleven people, each of exactly ${GRID_ROW_CELLS} cells: the seven days, "Wskazania" and "Godziny" (the markers of the absences add no cell)`,
+    excerpt: gridExcerpt,
+  }),
+  visitAbsWeekPage({
+    bodyCheck: showsAbsPressed(absAssignments, absWeek.days),
+    describe: `a pressed button for each of the ${absAssignments.length} assignments and for no other (an absence changes no button)`,
+    excerpt: (html) => JSON.stringify(pressedLabelsOf(html), null, 1),
+  }),
+  visitAbsWeekPage({
+    bodyCheck: hasViolationSection,
+    describe:
+      'the section of the list of violations with the heading "Wskazania", after the people\'s table and before the coverage section',
+    excerpt: violationSectionExcerpt,
+  }),
+  visitAbsWeekPage({
+    bodyCheck: hasHoursNote,
+    describe:
+      "the paragraph under the people's table that says the norm is lowered by the holidays and by the days of an approved absence from Monday to Friday, once",
+    excerpt: hoursNoteExcerpt,
+  }),
+  visitAbsWeekPage({
+    bodyCheck: hasNeutralHoursColumn(absWeekRoster.length),
+    describe:
+      'the header "Godziny" and the eleven cells of the column with no role, no aria-live, no icon and no red, amber or sky colour class, each of exactly two lines of text',
+    excerpt: hoursCellsExcerpt,
+  }),
+  visitAbsWeekPage({
+    bodyCheck: (html) => hasNoLiveRegionInTable(html) && hasNoViolationAlert(html),
+    describe:
+      'no role and no aria-live in the people\'s table (the markers of the absences are plain text), and no role="alert" and no assertive live region in the list of violations',
+    excerpt: (html) => absTableOf(html).slice(0, 400),
+  }),
+  visitAbsWeekPage({
+    bodyCheck: hidesAbsenceData(absWeekRoster),
+    describe: "no id of an absence of the run and no e-mail address of the eleven people anywhere in the page",
+    excerpt: () => "(the page is not printed)",
+  }),
+  visitAbsWeekPage({
+    bodyCheck: showsAbsCoverage(absCoverage),
+    describe:
+      'the coverage table with every counter complete ("3 z 3", "4 z 4" and so on): the people who are away count on their cells, the coverage does not change',
+    excerpt: coverageExcerpt,
+  }),
+  ...absStateSteps(visitAbsWeekPage, absWeekStates[1]),
+
+  // The neighbours: one absence at a time is removed through the route, and the page is read again. The table is read after
+  // each DELETE, so that what the page shows is tied to what the database holds.
+  ...plannerRemovesAbsAbsence("hit"),
+  ...absStateSteps(visitAbsWeekPage, absWeekStates[2]),
+  ...plannerRemovesAbsAbsence("twoVac"),
+  ...absStateSteps(visitAbsWeekPage, absWeekStates[3]),
+  ...plannerRemovesAbsAbsence("mixOk"),
+  ...absStateSteps(visitAbsWeekPage, absWeekStates[4]),
+  ...plannerRemovesAbsAbsence("night"),
+  ...absStateSteps(visitAbsWeekPage, absWeekStates[5]),
+  ...plannerRemovesAbsAbsence("tail"),
+  ...absStateSteps(visitAbsWeekPage, absWeekStates[6]),
+  // The assignments did not move while the absences did.
+  visitAbsWeekPage({
+    bodyCheck: showsAbsPressed(absAssignments, absWeek.days),
+    describe: `still a pressed button for each of the ${absAssignments.length} assignments and for no other, now that five absences are gone`,
+    excerpt: (html) => JSON.stringify(pressedLabelsOf(html), null, 1),
+  }),
+  visitAbsWeekPage({
+    bodyCheck: showsAbsCoverage(absCoverage),
+    describe: "the coverage table as before: the counters do not depend on the absences",
+    excerpt: coverageExcerpt,
+  }),
+  plannerReadsAbsAssignments(
+    absScheduleIdOf,
+    "the absences schedule after the DELETEs of the absences",
+    absAssignments,
+    "the absences schedule, all seventeen: removing an absence removes no assignment",
+  ),
+
+  // The week with a holiday.
+  visitAbsHolidayPage({
+    bodyCheck: showsAssignHeading(absHoliday.period, absHolidayScheduleLabel),
+    describe: `the title and heading "Obsadzanie grafiku", the period ${absHoliday.period} and the label of the absences schedule with a holiday`,
+    excerpt: headingExcerpt,
+  }),
+  visitAbsHolidayPage({
+    bodyCheck: absRowsOf(absHolidayRoster),
+    describe: `a row for each of the three people, each of exactly ${GRID_ROW_CELLS} cells`,
+    excerpt: gridExcerpt,
+  }),
+  visitAbsHolidayPage({
+    bodyCheck: hidesAbsenceData(absHolidayRoster),
+    describe: "no id of an absence of the run and no e-mail address of the three people anywhere in the page",
+    excerpt: () => "(the page is not printed)",
+  }),
+  ...absStateSteps(visitAbsHolidayPage, absHolidayStates[0]),
+  ...plannerRemovesAbsAbsence("holover"),
+  ...absStateSteps(visitAbsHolidayPage, absHolidayStates[1]),
+];
+
 const steps = [
   // Anonymous: the gate answers 401 (never a redirect), JSON for API paths.
   visit(anonymous, "/", 200),
@@ -5279,7 +6233,7 @@ const steps = [
   visitHoursAssignPage({
     bodyCheck: hasHoursNote,
     describe:
-      'the paragraph "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu ... Nieobecności nie są jeszcze uwzględnione. Przekroczenie normy pokazuje lista wskazań." once, after the people\'s table and before the section of the list of violations',
+      'the paragraph "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu (40 h pomniejszone o 8 h za każde święto w dzień inny niż niedziela i za każdy dzień zatwierdzonej nieobecności od poniedziałku do piątku, proporcjonalnie do etatu). Przekroczenie normy pokazuje lista wskazań." once, after the people\'s table and before the section of the list of violations',
     excerpt: hoursNoteExcerpt,
   }),
   visitHoursAssignPage({
@@ -5306,6 +6260,11 @@ const steps = [
   ...hoursStateSteps(hoursStates[2]),
   ...plannerTakesOffHoursAssignment(["night", "N", 6], hoursStates[3].removed),
   ...hoursStateSteps(hoursStates[3]),
+
+  // The absences on the assignment page (see absWeekRoster): two schedules of their own, with the shifts and the people the
+  // steps make. The names and e-mails start with "Smoke-" / "smoke-", so the final cleanup finds them, and the absences go with
+  // their employees (on delete cascade); the last steps prove that none is left.
+  ...absencePageSteps,
   visit(planner, `/schedules/${unknownScheduleId}/assign`, 404, notFoundScheduleMessage, "no-store"),
   visit(planner, "/schedules/not-a-uuid/assign", 404, notFoundScheduleMessage, "no-store"),
   visit(planner, `/schedules/${unknownScheduleId}`, 404, notFoundScheduleMessage),
@@ -6288,7 +7247,8 @@ const steps = [
   // of the rules and hours steps among them). The second keeps to the schedules of this run, where the order is known: it
   // relies on the two newest start dates being those of the schedule of the database steps and of the API schedule, both
   // 2026-11-15, the one created later (the database steps) before the one created earlier (the API schedule); every other
-  // schedule of this run starts earlier (2026-11-11, 2026-11-10, 2026-11-09 and 2026-11-02), so the limit cuts them off.
+  // schedule of this run starts earlier (2026-11-11, 2026-11-10, 2026-11-09 and 2026-11-02; the two schedules of the absence
+  // steps start on 2026-11-02 and 2026-11-10), so the limit cuts them off.
   [
     `${planner.label}: schedule_summaries read ordered newest first with a limit of 2 returns two rows`,
     async () =>
@@ -6906,9 +7866,10 @@ const steps = [
     () => employeesTable("DELETE", { key: SUPABASE_SERVICE_ROLE_KEY, query: "?email=like.smoke-*" }),
     { statusClass: 2 },
   ],
-  // Six absences of the run still existed until the employees went (the others were removed by the steps themselves and
-  // are asked for as well, which does no harm), so only the cascade can have removed those: the three of the database steps
-  // and the neighbour and the two rows with a status of the route and page steps.
+  // Many absences of the run still existed until the employees went (the others were removed by the steps themselves and
+  // are asked for as well, which does no harm), so only the cascade can have removed those: the three of the database steps,
+  // the neighbour and the two rows with a status of the route and page steps, and the nine of the absence schedules that the
+  // neighbour steps left (the requested and the rejected ones among them).
   [
     "service role: no absence of the smoke employees is left",
     () => absencesTable("GET", { key: SUPABASE_SERVICE_ROLE_KEY, query: `?id=in.(${absenceIdsOfTheRun().join(",")})` }),

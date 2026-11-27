@@ -1,8 +1,9 @@
 import { isUuid } from "@/lib/postgrest";
+import { employeeDayKey } from "@/lib/services/assignment";
 import { weekdayOf } from "@/lib/services/calendar";
 import { SCHEDULE_MAX_DATE, SCHEDULE_MIN_DATE, compareText, dayColumns, parseIsoDate } from "@/lib/services/schedule";
 import { MINUTES_PER_DAY } from "@/lib/services/shift";
-import type { Absence, AbsenceFieldErrors, AbsenceInput, AbsenceType } from "@/types";
+import type { Absence, AbsenceFieldErrors, AbsenceInput, AbsenceOption, AbsenceType } from "@/types";
 
 // The absences of employees (S-07): the entry rules shared by the form and the API route, and the date helpers the live rules
 // and the weekly norm build on. Whole days only, no hours and no free text (an L4 is health data). Every date is read in UTC
@@ -201,6 +202,71 @@ export function excusedWeekdays(
       );
     })
     .map(({ date }) => date);
+}
+
+// The strongest absence first: an approved one before one that is not (a requested one), then the one that starts earlier,
+// then the one that lasts longer, then by type. It is the order in which the rules rank the absences of a person
+// (`compareAbsenceSpans` in `rules.ts`), written on the dates instead of on minutes, so that the absence a cell of the grid
+// names is the one the reason of a violation names. The dates are canonical `YYYY-MM-DD`, which compare like the days.
+function compareStrength(a: AbsenceOption, b: AbsenceOption): number {
+  return (
+    Number(a.status !== "approved") - Number(b.status !== "approved") ||
+    compareText(a.startDate, b.startDate) ||
+    compareText(b.endDate, a.endDate) ||
+    compareText(a.type, b.type)
+  );
+}
+
+/**
+ * For each person and each of the seven days of the schedule that starts on `startDate` that an absence covers, the absence
+ * the cell of the grid names (key: `employeeDayKey`, the same one `groupByEmployeeDay` and the grid use). A rejected absence
+ * covers nothing; when several cover a day the strongest one is kept: an approved one before a requested one, then the one
+ * that starts earlier, then the one that lasts longer, then by type. A day nobody is absent on has no entry, and an absence
+ * outside the seven days none. Each value is a new object with exactly the five fields of an `AbsenceOption`, the keys come in
+ * code-unit order, so the same absences in any order give the same object, and the input is only read. Dates are compared as
+ * canonical `YYYY-MM-DD` text (as `excusedWeekdays` does), so nothing in it depends on a time zone. Throws a RangeError for a
+ * `startDate` that `parseIsoDate` rejects.
+ */
+export function absenceMarkers(startDate: string, absences: readonly AbsenceOption[]): Record<string, AbsenceOption> {
+  const days = dayColumns(startDate);
+  const strongest = new Map<string, AbsenceOption>();
+  for (const absence of absences) {
+    if (absence.status === "rejected") {
+      continue;
+    }
+    for (const { offset, date } of days) {
+      if (compareText(absence.startDate, date) > 0 || compareText(date, absence.endDate) > 0) {
+        continue;
+      }
+      const key = employeeDayKey(absence.employeeId, offset);
+      const current = strongest.get(key);
+      if (current === undefined || compareStrength(absence, current) < 0) {
+        strongest.set(key, absence);
+      }
+    }
+  }
+  return Object.fromEntries(
+    [...strongest]
+      .sort(([a], [b]) => compareText(a, b))
+      .map(([key, { employeeId, type, status, startDate: from, endDate: to }]): [string, AbsenceOption] => [
+        key,
+        { employeeId, type, status, startDate: from, endDate: to },
+      ]),
+  );
+}
+
+// "urlop" for "Urlop": a label in the middle of a text. Only the first letter is lowered, so the "L4" of a sick leave stays.
+const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+
+/**
+ * What a cell of the assignment grid says on a day of a person's absence: "Nieobecność: urlop", "Nieobecność: zwolnienie
+ * lekarskie (L4)" or "Nieobecność: inna nieobecność", and "(niezatwierdzona)" after the type when the absence is not
+ * approved yet, so that the words carry the difference and not a colour. It has no weight in it ("Krytyczne",
+ * "Ostrzeżenie"): the violations of the rules say that, and a day of absence without a shift is not one. A rejected absence has
+ * no cell (`absenceMarkers` leaves it out).
+ */
+export function formatAbsenceMarker({ type, status }: Pick<AbsenceOption, "type" | "status">): string {
+  return `Nieobecność: ${lowerFirst(absenceTypeLabel(type))}${status === "approved" ? "" : " (niezatwierdzona)"}`;
 }
 
 /**

@@ -447,13 +447,13 @@ Planowany równolegle jest S-08 (`schedule-approval`), implementowany po scaleni
 
 #### Automated
 
-- [ ] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 5.2 Smoke ze scenariuszami nieobecności przechodzi lokalnie: `npm run smoke`
+- [x] 5.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 5.2 Smoke ze scenariuszami nieobecności przechodzi lokalnie: `npm run smoke`
 
 #### Manual
 
-- [ ] 5.3 W przeglądarce na desktopie: znaczniki "Nieobecność: ..." w komórkach, wskazania kolizji (krytyczne i ostrzeżenie) pojawiają się i znikają po kliknięciu i po usunięciu nieobecności, kolumna "Godziny" i zdanie pod tabelą pokazują pomniejszoną normę, wycofanie przy błędzie przywraca poprzednie wskazania
-- [ ] 5.4 Na telefonie (lub emulacji): strona obsadzania ładuje się, znaczniki i lista są czytelne, strona nie ma poziomego przewijania dokumentu
+- [x] 5.3 W przeglądarce na desktopie: znaczniki "Nieobecność: ..." w komórkach, wskazania kolizji (krytyczne i ostrzeżenie) pojawiają się i znikają po kliknięciu i po usunięciu nieobecności, kolumna "Godziny" i zdanie pod tabelą pokazują pomniejszoną normę, wycofanie przy błędzie przywraca poprzednie wskazania
+- [x] 5.4 Na telefonie (lub emulacji): strona obsadzania ładuje się, znaczniki i lista są czytelne, strona nie ma poziomego przewijania dokumentu
 
 ### Phase 6: Dokumentacja i wdrożenie
 

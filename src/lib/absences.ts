@@ -109,6 +109,21 @@ export async function listAbsencesOverlapping(supabase: SupabaseClient, from: st
   return toSortedAbsences(data, "overlapping");
 }
 
+/**
+ * The absences of the people in `employeeIds` (the roster of a schedule), in the order they come in; those of anybody else are
+ * left out. It is the filter that `listAbsencesOverlapping` leaves to its caller (the database answers with the absences of
+ * everybody, and a long `in (...)` list in the address of a request is not something this project has tried), and it runs on
+ * the rows that read has already passed the read limit with, so a truncated answer never gets this far. The input is only
+ * read; the rows themselves are passed through, not copied.
+ */
+export function absencesOfRoster<T extends Pick<Absence, "employeeId">>(
+  absences: readonly T[],
+  employeeIds: readonly string[],
+): T[] {
+  const roster = new Set(employeeIds);
+  return absences.filter(({ employeeId }) => roster.has(employeeId));
+}
+
 /** The absence, or null when there is none visible with this id (also for an id that is not a UUID). */
 export async function getAbsence(supabase: SupabaseClient, id: string): Promise<Absence | null> {
   if (!isUuid(id)) {
