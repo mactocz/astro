@@ -201,6 +201,18 @@ export interface Assignment extends AssignmentInput {
 export type AssignmentField = "shiftId" | "dayOffset" | "employeeId";
 export type AssignmentFieldErrors = Partial<Record<AssignmentField, string>>;
 
+/** What the schedule generator proposes (S-09): the assignments to add and what the planner should know about them. */
+export interface GenerationResult {
+  /** The proposed assignments only, none of the existing ones, in the order of `sortAssignments`. */
+  additions: AssignmentInput[];
+  /** People still missing over all the staffing cells once the additions are in. */
+  missing: number;
+  /** The people who got an addition that leaves them above their weekly norm, by id, sorted. */
+  overNormEmployeeIds: string[];
+  /** The additions that fall on a requested (not yet approved) absence, in the order of `sortAssignments`. */
+  onRequestedAbsence: AssignmentInput[];
+}
+
 /** How well one staffing cell is covered: the people it needs against the people assigned to it. */
 export interface CoverageCell {
   shiftId: string;

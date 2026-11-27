@@ -250,13 +250,13 @@ Brak migracji. Starsza wersja aplikacji ignoruje `source`.
 
 #### Automated
 
-- [ ] 1.1 Testy generatora przechodzą: `npm test`
-- [ ] 1.2 Linting przechodzi: `npm run lint`
-- [ ] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
+- [x] 1.1 Testy generatora przechodzą: `npm test`
+- [x] 1.2 Linting przechodzi: `npm run lint`
+- [x] 1.3 Sprawdzanie typów przechodzi: `npx astro check`
 
 #### Manual
 
-- [ ] 1.4 Kolejność przebiegów, remisy i polskie zdania podsumowania zostały przejrzane i zatwierdzone przez autora
+- [x] 1.4 Kolejność przebiegów, remisy i polskie zdania podsumowania zostały przejrzane i zatwierdzone przez autora
 
 ### Phase 2: Zapis
 
