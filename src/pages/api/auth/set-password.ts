@@ -1,13 +1,15 @@
 import type { APIRoute } from "astro";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { jsonResponse, readJsonBody } from "@/lib/json-response";
-import { parseSetPasswordLink } from "@/lib/services/invitation";
+import { classifyVerifyFailure, parseSetPasswordLink } from "@/lib/services/invitation";
 import { validatePassword } from "@/lib/services/password";
 
 export const prerender = false;
 
 const PASSWORD_NOT_SAVED_MESSAGE =
   "Nie udało się zapisać hasła, a link został już zużyty. Poproś planistę o nowe zaproszenie.";
+const SAME_PASSWORD_MESSAGE =
+  "To jest Twoje dotychczasowe hasło, więc nic się nie zmieniło. Link został zużyty, a hasło działa dalej.";
 
 // Public path (the token in the body is the credential). One request spends the token and sets the password, in this
 // order: the password is validated first, so a weak one never spends the token; verifyOtp then signs the user in with the
@@ -39,15 +41,22 @@ export const POST: APIRoute = async (context) => {
 
   const { error: verifyError } = await supabase.auth.verifyOtp({ token_hash: link.tokenHash, type: link.type });
   if (verifyError) {
-    // An expired or used link is an answer of Auth (a 4xx). Anything else says nothing about the link, so leave a trace.
-    if (verifyError.status === undefined || verifyError.status < 400 || verifyError.status >= 500) {
-      logAuthFailure("verify", verifyError.status, verifyError.code);
+    // An expired or used link is an answer of Auth (a 4xx other than the rate limit). Anything else says nothing about
+    // the link, which is probably unspent: leave a trace and say to try again.
+    const failure = classifyVerifyFailure(verifyError.status);
+    if (failure === "invalid_link") {
+      return jsonResponse(400, { error: "invalid_link" });
     }
-    return jsonResponse(400, { error: "invalid_link" });
+    logAuthFailure("verify", verifyError.status, verifyError.code);
+    return jsonResponse(failure === "rate_limited" ? 429 : 503, { error: "try_again" });
   }
 
   const { error: updateError } = await supabase.auth.updateUser({ password });
   if (updateError) {
+    // A reset with the password the account already has: nothing is lost, that password still works.
+    if (updateError.code === "same_password") {
+      return jsonResponse(409, { error: "same_password", message: SAME_PASSWORD_MESSAGE });
+    }
     logAuthFailure("update", updateError.status, updateError.code);
     return jsonResponse(500, { error: "password_not_saved", message: PASSWORD_NOT_SAVED_MESSAGE });
   }

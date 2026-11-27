@@ -1,19 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   EMAIL_LOCKED_MESSAGE,
-  INVITE_VALIDITY_DAYS,
+  INVITE_VALIDITY_HOURS,
   classifyAuthUser,
   decideInviteAction,
   emailChangeBlocked,
   formatInviteLabel,
   inviteStatus,
   parseSetPasswordLink,
+  accountEmailMatches,
+  classifyVerifyFailure,
+  isFreshInvitedAccount,
+  mayBecomeEmployee,
 } from "@/lib/services/invitation";
 import { expectDeterministic } from "@/lib/testing/determinism";
 import type { InviteAccountState, InviteAction, InviteStatus } from "@/types";
 
 const INVITED_AT = "2026-11-06T10:00:00.000Z";
-const VALID_UNTIL = "2026-11-13T10:00:00.000Z";
+const VALID_UNTIL = "2026-11-07T10:00:00.000Z";
 const ACTIVATED_AT = "2026-11-09T14:30:00.000Z";
 const USER_ID = "0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90";
 
@@ -28,7 +32,7 @@ function status(
 
 describe("invitation limits", () => {
   it("keeps the documented validity of the link", () => {
-    expect(INVITE_VALIDITY_DAYS).toBe(7);
+    expect(INVITE_VALIDITY_HOURS).toBe(24);
   });
 });
 
@@ -95,8 +99,8 @@ describe("inviteStatus", () => {
     expect(status("not a date", "2026-11-07T10:00:00.000Z")).toStrictEqual({ kind: "no_account" });
   });
 
-  it("is valid on day 3, with the end 7 days after the invitation", () => {
-    expect(status(INVITED_AT, "2026-11-09T10:00:00.000Z")).toStrictEqual({
+  it("is valid after 12 hours, with the end 24 hours after the invitation", () => {
+    expect(status(INVITED_AT, "2026-11-06T22:00:00.000Z")).toStrictEqual({
       kind: "invited",
       invitedAt: INVITED_AT,
       validUntil: VALID_UNTIL,
@@ -112,20 +116,20 @@ describe("inviteStatus", () => {
     expect(status(INVITED_AT, "2026-11-06T09:59:59.000Z")).toMatchObject({ kind: "invited", expired: false });
   });
 
-  it("is still valid exactly 7 days after the invitation", () => {
+  it("is still valid exactly 24 hours after the invitation", () => {
     expect(status(INVITED_AT, VALID_UNTIL)).toMatchObject({ validUntil: VALID_UNTIL, expired: false });
   });
 
   it("is still valid one millisecond before the end", () => {
-    expect(status(INVITED_AT, "2026-11-13T09:59:59.999Z")).toMatchObject({ expired: false });
+    expect(status(INVITED_AT, "2026-11-07T09:59:59.999Z")).toMatchObject({ expired: false });
   });
 
   it("has expired one millisecond after the end", () => {
-    expect(status(INVITED_AT, "2026-11-13T10:00:00.001Z")).toMatchObject({ expired: true });
+    expect(status(INVITED_AT, "2026-11-07T10:00:00.001Z")).toMatchObject({ expired: true });
   });
 
-  it("has expired 7 days and 1 second after the invitation", () => {
-    expect(status(INVITED_AT, "2026-11-13T10:00:01.000Z")).toStrictEqual({
+  it("has expired 24 hours and 1 second after the invitation", () => {
+    expect(status(INVITED_AT, "2026-11-07T10:00:01.000Z")).toStrictEqual({
       kind: "invited",
       invitedAt: INVITED_AT,
       validUntil: VALID_UNTIL,
@@ -133,13 +137,13 @@ describe("inviteStatus", () => {
     });
   });
 
-  it("counts the 7 days over a year boundary and over the end of the daylight saving time", () => {
-    expect(status("2026-12-28T23:30:00.000Z", "2027-01-04T23:30:00.000Z")).toMatchObject({
-      validUntil: "2027-01-04T23:30:00.000Z",
+  it("counts the 24 hours over a year boundary and over the end of the daylight saving time", () => {
+    expect(status("2026-12-31T23:30:00.000Z", "2027-01-01T23:30:00.000Z")).toMatchObject({
+      validUntil: "2027-01-01T23:30:00.000Z",
       expired: false,
     });
-    expect(status("2026-10-25T00:30:00.000Z", "2026-11-01T00:30:00.001Z")).toMatchObject({
-      validUntil: "2026-11-01T00:30:00.000Z",
+    expect(status("2026-10-25T00:30:00.000Z", "2026-10-26T00:30:00.001Z")).toMatchObject({
+      validUntil: "2026-10-26T00:30:00.000Z",
       expired: true,
     });
   });
@@ -178,13 +182,13 @@ describe("inviteStatus", () => {
   });
 
   it("falls back to the invitation when the activation time cannot be read", () => {
-    expect(status(INVITED_AT, "2026-11-09T10:00:00.000Z", USER_ID, "not a date")).toStrictEqual({
+    expect(status(INVITED_AT, "2026-11-06T22:00:00.000Z", USER_ID, "not a date")).toStrictEqual({
       kind: "invited",
       invitedAt: INVITED_AT,
       validUntil: VALID_UNTIL,
       expired: false,
     });
-    expect(status(INVITED_AT, "2026-11-09T10:00:00.000Z", USER_ID, "")).toMatchObject({ kind: "invited" });
+    expect(status(INVITED_AT, "2026-11-06T22:00:00.000Z", USER_ID, "")).toMatchObject({ kind: "invited" });
     expect(status(null, "2026-11-09T10:00:00.000Z", USER_ID, "not a date")).toStrictEqual({ kind: "no_account" });
   });
 
@@ -234,8 +238,8 @@ describe("inviteStatus", () => {
 
   it("gives the same result for repeated calls and for equal instants", () => {
     const employee = { userId: USER_ID, invitedAt: INVITED_AT, activatedAt: null };
-    const now = new Date("2026-11-09T10:00:00.000Z");
-    const variants = [new Date(now.getTime()), new Date("2026-11-09T12:00:00+02:00")];
+    const now = new Date("2026-11-06T22:00:00.000Z");
+    const variants = [new Date(now.getTime()), new Date("2026-11-07T00:00:00+02:00")];
 
     const result = expectDeterministic((at: Date) => inviteStatus(employee, at), now, { variants });
 
@@ -259,40 +263,40 @@ describe("formatInviteLabel", () => {
   });
 
   it("labels an invitation whose link still works", () => {
-    expect(formatInviteLabel(status(INVITED_AT, "2026-11-09T10:00:00.000Z"))).toBe(
-      "Zaproszony 06.11.2026 (link ważny do 13.11.2026)",
+    expect(formatInviteLabel(status(INVITED_AT, "2026-11-06T22:00:00.000Z"))).toBe(
+      "Zaproszony 06.11.2026 (link ważny do 07.11.2026)",
     );
   });
 
   it("labels an invitation whose link has expired by the link only, not by the invitation or the account", () => {
-    expect(formatInviteLabel(status(INVITED_AT, "2026-11-13T10:00:01.000Z"))).toBe(
-      "Zaproszony 06.11.2026 (link wygasł 13.11.2026)",
+    expect(formatInviteLabel(status(INVITED_AT, "2026-11-07T10:00:01.000Z"))).toBe(
+      "Zaproszony 06.11.2026 (link wygasł 07.11.2026)",
     );
   });
 
   it("labels the last moment of the link as still valid", () => {
-    expect(formatInviteLabel(status(INVITED_AT, VALID_UNTIL))).toContain("link ważny do 13.11.2026");
+    expect(formatInviteLabel(status(INVITED_AT, VALID_UNTIL))).toContain("link ważny do 07.11.2026");
   });
 
   it("pads the day and the month with zeros", () => {
-    expect(formatInviteLabel(status("2026-01-03T08:00:00.000Z", "2026-01-04T08:00:00.000Z"))).toBe(
-      "Zaproszony 03.01.2026 (link ważny do 10.01.2026)",
+    expect(formatInviteLabel(status("2026-01-03T08:00:00.000Z", "2026-01-03T09:00:00.000Z"))).toBe(
+      "Zaproszony 03.01.2026 (link ważny do 04.01.2026)",
     );
   });
 
   it("writes the dates in UTC, whatever the offset of the stored timestamp", () => {
     // 23:30 at UTC-5 is already the next day in UTC.
     expect(formatInviteLabel(status("2026-11-06T23:30:00-05:00", "2026-11-07T10:00:00.000Z"))).toBe(
-      "Zaproszony 07.11.2026 (link ważny do 14.11.2026)",
+      "Zaproszony 07.11.2026 (link ważny do 08.11.2026)",
     );
     expect(formatInviteLabel(status("2026-11-06T23:59:59.999Z", "2026-11-07T10:00:00.000Z"))).toBe(
-      "Zaproszony 06.11.2026 (link ważny do 13.11.2026)",
+      "Zaproszony 06.11.2026 (link ważny do 07.11.2026)",
     );
   });
 
-  it("carries the 7 days over a month and a year", () => {
-    expect(formatInviteLabel(status("2026-12-28T10:00:00.000Z", "2026-12-29T10:00:00.000Z"))).toBe(
-      "Zaproszony 28.12.2026 (link ważny do 04.01.2027)",
+  it("carries the 24 hours over a month and a year", () => {
+    expect(formatInviteLabel(status("2026-12-31T10:00:00.000Z", "2026-12-31T11:00:00.000Z"))).toBe(
+      "Zaproszony 31.12.2026 (link ważny do 01.01.2027)",
     );
   });
 
@@ -319,9 +323,9 @@ describe("formatInviteLabel", () => {
   });
 
   it("gives the same label for repeated calls", () => {
-    const current = status(INVITED_AT, "2026-11-09T10:00:00.000Z");
+    const current = status(INVITED_AT, "2026-11-06T22:00:00.000Z");
 
-    expect(expectDeterministic(formatInviteLabel, current)).toBe("Zaproszony 06.11.2026 (link ważny do 13.11.2026)");
+    expect(expectDeterministic(formatInviteLabel, current)).toBe("Zaproszony 06.11.2026 (link ważny do 07.11.2026)");
   });
 
   it("gives the same label for repeated calls for an active account", () => {
@@ -432,5 +436,65 @@ describe("the e-mail lock message", () => {
 describe("decideInviteAction repeatability", () => {
   it.each<InviteAccountState>(["none", "pending", "active"])("gives the same action for %s every time", (state) => {
     expectDeterministic(decideInviteAction, state);
+  });
+});
+
+describe("isFreshInvitedAccount", () => {
+  const created_at = "2026-11-06T10:00:00.000Z";
+
+  it.each<[string, Parameters<typeof isFreshInvitedAccount>[0], boolean]>([
+    ["made and invited at once", { created_at, invited_at: created_at }, true],
+    [
+      "the spelling of Auth, with nanoseconds",
+      { created_at: "2026-11-27T11:41:18.177848Z", invited_at: "2026-11-27T11:41:18.204210992Z" },
+      true,
+    ],
+    ["a slow mail server", { created_at, invited_at: "2026-11-06T10:00:20.000Z" }, true],
+    ["exactly a minute apart", { created_at, invited_at: "2026-11-06T10:01:00.000Z" }, true],
+    ["invited long after it was made", { created_at, invited_at: "2026-11-06T10:01:00.001Z" }, false],
+    ["no invitation time", { created_at }, false],
+    ["no creation time", { invited_at: created_at }, false],
+    ["an account that has a role", { created_at, invited_at: created_at, app_metadata: { role: "employee" } }, false],
+    ["metadata without a role", { created_at, invited_at: created_at, app_metadata: {} }, true],
+  ])("answers for %s", (_label, user, expected) => {
+    expect(isFreshInvitedAccount(user)).toBe(expected);
+  });
+});
+
+describe("mayBecomeEmployee", () => {
+  it.each<[unknown, boolean]>([
+    [undefined, true],
+    ["employee", true],
+    ["planner", false],
+    ["something else", false],
+    [null, false],
+  ])("answers for the role %s", (role, expected) => {
+    expect(mayBecomeEmployee({ app_metadata: { role } })).toBe(expected);
+  });
+});
+
+describe("classifyVerifyFailure", () => {
+  it.each<[number | undefined, ReturnType<typeof classifyVerifyFailure>]>([
+    [400, "invalid_link"],
+    [403, "invalid_link"],
+    [429, "rate_limited"],
+    [500, "unavailable"],
+    [503, "unavailable"],
+    [0, "unavailable"],
+    [undefined, "unavailable"],
+  ])("reads the status %s as %s", (status, expected) => {
+    expect(classifyVerifyFailure(status)).toBe(expected);
+  });
+});
+
+describe("accountEmailMatches", () => {
+  it("ignores letter case and outer spaces", () => {
+    expect(accountEmailMatches("Jan@Example.com", " jan@example.com ")).toBe(true);
+  });
+
+  it("refuses another or a missing address", () => {
+    expect(accountEmailMatches("anna@example.com", "jan@example.com")).toBe(false);
+    expect(accountEmailMatches(null, "jan@example.com")).toBe(false);
+    expect(accountEmailMatches(undefined, "jan@example.com")).toBe(false);
   });
 });
