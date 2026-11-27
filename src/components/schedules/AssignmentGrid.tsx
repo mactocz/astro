@@ -4,6 +4,7 @@ import { ServerError } from "@/components/auth/ServerError";
 import { assignmentKey, useAssignments } from "@/components/hooks/useAssignments";
 import { useViolations } from "@/components/hooks/useViolations";
 import { useWorkload, type WorkloadText } from "@/components/hooks/useWorkload";
+import { ApprovalSection } from "@/components/schedules/ApprovalSection";
 import { ViolationList } from "@/components/schedules/ViolationList";
 import { unavailableShift } from "@/lib/schedule-options";
 import { absenceMarkers, formatAbsenceMarker } from "@/lib/services/absence";
@@ -33,6 +34,11 @@ interface Props {
   assignments: AssignmentInput[];
   /** What the page loaded: the absences of the people of the schedule that touch it, with only what the grid needs. */
   absences: AbsenceOption[];
+  /**
+   * Set for an approved schedule (S-08): the grid is read only and shows the findings and the hours stored with the
+   * approval instead of counting them. `shifts` and `employees` are then the copies of the approval.
+   */
+  approved?: { violations: Violation[]; hours: Record<string, WorkloadText> };
 }
 
 // The first column stays in place while the days scroll. Its background is opaque (the card behind it is not), or the
@@ -169,7 +175,8 @@ function PersonHours({ hours }: { hours: WorkloadText | undefined }) {
   );
 }
 
-export default function AssignmentGrid({ schedule, shifts, employees, assignments, absences }: Props) {
+export default function AssignmentGrid({ schedule, shifts, employees, assignments, absences, approved }: Props) {
+  const readOnly = approved !== undefined;
   const { list, byEmployeeDay, coverage, busy, error, toggle } = useAssignments({
     scheduleId: schedule.id,
     staffing: schedule.staffing,
@@ -178,10 +185,10 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
   // The rules read the optimistic list of the hook, so they follow every click, a click that is taken back included. They get
   // the shifts of the dictionary only, never the placeholder of `shiftLayout`, which has no hours. The absences are what the
   // page loaded: nothing in the grid changes them.
-  const violations = useViolations({ schedule, shifts, employees, list, absences });
+  const violations = useViolations({ schedule, shifts, employees, list, absences, stored: approved?.violations });
   // The hours follow every click the same way, from the same list and the same dictionary shifts, and take their norm from
   // the same absences.
-  const workload = useWorkload({ schedule, shifts, employees, list, absences });
+  const workload = useWorkload({ schedule, shifts, employees, list, absences, stored: approved?.hours });
 
   const columns = useMemo(() => dayColumns(schedule.startDate), [schedule.startDate]);
   // The absence each cell names, by person and day: the strongest one that covers the day.
@@ -202,10 +209,12 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
 
   return (
     <div>
-      <p className="mb-2 text-xs text-blue-100/50">
-        Kliknij zmianę, żeby przypisać do niej pracownika w danym dniu. Kliknij ją ponownie, żeby zdjąć przypisanie.
-        Każda zmiana zapisuje się od razu.
-      </p>
+      {readOnly ? null : (
+        <p className="mb-2 text-xs text-blue-100/50">
+          Kliknij zmianę, żeby przypisać do niej pracownika w danym dniu. Kliknij ją ponownie, żeby zdjąć przypisanie.
+          Każda zmiana zapisuje się od razu.
+        </p>
+      )}
 
       <ServerError message={error} />
 
@@ -261,6 +270,7 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                               <button
                                 key={shift.id}
                                 type="button"
+                                disabled={readOnly}
                                 aria-pressed={pressed}
                                 aria-label={`${employee.name}, ${column.label}, ${shiftTitle(shift)}`}
                                 // Not `disabled` while the request is in flight: the button would drop the keyboard focus. A
@@ -273,6 +283,7 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                                   shiftButtonClass,
                                   pressed ? shiftButtonPressedClass : shiftButtonIdleClass,
                                   inFlight && "cursor-progress opacity-70",
+                                  readOnly && "pointer-events-none",
                                 )}
                               >
                                 <span aria-hidden="true" className="mt-px size-3 shrink-0">
@@ -358,6 +369,15 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
           </table>
         </div>
       </section>
+
+      {readOnly ? null : (
+        <ApprovalSection
+          scheduleId={schedule.id}
+          violations={violations.violations}
+          failed={violations.failed}
+          saving={busy.size > 0}
+        />
+      )}
     </div>
   );
 }

@@ -1782,14 +1782,15 @@ const listsApiSchedule = (html) => {
   const state = changedApiSchedule();
   const cells = cellsOf(row);
   return (
-    cells.length === 6 &&
+    cells.length === 7 &&
     cells[0] === apiSchedulePeriod &&
     cells[1] === apiScheduleLabel &&
     cells[2] === String(state.employeeIds.length) &&
     cells[3] === String(state.staffing.reduce((sum, cell) => sum + cell.requiredCount, 0)) &&
     /^\d{2}\.\d{2}\.\d{4}$/.test(cells[4]) &&
+    cells[5] === "Szkic" &&
     // The links are separate elements: removing their tags may leave a space or nothing between the two words.
-    /^Edytuj\s*Obsadź$/.test(cells[5]) &&
+    /^Edytuj\s*Obsadź$/.test(cells[6]) &&
     row.includes(`href="/schedules/${apiScheduleId}"`) &&
     row.includes(`aria-label="Edytuj: ${apiSchedulePeriod}, ${apiScheduleLabel}"`)
   );

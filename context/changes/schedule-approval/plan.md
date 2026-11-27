@@ -390,24 +390,24 @@ Planowany równolegle jest S-07 (`absence-entry`), implementowany PRZED tym wyci
 
 #### Automated
 
-- [x] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 3.2 Smoke z krokami trasy zatwierdzania i blokady tras przechodzi lokalnie: `npm run smoke`
+- [x] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — f903a2a
+- [x] 3.2 Smoke z krokami trasy zatwierdzania i blokady tras przechodzi lokalnie: `npm run smoke` — f903a2a
 
 #### Manual
 
-- [x] 3.3 Kolejność sprawdzeń w trasie zatwierdzania, kody odpowiedzi i mapowanie błędów bazy zostały przejrzane i zatwierdzone przez autora
+- [x] 3.3 Kolejność sprawdzeń w trasie zatwierdzania, kody odpowiedzi i mapowanie błędów bazy zostały przejrzane i zatwierdzone przez autora — f903a2a
 
 ### Phase 4: Interfejs zatwierdzania i tryb tylko do odczytu
 
 #### Automated
 
-- [ ] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 4.2 Smoke z istniejącymi krokami stron szkiców przechodzi lokalnie: `npm run smoke`
+- [x] 4.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 4.2 Smoke z istniejącymi krokami stron szkiców przechodzi lokalnie: `npm run smoke`
 
 #### Manual
 
-- [ ] 4.3 W przeglądarce na desktopie: panel potwierdzenia (lista ostrzeżeń, bezpieczny przycisk, zatwierdzenie), po zatwierdzeniu baner i siatka tylko do odczytu z zapisanymi wskazaniami i sumami z migawki, strona edycji z komunikatem, lista ze statusem, komunikaty przy zmianie krytycznego wskazania między kliknięciami, klawiatura i czytnik
-- [ ] 4.4 Na telefonie (lub emulacji): sekcja i panel zatwierdzania oraz widok tylko do odczytu są czytelne, strona nie ma poziomego przewijania dokumentu
+- [x] 4.3 W przeglądarce na desktopie: panel potwierdzenia (lista ostrzeżeń, bezpieczny przycisk, zatwierdzenie), po zatwierdzeniu baner i siatka tylko do odczytu z zapisanymi wskazaniami i sumami z migawki, strona edycji z komunikatem, lista ze statusem, komunikaty przy zmianie krytycznego wskazania między kliknięciami, klawiatura i czytnik
+- [x] 4.4 Na telefonie (lub emulacji): sekcja i panel zatwierdzania oraz widok tylko do odczytu są czytelne, strona nie ma poziomego przewijania dokumentu
 
 ### Phase 5: Smoke stron i dokumentacja
 

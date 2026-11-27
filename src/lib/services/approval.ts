@@ -16,6 +16,18 @@ import type {
 // The approval of a schedule (S-08) outside the database: whether the findings allow it, and the data the database is
 // given to check and to store. Pure functions; nothing here reads or writes anything.
 
+const approvalDayFormat = new Intl.DateTimeFormat("pl-PL", {
+  timeZone: "Europe/Warsaw",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
+
+/** The day of an approval as the planner's calendar shows it (Polish time), `dd.mm.rrrr`, from an ISO timestamp. */
+export function formatApprovalDay(approvedAt: string): string {
+  return approvalDayFormat.format(new Date(approvedAt));
+}
+
 /** The Polish messages of the refusals, one place for the route and the hooks of the pages. */
 export const APPROVAL_MESSAGES = {
   critical_violations: "Nie można zatwierdzić grafiku, w którym są krytyczne naruszenia.",

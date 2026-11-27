@@ -22,7 +22,9 @@ const schedule = id === undefined ? null : await getSchedule(supabase, id);
 let shiftOptions: ShiftOption[] = [];
 let employeeOptions: EmployeeOption[] = [];
 let assignmentCount = 0;
-if (schedule) {
+// An approved schedule is locked (S-08), so there is no form and nothing to load for one.
+const approved = schedule?.status === "approved";
+if (schedule && !approved) {
   // The form offers the whole dictionary and the whole roster, so a shift or a person can be added to the schedule. It
   // also gets the number of assignments, to tell the planner that a new start date moves them.
   const [shifts, employees, assignments] = await Promise.all([
@@ -33,7 +35,7 @@ if (schedule) {
   shiftOptions = toShiftOptions(shifts);
   employeeOptions = toEmployeeOptions(employees);
   assignmentCount = assignments;
-} else {
+} else if (!schedule) {
   // The project has no 404 page, so a missing schedule gets its own message with this status.
   Astro.response.status = 404;
 }
@@ -42,8 +44,26 @@ if (schedule) {
 Astro.response.headers.set("Cache-Control", "no-store");
 ---
 
-<PlannerLayout title={schedule ? "Edytuj grafik" : "Nie znaleziono grafiku"}>
-  {schedule ? (
+<PlannerLayout title={!schedule ? "Nie znaleziono grafiku" : approved ? "Grafik zatwierdzony" : "Edytuj grafik"}>
+  {schedule && approved ? (
+    <>
+      <h1 class="mb-6 bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">
+        Grafik zatwierdzony
+      </h1>
+      <ScheduleNotice approved />
+      <div class="rounded-2xl border border-white/10 bg-white/10 p-8 text-center backdrop-blur-xl">
+        <p class="text-blue-100/80">Ten grafik jest zatwierdzony i nie można go edytować.</p>
+        <p class="mt-4 flex flex-wrap justify-center gap-x-4 gap-y-2">
+          <a href={`/schedules/${schedule.id}/assign`} class="text-purple-300 hover:underline">
+            Zobacz zatwierdzony grafik
+          </a>
+          <a href="/schedules" class="text-purple-300 hover:underline">
+            Lista grafików
+          </a>
+        </p>
+      </div>
+    </>
+  ) : schedule ? (
     <>
       <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 class="bg-gradient-to-r from-blue-200 to-purple-200 bg-clip-text text-3xl font-bold text-transparent">

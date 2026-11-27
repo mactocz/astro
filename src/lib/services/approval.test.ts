@@ -3,6 +3,7 @@ import {
   APPROVAL_MESSAGES,
   buildApprovalPayload,
   decideApproval,
+  formatApprovalDay,
   type ApprovalPayloadInput,
 } from "@/lib/services/approval";
 import { expectDeterministic, seededShuffle } from "@/lib/testing/determinism";
@@ -34,6 +35,17 @@ const SHORTAGE_A = finding("understaffed|-|a", "warning", "understaffed");
 const SHORTAGE_B = finding("understaffed|-|b", "warning", "understaffed");
 const NORM = finding(`weekly_norm|${ANNA}|`, "warning", "weekly_norm");
 const REST = finding(`daily_rest|${ANNA}|x`, "critical", "daily_rest");
+
+describe("formatApprovalDay", () => {
+  it.each([
+    ["2026-11-27T09:15:00+00:00", "27.11.2026"],
+    // Past midnight in Poland, still the day before in UTC; one offset in winter, another in summer.
+    ["2026-11-27T23:30:00+00:00", "28.11.2026"],
+    ["2026-07-01T22:30:00+00:00", "02.07.2026"],
+  ])("gives the Polish day of %s", (approvedAt, day) => {
+    expect(formatApprovalDay(approvedAt)).toBe(day);
+  });
+});
 
 describe("decideApproval", () => {
   it("allows a schedule without findings", () => {

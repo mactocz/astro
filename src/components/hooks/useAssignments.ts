@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { APPROVAL_MESSAGES } from "@/lib/services/approval";
 import { employeeDayKey, groupByEmployeeDay, summarizeCoverage } from "@/lib/services/assignment";
 import type { AssignmentInput, StaffingCell } from "@/types";
 
@@ -29,14 +30,13 @@ function withPresence(set: AssignmentSet, key: string, input: AssignmentInput, p
   return next;
 }
 
-// Whether a 422 answer is the `unknown_reference` one (the cell has no staffing any more, or the person left the schedule);
-// false when the body is not JSON.
-async function isUnknownReference(response: Response): Promise<boolean> {
+// The `error` code of an answer, or null when the body is not JSON or has none.
+async function errorCode(response: Response): Promise<unknown> {
   try {
     const body = (await response.json()) as { error?: unknown } | null;
-    return body?.error === "unknown_reference";
+    return body?.error ?? null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -47,8 +47,13 @@ async function failureMessage(response: Response): Promise<string> {
       return SESSION_ERROR;
     case 404:
       return NOT_FOUND_ERROR;
+    case 409:
+      return (await errorCode(response)) === "schedule_approved"
+        ? `${APPROVAL_MESSAGES.schedule_approved} Odśwież stronę.`
+        : SAVE_ERROR;
     case 422:
-      return (await isUnknownReference(response)) ? UNKNOWN_REFERENCE_ERROR : SAVE_ERROR;
+      // The cell has no staffing any more, or the person left the schedule.
+      return (await errorCode(response)) === "unknown_reference" ? UNKNOWN_REFERENCE_ERROR : SAVE_ERROR;
     default:
       return SAVE_ERROR;
   }

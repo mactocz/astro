@@ -1,13 +1,23 @@
 ---
+import type { ComponentProps } from "react";
 import PlannerLayout from "@/layouts/PlannerLayout.astro";
 import AssignmentGrid from "@/components/schedules/AssignmentGrid";
 import ScheduleNotice from "@/components/schedules/ScheduleNotice.astro";
 import { listAbsencesOverlapping } from "@/lib/absences";
+import { getApproval } from "@/lib/approvals";
 import { listAssignments } from "@/lib/assignments";
 import { listEmployees } from "@/lib/employees";
-import { toAbsenceOptions, toEmployeeOptions, toShiftOptions } from "@/lib/schedule-options";
+import {
+  snapshotEmployeeOptions,
+  snapshotHours,
+  snapshotShiftOptions,
+  toAbsenceOptions,
+  toEmployeeOptions,
+  toShiftOptions,
+} from "@/lib/schedule-options";
 import { getSchedule } from "@/lib/schedules";
 import { absencesOfRoster } from "@/lib/services/absence";
+import { formatApprovalDay } from "@/lib/services/approval";
 import { PERIOD_DAYS, addDays, formatPeriod } from "@/lib/services/schedule";
 import { listShifts } from "@/lib/shifts";
 import type { AbsenceOption, AssignmentInput, EmployeeOption, ShiftOption } from "@/types";
@@ -26,7 +36,25 @@ let shiftOptions: ShiftOption[] = [];
 let employeeOptions: EmployeeOption[] = [];
 let assignments: AssignmentInput[] = [];
 let absenceOptions: AbsenceOption[] = [];
-if (schedule) {
+// Set for an approved schedule: who approved it and when, and what the island shows instead of counting.
+let banner: string | null = null;
+let approved: ComponentProps<typeof AssignmentGrid>["approved"];
+if (schedule?.status === "approved") {
+  // An approved schedule is shown from its approval (the copies of the shifts and people, the findings and the hours as
+  // they were): the live dictionary, roster and absences are not read, so a later change of them changes nothing here.
+  const [approval, stored] = await Promise.all([
+    getApproval(supabase, schedule.id),
+    listAssignments(supabase, schedule.id),
+  ]);
+  if (!approval) {
+    throw new Error("An approved schedule has no approval record.");
+  }
+  shiftOptions = snapshotShiftOptions(approval.shifts);
+  employeeOptions = snapshotEmployeeOptions(approval.employees);
+  assignments = stored.map(({ shiftId, dayOffset, employeeId }) => ({ shiftId, dayOffset, employeeId }));
+  approved = { violations: approval.violations, hours: snapshotHours(approval.employees) };
+  banner = `Grafik zatwierdzony ${formatApprovalDay(approval.approvedAt)}, przez ${approval.approvedByEmail}`;
+} else if (schedule) {
   // The grid needs the whole shift dictionary and the whole roster (it picks the ones the schedule uses), the assignments made
   // so far and the absences that touch the schedule. The window of the absences is the seven days and the day after them, not
   // only the seven: a night shift that starts on the last day runs into the next day, and an absence that begins there
@@ -68,18 +96,25 @@ Astro.response.headers.set("Cache-Control", "no-store");
         {schedule.label && <p class="break-words text-blue-100/80">{schedule.label}</p>}
       </div>
       <div class="mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-        <a
-          href={`/schedules/${schedule.id}`}
-          class="py-1 text-purple-300 transition-colors hover:text-purple-100 hover:underline"
-        >
-          Edytuj grafik
-        </a>
+        {banner === null && (
+          <a
+            href={`/schedules/${schedule.id}`}
+            class="py-1 text-purple-300 transition-colors hover:text-purple-100 hover:underline"
+          >
+            Edytuj grafik
+          </a>
+        )}
         <a href="/schedules" class="py-1 text-purple-300 transition-colors hover:text-purple-100 hover:underline">
           Lista grafików
         </a>
       </div>
 
-      <ScheduleNotice />
+      {banner && (
+        <p class="mb-3 rounded-xl border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-sm font-semibold break-words text-emerald-100">
+          {banner}
+        </p>
+      )}
+      <ScheduleNotice approved={banner !== null} />
 
       {assignable ? (
         <div class="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur-xl sm:p-6">
@@ -89,6 +124,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
             employees={employeeOptions}
             assignments={assignments}
             absences={absenceOptions}
+            approved={approved}
             client:load
           />
         </div>
