@@ -51,7 +51,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | done |
 | S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | done        |
 | S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | done |
-| S-09 | schedule-generation         | wygenerować propozycję grafiku bez nadpisywania wpisów ręcznych   | S-05, S-07, F-02 | FR-009, FR-011, US-01                         | proposed |
+| S-09 | schedule-generation         | wygenerować propozycję grafiku bez nadpisywania wpisów ręcznych   | S-05, S-07, F-02 | FR-009, FR-011, US-01                         | planning |
 | S-10 | employee-invitation         | zaprosić pracownika e-mailem; pracownik ustawia hasło z linku     | F-01, S-01    | FR-001, FR-002                                   | done |
 | S-11 | employee-own-schedule       | (pracownik) zalogować się i zobaczyć własne zmiany na telefonie   | S-10, S-08    | FR-014                                           | proposed |
 | S-12 | schedule-new-version        | utworzyć nową wersję zatwierdzonego grafiku                       | S-08, S-11    | FR-021                                           | proposed |
@@ -229,7 +229,7 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Unknowns:**
   - Co ma robić generator, gdy nie da się spełnić wszystkich ograniczeń i według jakiego kryterium wybiera "najlepszą" propozycję (PRD ustala tylko, że naruszenie zostaje widoczne)? — Owner: user. Block: no.
 - **Risk:** Najcięższe obliczenie w produkcie, a plan Workers Free ma limit 10 ms CPU na żądanie (decyzja z 2026-10-16), więc potrzebny jest pomiar na wdrożeniu; generator idzie po regułach i nieobecnościach, bo bez nich nie ma jak sprawdzić jego wyniku.
-- **Status:** proposed
+- **Status:** planning
 
 ### S-10: Zaproszenie pracownika
 
