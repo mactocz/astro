@@ -51,7 +51,7 @@
   - Tradeoff: A new query parameter, a second state of the page and more smoke steps.
   - Confidence: MEDIUM — depends on how planners actually use old entries.
   - Blind spot: Whether the filter should apply to start or end date.
-- **Decision**: FIX QUEUED, Fix B: domyślnie nieobecności zakończone w ostatnich 12 miesiącach i link "Pokaż starsze", oba widoki z limitem i sortowaniem po stronie bazy (follow-ups/review-fixes.md, punkt 1)
+- **Decision**: FIXED (0ef6d4d), Fix B: domyślnie nieobecności zakończone w ostatnich 12 miesiącach i link "Pokaż starsze", oba widoki z limitem i sortowaniem po stronie bazy (follow-ups/review-fixes.md, punkt 1)
 
 ### F2 — Phase 6 evidence is thinner than the contract (rows 6.5 and 6.6)
 
@@ -61,7 +61,7 @@
 - **Location**: context/deployment/deploy-plan.md:157-175; context/changes/absence-entry/plan.md (Progress 6.5, 6.6)
 - **Detail**: Row 6.5 requires that `/absences` and the markers work on production, but `deploy-plan.md` only says the state was confirmed by the user and does not record that check (the author did confirm it in the session). Row 6.6 asks for the median and p99, preferably on a schedule with absences and with the first request in a new isolate; only a whole-Worker median of 5.41 ms is recorded (the file states the gaps and the risk for S-08 and S-09 itself, so the alternative "result with a decision" is met).
 - **Fix**: Add one line to `deploy-plan.md` saying that on 2026-11-27 the author confirmed that `/absences` and the cell markers work on production; keep the p99 and cold-isolate measurement as an item for S-08.
-- **Decision**: FIX QUEUED: linia z potwierdzeniem autora w deploy-plan.md; p99 i zimny izolat zostają dla S-08 (punkt 2)
+- **Decision**: FIXED (0ef6d4d): linia z potwierdzeniem autora w deploy-plan.md; p99 i zimny izolat zostają dla S-08 (punkt 2)
 
 ### F3 — The truncation guard assumes the server's `max_rows` is exactly 1000
 
@@ -75,7 +75,7 @@
   - Tradeoff: One extra count per read; `assignments.ts` keeps the older pattern until it is changed too.
   - Confidence: MEDIUM — supabase-js count semantics with `.lte/.gte` filters were not run against the hosted project.
   - Blind spot: The actual hosted `max_rows`.
-- **Decision**: FIX QUEUED: dokładna liczba (count exact) jako niezależne wykrywanie obcięcia, READ_LIMIT jako druga straż (punkt 3)
+- **Decision**: FIXED (0ef6d4d): dokładna liczba (count exact) jako niezależne wykrywanie obcięcia, READ_LIMIT jako druga straż (punkt 3)
 
 ### F4 — The reason text of an absence violation carries the sick-leave type next to a name
 
@@ -94,7 +94,7 @@
   - Tradeoff: Changes the reason texts, the key tests and many smoke assertions, and the planner loses the type in the list.
   - Confidence: MEDIUM — the planner may want the type in the reason.
   - Blind spot: Planner preference.
-- **Decision**: FIX QUEUED, Fix A: ograniczenie zapisane w planie S-08 (zamrożone wskazania tylko dla planisty albo redakcja typu); bez zmian w kodzie S-07 (punkt 4)
+- **Decision**: FIXED (0ef6d4d), Fix A (zapis w planie S-08): ograniczenie zapisane w planie S-08 (zamrożone wskazania tylko dla planisty albo redakcja typu); bez zmian w kodzie S-07 (punkt 4)
 
 ### F5 — Marker and reason can name different absences for a night shift; the docs overclaim
 
@@ -104,7 +104,7 @@
 - **Location**: src/lib/services/absence.ts:207-256; src/lib/services/absence.test.ts:1084-1132; CLAUDE.md:57
 - **Detail**: The marker of a cell names the strongest absence covering that day; the reason names the strongest absence overlapping the shift interval. For a night shift they can differ (a requested absence on day D and an approved one from D+1: cell D shows "(niezatwierdzona)", the critical reason names the approved one; with only an absence on D+1, cell D has "Krytyczne: 1" and no marker). The drift test uses morning shifts only, and CLAUDE.md says the marker is "the one the reason names".
 - **Fix**: Add a night-shift case to the drift test that pins this behaviour and soften the sentence in CLAUDE.md to "for a shift within one day".
-- **Decision**: FIX QUEUED: test nocny przypinający zachowanie i złagodzone zdanie w CLAUDE.md (punkt 5)
+- **Decision**: FIXED (0ef6d4d): test nocny przypinający zachowanie i złagodzone zdanie w CLAUDE.md (punkt 5)
 
 ### F6 — Every status other than `approved` is treated as `requested`
 
@@ -114,7 +114,7 @@
 - **Location**: src/lib/services/rules.ts:657-675; src/lib/services/absence.ts:211-218, 268-270
 - **Detail**: Only `rejected` is skipped and `approved` is critical; anything else becomes a warning and "(niezatwierdzona)". A status added by S-14 or S-15 (for example `cancelled`) would compile and silently produce warnings and markers.
 - **Fix**: Map the status through an exhaustive `Record<AbsenceStatus, ...>` (or a `switch` with a `never` check), as `RULE_RANK` does for rules.
-- **Decision**: FIX QUEUED: wyczerpujące mapowanie statusu (Record lub switch z never) w regułach i znacznikach (punkt 6)
+- **Decision**: FIXED (0ef6d4d): wyczerpujące mapowanie statusu (Record lub switch z never) w regułach i znacznikach (punkt 6)
 
 ### F7 — `other` lowers the norm like an excused absence, and a typo in a year is not flagged
 
@@ -124,7 +124,7 @@
 - **Location**: src/lib/services/absence.ts:29-33, 73-108; context/foundation/work-time-rules.md (D7)
 - **Detail**: D7 lowers the norm for every approved absence, while art. 130 § 3 speaks of an excused absence, so an unexcused absence entered as `other` makes the `weekly_norm` warning fire less often than the law would. Also the only length limit is the 2020-2099 range: 2026-11-02 to 2062-11-06 is accepted, zeroes the norm and raises criticals for that person in every schedule in between (the list shows the range).
 - **Fix**: Add a hint under the type select ("Inna nieobecność: usprawiedliwiona, obniża normę") and show the number of days in the list or the form so an absurd length is visible; no database constraint.
-- **Decision**: FIX QUEUED: podpowiedź pod polem rodzaju i liczba dni na liście (punkt 7)
+- **Decision**: FIXED (0ef6d4d): podpowiedź pod polem rodzaju i liczba dni na liście (punkt 7)
 
 ### F8 — Forward-looking gaps of the edit page and the `PUT` contract
 
@@ -134,7 +134,7 @@
 - **Location**: src/pages/api/absences/[id].ts:29-34; src/pages/absences/[id].astro:41-50; supabase/migrations/20261126204500_absences.sql:21
 - **Detail**: (a) The edit page does not show `status`, and the update policy has no status condition, so once `requested` or `rejected` rows exist (S-14, S-15) a planner could edit or delete a request without seeing its status. (b) `PUT` requires a valid `employeeId` and then ignores it, unlike the shift `PUT` that stores every validated field (documented in a comment). (c) `employee_id` cascades, so a future employee delete or archive feature would drop the absence history including L4 records (today only the service role can delete employees).
 - **Fix**: Show the status read-only on the edit page now; leave (b) and (c) as notes for S-14 (decide there whether non-approved rows are editable, and prefer soft deletion over a cascade).
-- **Decision**: FIX QUEUED: status tylko do odczytu na stronie edycji; (b) i (c) jako notatki do S-14 (punkt 8)
+- **Decision**: FIXED (0ef6d4d): status tylko do odczytu na stronie edycji; (b) i (c) jako notatki do S-14 (punkt 8)
 
 ### F9 — Small CPU costs on the Worker path, and the p99 is still unmeasured
 
@@ -154,4 +154,4 @@
 - **Location**: src/lib/absences.ts:6, 112-125; src/lib/services/rules.ts:633 and src/lib/services/absence.ts:259; AGENTS.md:23; CLAUDE.md:50
 - **Detail**: `lowerFirst` is byte-identical in `rules.ts` and `absence.ts` and `dayAndMonth` is duplicated; `absencesOfRoster` (a domain filter) sits in the data module whose header says it holds no business rule, while the convention puts pure functions in `services/`. AGENTS.md:23 puts `excusedWeekdays` under `work-hours.ts` (it is in `absence.ts`; only `weeklyNormExcused` is in `work-hours.ts`), and the S-05-era paragraphs (CLAUDE.md:50, AGENTS.md:19, README.md:201) still describe the norm as FTE minus holidays only, which the later paragraphs correct.
 - **Fix**: Export `lowerFirst` and a shared day-and-month formatter from `absence.ts`, move `absencesOfRoster` to `services/absence.ts`, correct AGENTS.md:23 and add "(and, since S-07, approved absences, see below)" to the three S-05-era norm sentences.
-- **Decision**: FIX QUEUED: wspólne pomocniki, absencesOfRoster do services, poprawki dokumentacji (punkt 9)
+- **Decision**: FIXED (0ef6d4d): wspólne pomocniki, absencesOfRoster do services, poprawki dokumentacji (punkt 9)
