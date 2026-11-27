@@ -1,6 +1,6 @@
 ---
 title: Reguły czasu pracy w MVP (Polska) — wartości progów i źródła
-status: decyzje D1-D6 zaakceptowane przez autora 2026-10-16; wartości z aktów zweryfikowane w tekście (nie jest poradą prawną)
+status: decyzje D1-D6 zaakceptowane przez autora 2026-10-16; wartości z aktów zweryfikowane w tekście (nie jest poradą prawną); decyzja D7 (nieobecności a norma tygodniowa) zaakceptowana przez autora 2026-11-26
 researched_at: 2026-10-16
 jurisdiction: PL, Kodeks pracy
 legal_state: Kodeks pracy, tekst jednolity Dz.U. 2026 poz. 1245 (stan na 2026-08-27); ustawa o dniach wolnych od pracy, tekst jednolity Dz.U. 2025 poz. 296
@@ -29,7 +29,7 @@ Założenie (D1, zaakceptowane): prawo polskie, podstawowy system czasu pracy (a
 | Limit godzin, okres rozliczeniowy | wymiar = **40 h × liczba tygodni** w okresie **+ 8 h × liczba dni pon.–pt. pozostałych** do końca okresu **− 8 h za każde święto** przypadające w dniu innym niż niedziela **− godziny usprawiedliwionej nieobecności** przypadające do przepracowania wg rozkładu | art. 130 § 1 do 3 | Okres rozliczeniowy do **4 miesięcy** (art. 129 § 1), do 12 miesięcy gdy uzasadnione (§ 2). Zob. D2. |
 | Limit godzin, twardy pułap | tygodniowy czas pracy łącznie z nadliczbowymi nie może przekraczać przeciętnie **48 godzin** w okresie rozliczeniowym | art. 131 § 1 | Nadliczbowe (art. 151) są poza regułami MVP; pułap 48 h jest granicą bezpieczeństwa. |
 | Niepełny etat | norma = norma pełnoetatowa **obniżona proporcjonalnie do wymiaru etatu** | źródło wtórne: biznes.gov.pl | **Kodeks w art. 128 do 152 nie podaje wzoru na godziny** (art. 129 § 5 mówi o proporcji tylko dla wynagrodzenia, art. 151 § 5 odsyła do wymiaru z umowy). Zob. D4. |
-| Kolizja z nieobecnością | nie jest progiem ustawowym; to reguła z PRD na danych o nieobecnościach | PRD (US-01) | Przepis wpływa na normę: godziny usprawiedliwionej nieobecności obniżają wymiar (art. 130 § 3). |
+| Kolizja z nieobecnością | nie jest progiem ustawowym; to reguła z PRD na danych o nieobecnościach | PRD (US-01) | Przepis wpływa na normę: godziny usprawiedliwionej nieobecności obniżają wymiar (art. 130 § 3). Zob. D7. |
 
 ### Brzmienie przepisów (dosłownie, Dz.U. 2026 poz. 1245)
 
@@ -82,12 +82,33 @@ Autor zaakceptował wszystkie sześć propozycji bez zmian.
 | D4 | Czy niepełny etat to norma pełnoetatowa × ułamek etatu? (Kodeks nie podaje wzoru; źródło wtórne: biznes.gov.pl) | tak, proporcjonalnie; proporcja w jednym miejscu kodu, łatwym do poprawki | S-06 |
 | D5 | Skąd wziąć kalendarz świąt do wymiaru? | wyliczać z art. 1 ustawy o dniach wolnych od pracy (w tym święta ruchome) | S-06 |
 | D6 | Jak potraktować wymóg rozkładu na co najmniej miesiąc i przekazania z tygodniowym wyprzedzeniem (art. 129 § 3) względem grafików tygodniowych? | grafik tygodniowy zostaje; UI i dokumentacja ostrzegają, że nie zastępuje formalnego rozkładu | S-03, S-05 |
+| D7 | Czy zatwierdzona nieobecność obniża normę tygodniową i o ile? | tak: o 8 h × etat za każdy odrębny dzień od poniedziałku do piątku niebędący świętem, który obejmuje zatwierdzona nieobecność; wniosek (`requested`) i odrzucona (`rejected`) niczego nie obniżają; dolne ograniczenie 0; święta nie są odejmowane drugi raz (zob. niżej) | S-07 |
 
 Skutek w roadmapie: `S-05` i `S-06` zmieniły status z `blocked` na `proposed`; pytanie nr 2 z PRD jest rozwiązane.
 
 Pozostałe niewiadome, które ten dokument ujawnił, a nie rozstrzygnął (każda bez blokady planowania):
 interpretacja doby przy zmianach przechodzących przez północ (S-05) oraz zestawianie grafiku tygodniowego z miesięcznym okresem
 rozliczeniowym, gdy tydzień obejmuje dwa miesiące (S-06).
+
+### D7: nieobecności a norma tygodniowa (dopisana przy S-07)
+
+D7 dopisano po D1-D6 przy zmianie `absence-entry` (roadmapa S-07). Autor zaakceptował ją 2026-11-26: w wywiadzie planistycznym i w przeglądzie Fazy 1, razem z wektorami normy. To nie jest porada prawna; narzędzie ostrzega i nie gwarantuje zgodności z prawem, a interpretację art. 130 § 3 warto potwierdzić u prawnika lub w PIP (jak D1-D6).
+
+Pytanie: czy zatwierdzona nieobecność obniża normę tygodniową i o ile?
+
+Przepis. Art. 130 § 3 obniża wymiar czasu pracy o liczbę godzin usprawiedliwionej nieobecności "przypadających do przepracowania w czasie tej nieobecności, zgodnie z przyjętym rozkładem czasu pracy" (brzmienie dosłowne wyżej). Dzień nieobecności w rozkładzie czasu pracy obniża więc wymiar o godziny pracy przypadające na ten dzień. Grafik tygodniowy Shiftly nie zna rozkładu z dnia, w którym pracownik jest nieobecny (nikt nie przypisuje wtedy zmiany), więc nie ma skąd wziąć "godzin przypadających do przepracowania". Narzędzie przyjmuje, że godzin pracy takiego dnia jest 8 × etat. To jest interpretacja art. 130 § 3, a nie jego brzmienie.
+
+Decyzja:
+
+- zatwierdzona nieobecność (status `approved`; każdy rodzaj: urlop, zwolnienie lekarskie L4, inna nieobecność) obniża normę tygodniową o 8 h × etat za każdy odrębny dzień spośród siedmiu dni grafiku, który przypada od poniedziałku do piątku, nie jest świętem i jest objęty taką nieobecnością;
+- kilka nieobecności w jednym dniu liczy się raz, sobota i niedziela niczego nie obniżają, a dzień, który obniżyło już święto (art. 130 § 2), nie obniża normy drugi raz;
+- nieobecność niezatwierdzona (`requested`) i odrzucona (`rejected`) normy nie obniża;
+- norma nie spada poniżej 0 (wtedy każda praca w tygodniu jest ponad normą);
+- to samo liczenie zasila ostrzeżenie `weekly_norm` (S-05) i kolumnę "Godziny" (S-06), więc nigdy nie pokazują dwóch norm dla jednego tygodnia.
+
+Przykłady (pełny etat): tydzień od poniedziałku 02.11.2026 bez świąt i urlop od wtorku 03.11 do czwartku 05.11 dają 40 h minus 3 × 8 h = 16 h. Tydzień od wtorku 10.11.2026 ze świętem w środę 11.11 i urlop od wtorku 10.11 do piątku 13.11 dają 40 h minus 8 h (święto) minus 3 × 8 h (wtorek, czwartek i piątek; środa jest świętem i nie liczy się drugi raz) = 8 h. Dla 1/2 etatu obie wartości są proporcjonalnie mniejsze (8 h i 4 h).
+
+D7 dotyczy tylko normy tygodniowej grafiku, liczonej jak w S-05 i S-06 (40 h × etat, 8 h × etat za święto w siedmiu dniach grafiku); nie rozstrzyga zestawiania grafiku tygodniowego z miesięcznym okresem rozliczeniowym (D2) i nie zmienia limitów krytycznych (odpoczynek dobowy i tygodniowy, 8 h na dobę, 48 h w tygodniu). Kolizja zmiany z nieobecnością (reguły `absence` i `absence_requested`) nie wynika z D7 ani z progu ustawowego, tylko z PRD (US-01): zatwierdzona jest krytyczna, niezatwierdzona to ostrzeżenie, odrzucona jest pomijana.
 
 ## Źródła
 
