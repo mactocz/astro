@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { formatWorkload, summarizeWorkload } from "@/lib/services/workload";
-import type { AssignmentInput, EmployeeOption, Schedule, ShiftOption } from "@/types";
+import type { AbsenceOption, AssignmentInput, EmployeeOption, Schedule, ShiftOption } from "@/types";
 
 /** What the "Godziny" column says about one person: "32 h z 40 h" and "mniej o 8 h" (or "równo z normą"). */
 export type WorkloadText = ReturnType<typeof formatWorkload>;
@@ -14,18 +14,22 @@ export type WorkloadText = ReturnType<typeof formatWorkload>;
  *
  * The result is keyed by employee id and has an entry for each of the `employees` that is in the roster of the schedule
  * (`schedule.employeeIds`), the one with no shift included ("0 min z 40 h"). It only shows numbers: no threshold and no
- * status, because exceeding the norm is the `weekly_norm` warning of the live rules.
+ * status, because exceeding the norm is the `weekly_norm` warning of the live rules. `absences` (S-07) lower the norm of their
+ * person (an approved one, a day from Monday to Friday that is not a holiday), from the same data and the same days as the
+ * `weekly_norm` warning, so the column and the warning never give two norms for one week.
  */
 export function useWorkload({
   schedule,
   shifts,
   employees,
   list,
+  absences,
 }: {
   schedule: Pick<Schedule, "startDate" | "employeeIds">;
   shifts: readonly ShiftOption[];
   employees: readonly EmployeeOption[];
   list: readonly AssignmentInput[];
+  absences: readonly AbsenceOption[];
 }): Partial<Record<string, WorkloadText>> {
   const { startDate, employeeIds } = schedule;
 
@@ -37,6 +41,7 @@ export function useWorkload({
         assignments: list,
         shifts,
         employees: employees.filter((employee) => roster.has(employee.id)),
+        absences,
       });
       return Object.fromEntries(rows.map((row): [string, WorkloadText] => [row.employeeId, formatWorkload(row)]));
     } catch {
@@ -45,5 +50,5 @@ export function useWorkload({
       // the rules could not be computed either, so the rest of the island keeps working.
       return {};
     }
-  }, [startDate, employeeIds, shifts, employees, list]);
+  }, [startDate, employeeIds, shifts, employees, list, absences]);
 }

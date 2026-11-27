@@ -2,13 +2,14 @@
 import PlannerLayout from "@/layouts/PlannerLayout.astro";
 import AssignmentGrid from "@/components/schedules/AssignmentGrid";
 import ScheduleNotice from "@/components/schedules/ScheduleNotice.astro";
+import { absencesOfRoster, listAbsencesOverlapping } from "@/lib/absences";
 import { listAssignments } from "@/lib/assignments";
 import { listEmployees } from "@/lib/employees";
-import { toEmployeeOptions, toShiftOptions } from "@/lib/schedule-options";
+import { toAbsenceOptions, toEmployeeOptions, toShiftOptions } from "@/lib/schedule-options";
 import { getSchedule } from "@/lib/schedules";
-import { formatPeriod } from "@/lib/services/schedule";
+import { PERIOD_DAYS, addDays, formatPeriod } from "@/lib/services/schedule";
 import { listShifts } from "@/lib/shifts";
-import type { AssignmentInput, EmployeeOption, ShiftOption } from "@/types";
+import type { AbsenceOption, AssignmentInput, EmployeeOption, ShiftOption } from "@/types";
 
 const { supabase } = Astro.locals;
 if (!supabase) {
@@ -23,16 +24,23 @@ const schedule = id === undefined ? null : await getSchedule(supabase, id);
 let shiftOptions: ShiftOption[] = [];
 let employeeOptions: EmployeeOption[] = [];
 let assignments: AssignmentInput[] = [];
+let absenceOptions: AbsenceOption[] = [];
 if (schedule) {
-  // The grid needs the whole shift dictionary and the whole roster (it picks the ones the schedule uses) and the
-  // assignments made so far.
-  const [shifts, employees, stored] = await Promise.all([
+  // The grid needs the whole shift dictionary and the whole roster (it picks the ones the schedule uses), the assignments made
+  // so far and the absences that touch the schedule. The window of the absences is the seven days and the day after them, not
+  // only the seven: a night shift that starts on the last day runs into the next day, and an absence that begins there
+  // collides with its tail (the rules judge it, so it has to be read).
+  const [shifts, employees, stored, overlapping] = await Promise.all([
     listShifts(supabase),
     listEmployees(supabase),
     listAssignments(supabase, schedule.id),
+    listAbsencesOverlapping(supabase, schedule.startDate, addDays(schedule.startDate, PERIOD_DAYS)),
   ]);
   shiftOptions = toShiftOptions(shifts);
   employeeOptions = toEmployeeOptions(employees);
+  // The read answers with the absences of everybody, so the page keeps those of the people of this schedule, and the island
+  // gets only the five fields it needs (an L4 is health data): no id, no creation time, nothing about an account.
+  absenceOptions = toAbsenceOptions(absencesOfRoster(overlapping, schedule.employeeIds));
   // The island gets plain data. `source` stays on the server: the page does not show it, and every entry made here is manual.
   assignments = stored.map(({ shiftId, dayOffset, employeeId }) => ({ shiftId, dayOffset, employeeId }));
 } else {
@@ -44,7 +52,7 @@ if (schedule) {
 // someone has emptied by hand; the page then says so instead of showing an empty table.
 const assignable = schedule !== null && schedule.staffing.length > 0 && schedule.employeeIds.length > 0;
 
-// The grid lists the names of the employees: no cache may keep this page.
+// The grid lists the names of the employees and the kinds of their absences: no cache may keep this page.
 Astro.response.headers.set("Cache-Control", "no-store");
 ---
 
@@ -79,6 +87,7 @@ Astro.response.headers.set("Cache-Control", "no-store");
             shifts={shiftOptions}
             employees={employeeOptions}
             assignments={assignments}
+            absences={absenceOptions}
             client:load
           />
         </div>

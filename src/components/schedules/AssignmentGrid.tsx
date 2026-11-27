@@ -1,4 +1,4 @@
-import { Check, OctagonAlert, TriangleAlert } from "lucide-react";
+import { CalendarOff, Check, OctagonAlert, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { ServerError } from "@/components/auth/ServerError";
 import { assignmentKey, useAssignments } from "@/components/hooks/useAssignments";
@@ -6,12 +6,14 @@ import { useViolations } from "@/components/hooks/useViolations";
 import { useWorkload, type WorkloadText } from "@/components/hooks/useWorkload";
 import { ViolationList } from "@/components/schedules/ViolationList";
 import { unavailableShift } from "@/lib/schedule-options";
+import { absenceMarkers, formatAbsenceMarker } from "@/lib/services/absence";
 import { employeeDayKey } from "@/lib/services/assignment";
 import { summarizeViolations } from "@/lib/services/rules";
 import { PERIOD_DAYS, dayColumns } from "@/lib/services/schedule";
 import { formatCellMarker, formatViolationCounts } from "@/lib/services/violation-view";
 import { cn } from "@/lib/utils";
 import type {
+  AbsenceOption,
   AssignmentInput,
   CoverageCell,
   EmployeeOption,
@@ -29,6 +31,8 @@ interface Props {
   employees: EmployeeOption[];
   /** What the page loaded: the assignments of the schedule. */
   assignments: AssignmentInput[];
+  /** What the page loaded: the absences of the people of the schedule that touch it, with only what the grid needs. */
+  absences: AbsenceOption[];
 }
 
 // The first column stays in place while the days scroll. Its background is opaque (the card behind it is not), or the
@@ -43,7 +47,7 @@ const shiftButtonIdleClass = "border-white/20 bg-white/5 text-blue-100/80 hover:
 
 // What the paragraph under the people's table says about the column "Godziny", always. The same words are in the smoke test.
 const HOURS_NOTE =
-  "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu (40 h pomniejszone o 8 h za każde święto w dzień inny niż niedziela, proporcjonalnie do etatu). Nieobecności nie są jeszcze uwzględnione. Przekroczenie normy pokazuje lista wskazań.";
+  "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu (40 h pomniejszone o 8 h za każde święto w dzień inny niż niedziela i za każdy dzień zatwierdzonej nieobecności od poniedziałku do piątku, proporcjonalnie do etatu). Przekroczenie normy pokazuje lista wskazań.";
 
 const cellKey = (shiftId: string, dayOffset: number): string => `${shiftId}/${dayOffset}`;
 
@@ -103,6 +107,19 @@ function CoverageValue({ cell }: { cell: CoverageCell }) {
   );
 }
 
+// What a cell says under its buttons on a day of its person's absence: the type in words ("Nieobecność: urlop") and, for an
+// absence that is not approved yet, "(niezatwierdzona)", so the difference is in the text and not in a colour. It is
+// information and not a violation, so it never says "Krytyczne" or "Ostrzeżenie" (the violations have their own mark and
+// their own list) and it is not an alert. The whole text is one string, so the markup never splits it.
+function AbsenceMarker({ absence }: { absence: AbsenceOption }) {
+  return (
+    <div className="mt-1 flex items-start justify-center gap-1 text-xs leading-snug font-medium text-blue-100/80">
+      <CalendarOff aria-hidden="true" className="mt-px size-3 shrink-0" />
+      <span>{formatAbsenceMarker(absence)}</span>
+    </div>
+  );
+}
+
 // What a cell says under its buttons when a violation sits on it: the weight in words with the count ("Krytyczne: 2"), the
 // icon and the colour only an addition. The whole text is one string, so the markup never splits it.
 function CellMarker({ violations }: { violations: readonly Violation[] }) {
@@ -152,19 +169,26 @@ function PersonHours({ hours }: { hours: WorkloadText | undefined }) {
   );
 }
 
-export default function AssignmentGrid({ schedule, shifts, employees, assignments }: Props) {
+export default function AssignmentGrid({ schedule, shifts, employees, assignments, absences }: Props) {
   const { list, byEmployeeDay, coverage, busy, error, toggle } = useAssignments({
     scheduleId: schedule.id,
     staffing: schedule.staffing,
     initial: assignments,
   });
   // The rules read the optimistic list of the hook, so they follow every click, a click that is taken back included. They get
-  // the shifts of the dictionary only, never the placeholder of `shiftLayout`, which has no hours.
-  const violations = useViolations({ schedule, shifts, employees, list });
-  // The hours follow every click the same way, from the same list and the same dictionary shifts.
-  const workload = useWorkload({ schedule, shifts, employees, list });
+  // the shifts of the dictionary only, never the placeholder of `shiftLayout`, which has no hours. The absences are what the
+  // page loaded: nothing in the grid changes them.
+  const violations = useViolations({ schedule, shifts, employees, list, absences });
+  // The hours follow every click the same way, from the same list and the same dictionary shifts, and take their norm from
+  // the same absences.
+  const workload = useWorkload({ schedule, shifts, employees, list, absences });
 
   const columns = useMemo(() => dayColumns(schedule.startDate), [schedule.startDate]);
+  // The absence each cell names, by person and day: the strongest one that covers the day.
+  const markers: Partial<Record<string, AbsenceOption>> = useMemo(
+    () => absenceMarkers(schedule.startDate, absences),
+    [schedule.startDate, absences],
+  );
   // The rows are the people of the schedule, in the order of the employee list.
   const members = useMemo(() => {
     const inSchedule = new Set(schedule.employeeIds);
@@ -223,6 +247,7 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                   const dayKey = employeeDayKey(employee.id, column.offset);
                   const pressedShiftIds = byEmployeeDay[dayKey];
                   const cellViolations = violations.byEmployeeDay[dayKey];
+                  const cellAbsence = markers[dayKey];
                   return (
                     <td key={column.offset} className="border-t border-white/10 px-1 py-2 text-center align-top">
                       {dayShifts.length === 0 ? (
@@ -259,6 +284,7 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                           })}
                         </div>
                       )}
+                      {cellAbsence ? <AbsenceMarker absence={cellAbsence} /> : null}
                       {cellViolations ? <CellMarker violations={cellViolations} /> : null}
                     </td>
                   );

@@ -99,6 +99,8 @@ describe("decideAccess trailing slash", () => {
     "/access-denied",
     "/dashboard",
     "/employees",
+    "/absences",
+    "/api/absences",
   ])("%s accepts a single trailing slash and decides the same", (pathname) => {
     for (const actor of actorNames) {
       const input = { pathname, ...actors[actor] };
@@ -199,6 +201,11 @@ describe("decideAccess default deny", () => {
     "/api/schedules/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",
     "/schedules/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90/assign",
     "/api/schedules/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90/assignments",
+    "/absences",
+    "/absences/new",
+    "/absences/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",
+    "/api/absences",
+    "/api/absences/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",
     "/favicon.ico",
     "/robots.txt",
     "/_image",

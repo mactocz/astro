@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { toEmployeeOptions, toShiftOptions, unavailableShift } from "@/lib/schedule-options";
-import type { Employee, Fte, Shift } from "@/types";
+import { toAbsenceOptions, toEmployeeOptions, toShiftOptions, unavailableShift } from "@/lib/schedule-options";
+import type { Absence, Employee, Fte, Shift } from "@/types";
 
 // An employee with everything the roster holds. The options must keep only the id, the name and the FTE: the page hands
 // them to a React island, so whatever they carry ends up in the HTML that every planner's browser receives.
@@ -147,6 +147,71 @@ describe("toShiftOptions", () => {
 
     expect(structuredClone(input)).toStrictEqual(before);
     expect(options).not.toBe(input);
+  });
+});
+
+describe("toAbsenceOptions", () => {
+  // An absence as the data module returns it, with everything the table holds. The options must keep only the person, the
+  // type, the status and the two days: the page hands them to a React island, so whatever they carry ends up in the HTML that
+  // every planner's browser receives, and the type of an absence can be a sick leave (health data).
+  function absence(id: string, employeeId: string, overrides: Partial<Absence> = {}): Absence {
+    return {
+      id,
+      employeeId,
+      type: "sick_leave",
+      status: "approved",
+      startDate: "2026-11-03",
+      endDate: "2026-11-05",
+      createdAt: "2026-11-01T10:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  // Different values in every field, so that each option has to carry its own; out of order on purpose.
+  const absences = [
+    absence("a-2", "e-2", { type: "vacation", status: "requested", startDate: "2026-11-09", endDate: "2026-11-09" }),
+    absence("a-1", "e-1"),
+  ];
+
+  it("gives exactly the person, the type, the status and the two days of each absence", () => {
+    expect(toAbsenceOptions(absences)).toStrictEqual([
+      { employeeId: "e-2", type: "vacation", status: "requested", startDate: "2026-11-09", endDate: "2026-11-09" },
+      { employeeId: "e-1", type: "sick_leave", status: "approved", startDate: "2026-11-03", endDate: "2026-11-05" },
+    ]);
+  });
+
+  it("gives objects with no key beyond the five of the option", () => {
+    for (const option of toAbsenceOptions(absences)) {
+      expect(Object.keys(option).sort()).toStrictEqual(["employeeId", "endDate", "startDate", "status", "type"]);
+    }
+  });
+
+  it("lets neither the id of the row nor its creation time through", () => {
+    const text = JSON.stringify(toAbsenceOptions(absences));
+
+    expect(text).not.toContain("a-1");
+    expect(text).not.toContain("a-2");
+    expect(text).not.toContain("createdAt");
+    expect(text).not.toContain("2026-11-01T10:00");
+  });
+
+  it("keeps the order of the list it is given", () => {
+    expect(toAbsenceOptions(absences).map((option) => option.employeeId)).toStrictEqual(["e-2", "e-1"]);
+  });
+
+  it("gives an empty list for no absences", () => {
+    expect(toAbsenceOptions([])).toStrictEqual([]);
+  });
+
+  it("returns new objects and leaves the input unchanged", () => {
+    const input = Object.freeze(absences.map((entry) => Object.freeze({ ...entry })));
+    const before = structuredClone(input);
+
+    const options = toAbsenceOptions(input);
+
+    expect(structuredClone(input)).toStrictEqual(before);
+    expect(options).not.toBe(input);
+    expect(options[0]).not.toBe(input[0]);
   });
 });
 

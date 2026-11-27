@@ -49,7 +49,7 @@ Planista (kierownik zespołu z pracą zmianową) traci wiele godzin na ręczne u
 | S-04 | manual-shift-assignment     | ręcznie obsadzać zmiany pracownikami i poprawiać wpisy            | S-03          | FR-011, US-01                                    | done |
 | S-05 | live-rule-violations        | zobaczyć na żywo naruszenia reguł i braki obsady                  | S-04, F-02    | FR-010, US-01                                    | done |
 | S-06 | workload-vs-norm            | zobaczyć sumę godzin pracownika względem normy z etatu            | S-04          | FR-020                                           | done |
-| S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | proposed |
+| S-07 | absence-entry               | wpisać nieobecność pracownika i zobaczyć kolizję w grafiku        | S-01, S-05    | FR-004, US-01                                    | in-progress |
 | S-08 | schedule-approval           | zatwierdzić grafik z blokadą krytycznych naruszeń                 | S-05          | FR-012, US-01                                    | proposed |
 | S-09 | schedule-generation         | wygenerować propozycję grafiku bez nadpisywania wpisów ręcznych   | S-05, S-07, F-02 | FR-009, FR-011, US-01                         | proposed |
 | S-10 | employee-invitation         | zaprosić pracownika e-mailem; pracownik ustawia hasło z linku     | F-01, S-01    | FR-001, FR-002                                   | in-progress |
@@ -202,9 +202,9 @@ Foundations below assume these are present and do NOT re-scaffold them.
 - **Parallel with:** S-06, S-08, S-10
 - **Blockers:** —
 - **Unknowns:**
-  - Czy nieobecność ma granularność dnia czy godzin (PRD mówi o "dniu/godzinie")? — Owner: user. Block: no.
+  - Czy nieobecność ma granularność dnia czy godzin (PRD mówi o "dniu/godzinie")? — rozstrzygnięte 2026-11-26 w planowaniu: całe dni (daty włącznie); godziny jako rozszerzenie później (nullable start_minute/end_minute), korekta normy wg art. 130 § 3 jako decyzja D7, zob. `context/changes/absence-entry/plan.md`. — Owner: user. Block: no.
 - **Risk:** Pierwszy raz reguła czerpie dane spoza grafiku; nieobecności zasilą też późniejsze wycinki pracownika (S-13, S-14), więc model ustawiam tutaj.
-- **Status:** proposed
+- **Status:** in-progress
 
 ### S-08: Zatwierdzanie grafiku
 
