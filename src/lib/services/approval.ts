@@ -1,4 +1,5 @@
 import { absencesOfRoster } from "@/lib/services/absence";
+import { validateAssignmentInput } from "@/lib/services/assignment";
 import { compareViolations } from "@/lib/services/rules";
 import type { SafeEvaluation } from "@/lib/services/safe-evaluate";
 import { compareCells, compareText } from "@/lib/services/schedule";
@@ -10,6 +11,7 @@ import type {
   Shift,
   StaffingCell,
   Violation,
+  ViolationAnchor,
   WorkloadRow,
 } from "@/types";
 
@@ -32,7 +34,7 @@ export function formatApprovalDay(approvedAt: string): string {
 export const APPROVAL_MESSAGES = {
   critical_violations: "Nie można zatwierdzić grafiku, w którym są krytyczne naruszenia.",
   confirmation_required: "Lista ostrzeżeń się zmieniła. Sprawdź ją i potwierdź ponownie.",
-  schedule_changed: "Dane grafiku zmieniły się w trakcie zatwierdzania. Sprawdź grafik i spróbuj ponownie.",
+  schedule_changed: "Dane grafiku zmieniły się od otwarcia strony. Sprawdź grafik i spróbuj ponownie.",
   schedule_approved: "Ten grafik jest już zatwierdzony i nie można go zmieniać.",
   rules_unavailable: "Nie udało się sprawdzić reguł czasu pracy, więc grafik nie został zatwierdzony.",
 } as const;
@@ -95,6 +97,121 @@ function compareAbsenceOptions(a: AbsenceOption, b: AbsenceOption): number {
     compareText(a.type, b.type) ||
     compareText(a.status, b.status)
   );
+}
+
+/**
+ * A fingerprint (SHA-256, hex) of the data of a schedule that the grid does not change: the start date, the staffing, the
+ * roster, the used shifts, the people and their absences, taken exactly as `buildApprovalPayload` takes them. The page
+ * sends it back with an approval, and the route counts it again from the database, so an approval never covers data the
+ * planner did not have on the screen. The assignments are compared one by one (`sameAssignments`).
+ */
+export async function approvalBasis({
+  schedule,
+  shifts,
+  employees,
+  absences,
+}: Pick<ApprovalPayloadInput, "schedule" | "shifts" | "employees" | "absences">): Promise<string> {
+  const { inputs } = buildApprovalPayload({
+    schedule,
+    shifts,
+    employees,
+    absences,
+    assignments: [],
+    violations: [],
+    workload: [],
+  });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(inputs)));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+const assignmentId = ({ shiftId, dayOffset, employeeId }: AssignmentInput): string =>
+  `${dayOffset}/${shiftId}/${employeeId}`;
+
+/** True when both lists hold the same assignments, in any order. */
+export function sameAssignments(a: readonly AssignmentInput[], b: readonly AssignmentInput[]): boolean {
+  const first = new Set(a.map(assignmentId));
+  const second = new Set(b.map(assignmentId));
+  return first.size === second.size && [...first].every((id) => second.has(id));
+}
+
+/** What the page sends to approve: the confirmed warning keys and what it has on the screen. */
+export interface ApprovalRequest {
+  confirmedKeys: string[];
+  basis: string;
+  assignments: AssignmentInput[];
+}
+
+/** The body of an approval request, or null when it is not one. */
+export function readApprovalRequest(body: unknown): ApprovalRequest | null {
+  if (!isRecord(body)) {
+    return null;
+  }
+  const { confirmedKeys, basis, assignments } = body;
+  if (!Array.isArray(confirmedKeys) || !confirmedKeys.every((key) => typeof key === "string")) {
+    return null;
+  }
+  if (typeof basis !== "string" || !Array.isArray(assignments)) {
+    return null;
+  }
+  const read: AssignmentInput[] = [];
+  for (const assignment of assignments) {
+    const result = validateAssignmentInput(assignment);
+    if (!result.ok) {
+      return null;
+    }
+    read.push(result.value);
+  }
+  return { confirmedKeys, basis, assignments: read };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toStoredAnchor(raw: unknown): ViolationAnchor[] {
+  if (!isRecord(raw) || typeof raw.shiftId !== "string" || typeof raw.dayOffset !== "number") {
+    return [];
+  }
+  const employeeId = typeof raw.employeeId === "string" ? raw.employeeId : null;
+  return [{ shiftId: raw.shiftId, dayOffset: raw.dayOffset, employeeId }];
+}
+
+/** The text of a stored finding that has none. */
+export const MISSING_REASON = "(brak opisu wskazania)";
+
+/**
+ * The findings of an approval record as the page can show them. `approve_schedule` does not check their shape (a planner
+ * can call it directly) and an approval cannot be undone, so a missing or odd field gets a neutral value instead of
+ * breaking the page, and an entry without a key or a weight, or with a key seen before, is left out.
+ */
+export function toStoredViolations(raw: unknown): Violation[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return raw.flatMap((entry): Violation[] => {
+    if (!isRecord(entry)) {
+      return [];
+    }
+    const { key, severity, rule, employeeId, anchors, reason, actual, limit, unit } = entry;
+    if (typeof key !== "string" || seen.has(key) || (severity !== "critical" && severity !== "warning")) {
+      return [];
+    }
+    seen.add(key);
+    return [
+      {
+        key,
+        severity,
+        rule: typeof rule === "string" ? (rule as Violation["rule"]) : "understaffed",
+        employeeId: typeof employeeId === "string" ? employeeId : null,
+        anchors: Array.isArray(anchors) ? anchors.flatMap(toStoredAnchor) : [],
+        reason: typeof reason === "string" ? reason : MISSING_REASON,
+        actual: typeof actual === "number" ? actual : 0,
+        limit: typeof limit === "number" ? limit : 0,
+        unit: unit === "people" ? "people" : "minutes",
+      },
+    ];
+  });
 }
 
 /**

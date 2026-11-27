@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { APPROVAL_MESSAGES } from "@/lib/services/approval";
+import { APPROVAL_MESSAGES, type ApprovalRequest } from "@/lib/services/approval";
 
 const SESSION_ERROR = "Sesja wygasła lub brak uprawnień. Zaloguj się ponownie.";
 const NOT_FOUND_ERROR = "Nie znaleziono tego grafiku. Wróć do listy grafików i spróbuj ponownie.";
@@ -44,7 +44,7 @@ export function useApproval(scheduleId: string) {
     window.location.replace(`/schedules/${scheduleId}/assign`);
   }
 
-  async function approve(confirmedKeys: string[]) {
+  async function approve(request: ApprovalRequest) {
     setPending(true);
     setFailure(null);
     let next: ApprovalFailure;
@@ -52,7 +52,7 @@ export function useApproval(scheduleId: string) {
       const response = await fetch(`/api/schedules/${scheduleId}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmedKeys }),
+        body: JSON.stringify(request),
       });
       if (response.status === 200) {
         // Stays pending until the page is gone.

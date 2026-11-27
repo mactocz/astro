@@ -1,5 +1,5 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
-import { isUuid, logDatabaseError } from "@/lib/postgrest";
+import { assertExactCount, isUuid, logDatabaseError } from "@/lib/postgrest";
 import { sortEmployees } from "@/lib/services/employee";
 import type { Employee, EmployeeInput } from "@/types";
 
@@ -74,10 +74,12 @@ function writeFailure(action: string, error: PostgrestError): { ok: false; error
 
 /** Every employee the session may see, ordered by `sortEmployees`. Throws when the database fails. */
 export async function listEmployees(supabase: SupabaseClient): Promise<Employee[]> {
-  const { data, error } = await supabase.from("employees").select(COLUMNS);
+  const { data, error, count } = await supabase.from("employees").select(COLUMNS, { count: "exact" });
   if (error) {
     throw readFailure("list", error);
   }
+  // A cut-off answer would leave a person of a roster out of the rules and make every approval fail.
+  assertExactCount("employees", data.length, count, "list");
   return sortEmployees(toEmployees(data));
 }
 

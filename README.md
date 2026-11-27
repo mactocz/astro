@@ -181,15 +181,15 @@ A planner invites an employee from the employee list (`/employees`) or the edit 
 | `/api/shifts/[id]`                | `PUT` replaces a shift from JSON: 200, 404, 422 (planner only)                                                                                                        |
 | `/schedules`                      | List of weekly schedules, latest period first, with the D6 notice, the status and links to edit and assign, or to view an approved one (planner only)                 |
 | `/schedules/new`                  | Form for a new schedule: start date, label, staffing grid and employees (planner only)                                                                                |
-| `/schedules/[id]`                 | Form for editing a schedule; an unknown id or one that is not a UUID gets 404 (planner only)                                                                          |
-| `/schedules/[id]/assign`          | Assignment view: shift buttons per person and day, with the coverage; an unknown id or one that is not a UUID gets 404 (planner only)                                 |
+| `/schedules/[id]`                 | Form for editing a schedule, a message for an approved one; an unknown or non-UUID id gets 404 (planner only)                                                         |
+| `/schedules/[id]/assign`          | Assignment view: shift buttons per person and day with the coverage, read only once approved; an unknown or non-UUID id gets 404 (planner only)                       |
 | `/api/schedules`                  | `POST` creates a schedule from JSON: 201, 422 for invalid fields or unknown references (planner only)                                                                 |
-| `/api/schedules/[id]`             | `PUT` saves a whole schedule from JSON: 200, 404, 409 when it would drop assignments, 422 (planner only)                                                              |
-| `/api/schedules/[id]/assignments` | `POST` adds and `DELETE` takes off one assignment from JSON, both idempotent: 200, 404, 422 (planner only)                                                            |
+| `/api/schedules/[id]`             | `PUT` saves a whole schedule from JSON: 200, 404, 409 when it would drop assignments or the schedule is approved, 422 (planner only)                                  |
+| `/api/schedules/[id]/assignments` | `POST` adds and `DELETE` takes off one assignment from JSON, both idempotent: 200, 404, 409 when approved, 422 (planner only)                                         |
 | `/absences`                       | Absence list with each person, kind, days with their number and status, latest start first: the last 12 months by default, every absence with `?all=1` (planner only) |
 | `/absences/new`                   | Form for adding an absence: person, kind (with a hint on "Inna nieobecność"), first and last day (planner only)                                                       |
 | `/absences/[id]`                  | Form for editing an absence, with its status as read-only text and its removal; an unknown id or one that is not a UUID gets 404 (planner only)                       |
-| `/api/schedules/[id]/approve`     | `POST` JSON `{ confirmedKeys }` approves a draft: 200, 404, 409, 422, 503 (planner only)                                                                              |
+| `/api/schedules/[id]/approve`     | `POST` JSON `{ confirmedKeys, basis, assignments }` approves a draft: 200, 404, 409, 422, 503 (planner only)                                                          |
 | `/api/absences`                   | `POST` creates an absence from JSON: 201, 422 for invalid fields or an unknown employee (planner only)                                                                |
 | `/api/absences/[id]`              | `PUT` changes the kind and the days from JSON: 200, 404, 422; `DELETE` removes one, idempotent: 200 (planner only)                                                    |
 
