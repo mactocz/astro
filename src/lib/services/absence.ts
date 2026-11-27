@@ -3,7 +3,7 @@ import { employeeDayKey } from "@/lib/services/assignment";
 import { weekdayOf } from "@/lib/services/calendar";
 import { SCHEDULE_MAX_DATE, SCHEDULE_MIN_DATE, compareText, dayColumns, parseIsoDate } from "@/lib/services/schedule";
 import { MINUTES_PER_DAY } from "@/lib/services/shift";
-import type { Absence, AbsenceFieldErrors, AbsenceInput, AbsenceOption, AbsenceType } from "@/types";
+import type { Absence, AbsenceFieldErrors, AbsenceInput, AbsenceOption, AbsenceStatus, AbsenceType } from "@/types";
 
 // The absences of employees (S-07): the entry rules shared by the form and the API route, and the date helpers the live rules
 // and the weekly norm build on. Whole days only, no hours and no free text (an L4 is health data). Every date is read in UTC
@@ -42,6 +42,45 @@ export const ABSENCE_TYPES: readonly { value: AbsenceType; label: string }[] = [
 /** The Polish label of a type: "Urlop", "Zwolnienie lekarskie (L4)" or "Inna nieobecność". */
 export function absenceTypeLabel(type: AbsenceType): string {
   return TYPE_LABELS[type];
+}
+
+const STATUS_LABELS: Record<AbsenceStatus, string> = {
+  approved: "Zatwierdzona",
+  requested: "Wnioskowana",
+  rejected: "Odrzucona",
+};
+
+/** The Polish label of a status, as words (a status is never carried by a colour alone): "Zatwierdzona", "Wnioskowana" or "Odrzucona". */
+export function absenceStatusLabel(status: AbsenceStatus): string {
+  return STATUS_LABELS[status];
+}
+
+// What a status means for the rules and the grid, decided once for every status: `confirmed` (an approved absence: critical,
+// lowers the norm), `pending` (a requested one: a warning and a marker that says it is not approved, no change of the norm)
+// or `ignored` (a rejected one: nothing at all). The record is exhaustive on purpose, so a status added to `AbsenceStatus`
+// does not compile until somebody decides which of the three it is, instead of falling into the "not approved" branch.
+type AbsenceEffect = "confirmed" | "pending" | "ignored";
+const STATUS_EFFECTS: Record<AbsenceStatus, AbsenceEffect> = {
+  approved: "confirmed",
+  requested: "pending",
+  rejected: "ignored",
+};
+// The strongest first: the lower the rank the stronger the absence. An ignored absence is never ranked, as nothing keeps it.
+const EFFECT_RANKS: Record<AbsenceEffect, number> = { confirmed: 0, pending: 1, ignored: 2 };
+
+/** True for an absence the rules and the grid take into account: an approved or a requested one, not a rejected one. */
+export function isAbsenceJudged(status: AbsenceStatus): boolean {
+  return STATUS_EFFECTS[status] !== "ignored";
+}
+
+/** True for an absence that is approved: the one that is critical on a shift and lowers the weekly norm. */
+export function isAbsenceConfirmed(status: AbsenceStatus): boolean {
+  return STATUS_EFFECTS[status] === "confirmed";
+}
+
+/** How strong an absence of this status is, for ordering: 0 for an approved one, 1 for a requested one, the lower the stronger. */
+export function absenceStatusRank(status: AbsenceStatus): number {
+  return EFFECT_RANKS[STATUS_EFFECTS[status]];
 }
 
 function parseEmployeeId(value: unknown): string | undefined {
@@ -159,18 +198,38 @@ export function rangesOverlap(a: { start: number; end: number }, b: { start: num
  * ("29.12.2026–04.01.2027"). Throws a RangeError for a date that `parseIsoDate` rejects.
  */
 export function formatAbsenceRange(absence: Pick<AbsenceInput, "startDate" | "endDate">): string {
+  // Both dates are canonical once `requireDate` accepts them, so they are cut up as text.
   const start = requireDate(absence.startDate);
   const end = requireDate(absence.endDate);
-  const dayAndMonth = ({ day, month }: { day: number; month: number }) =>
-    `${String(day).padStart(2, "0")}.${String(month).padStart(2, "0")}`;
-  const withYear = (parts: { year: number; month: number; day: number }) =>
-    `${dayAndMonth(parts)}.${String(parts.year).padStart(4, "0")}`;
+  const withYear = (isoDate: string) => `${formatDayAndMonth(isoDate)}.${isoDate.slice(0, 4)}`;
   if (absence.startDate === absence.endDate) {
-    return withYear(start);
+    return withYear(absence.startDate);
   }
   return start.year === end.year
-    ? `${dayAndMonth(start)}${EN_DASH}${withYear(end)}`
-    : `${withYear(start)}${EN_DASH}${withYear(end)}`;
+    ? `${formatDayAndMonth(absence.startDate)}${EN_DASH}${withYear(absence.endDate)}`
+    : `${withYear(absence.startDate)}${EN_DASH}${withYear(absence.endDate)}`;
+}
+
+/**
+ * "02.11" for "2026-11-02": the day and the month of a canonical `YYYY-MM-DD` date, with no year (for the days of one week,
+ * which are never more than seven days apart). It cuts the text up and does not validate it.
+ */
+export function formatDayAndMonth(isoDate: string): string {
+  return `${isoDate.slice(8, 10)}.${isoDate.slice(5, 7)}`;
+}
+
+/**
+ * How many calendar days an absence lasts, both ends included: 1 for a single day, 7 for 02.11 to 08.11. Counted in UTC
+ * calendar days (`dayOffsetOf`), so a daylight saving change never moves the result. Throws a RangeError for a date that
+ * `parseIsoDate` rejects. An end before the start gives 0 or less, which a validated absence never has.
+ */
+export function absenceDayCount(absence: Pick<AbsenceInput, "startDate" | "endDate">): number {
+  return dayOffsetOf(absence.startDate, absence.endDate) + 1;
+}
+
+/** "1 dzień" for one day and "N dni" for any other number of days (the only two forms the list needs: "2 dni", "12 dni"). */
+export function formatAbsenceDays(count: number): string {
+  return count === 1 ? "1 dzień" : `${count} dni`;
 }
 
 /**
@@ -187,7 +246,7 @@ export function excusedWeekdays(
   holidays: readonly string[],
 ): string[] {
   const days = dayColumns(startDate);
-  const approved = absences.filter((absence) => absence.status === "approved");
+  const approved = absences.filter((absence) => isAbsenceConfirmed(absence.status));
   const holidayDates = new Set(holidays);
   const firstWeekday = weekdayOf(startDate);
   return days
@@ -210,7 +269,7 @@ export function excusedWeekdays(
 // names is the one the reason of a violation names. The dates are canonical `YYYY-MM-DD`, which compare like the days.
 function compareStrength(a: AbsenceOption, b: AbsenceOption): number {
   return (
-    Number(a.status !== "approved") - Number(b.status !== "approved") ||
+    absenceStatusRank(a.status) - absenceStatusRank(b.status) ||
     compareText(a.startDate, b.startDate) ||
     compareText(b.endDate, a.endDate) ||
     compareText(a.type, b.type)
@@ -231,7 +290,7 @@ export function absenceMarkers(startDate: string, absences: readonly AbsenceOpti
   const days = dayColumns(startDate);
   const strongest = new Map<string, AbsenceOption>();
   for (const absence of absences) {
-    if (absence.status === "rejected") {
+    if (!isAbsenceJudged(absence.status)) {
       continue;
     }
     for (const { offset, date } of days) {
@@ -255,8 +314,8 @@ export function absenceMarkers(startDate: string, absences: readonly AbsenceOpti
   );
 }
 
-// "urlop" for "Urlop": a label in the middle of a text. Only the first letter is lowered, so the "L4" of a sick leave stays.
-const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+/** "urlop" for "Urlop": a label in the middle of a text. Only the first letter is lowered, so the "L4" of a sick leave stays. */
+export const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
 
 /**
  * What a cell of the assignment grid says on a day of a person's absence: "Nieobecność: urlop", "Nieobecność: zwolnienie
@@ -266,7 +325,7 @@ const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text
  * no cell (`absenceMarkers` leaves it out).
  */
 export function formatAbsenceMarker({ type, status }: Pick<AbsenceOption, "type" | "status">): string {
-  return `Nieobecność: ${lowerFirst(absenceTypeLabel(type))}${status === "approved" ? "" : " (niezatwierdzona)"}`;
+  return `Nieobecność: ${lowerFirst(absenceTypeLabel(type))}${isAbsenceConfirmed(status) ? "" : " (niezatwierdzona)"}`;
 }
 
 /**
@@ -276,4 +335,19 @@ export function formatAbsenceMarker({ type, status }: Pick<AbsenceOption, "type"
  */
 export function sortAbsences<T extends { id: string; startDate: string }>(absences: readonly T[]): T[] {
   return [...absences].sort((a, b) => compareText(b.startDate, a.startDate) || compareText(a.id, b.id));
+}
+
+/**
+ * The absences of the people in `employeeIds` (the roster of a schedule), in the order they come in; those of anybody else are
+ * left out. It is the filter that `listAbsencesOverlapping` (`src/lib/absences.ts`) leaves to its caller (the database answers
+ * with the absences of everybody, and a long `in (...)` list in the address of a request is not something this project has
+ * tried), and it runs on the rows that read has already checked for completeness, so a truncated answer never gets this far.
+ * The input is only read; the rows themselves are passed through, not copied.
+ */
+export function absencesOfRoster<T extends Pick<Absence, "employeeId">>(
+  absences: readonly T[],
+  employeeIds: readonly string[],
+): T[] {
+  const roster = new Set(employeeIds);
+  return absences.filter(({ employeeId }) => roster.has(employeeId));
 }

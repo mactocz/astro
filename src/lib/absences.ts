@@ -12,8 +12,11 @@ const TABLE = "absences";
 const COLUMNS = "id, employee_id, type, status, start_date, end_date, created_at";
 // The most rows PostgREST answers with (`max_rows` in supabase/config.toml). It cuts a longer answer off without saying so,
 // so a read that reaches this many rows may be a truncated one and is refused: whoever judges the absences (the rules and
-// the norm) would otherwise judge an incomplete set.
+// the norm) would otherwise judge an incomplete set. It is the second guard of such a read: the first one asks the database
+// for the exact number of rows (`assertCompleteRead`), which holds whatever `max_rows` the hosted project has.
 const READ_LIMIT = 1000;
+/** The most absences the list page shows; one more row is read to tell whether there are more, and the page says so. */
+export const ABSENCE_LIST_LIMIT = 500;
 // The only foreign key an insert can break is the one to the employee.
 const FOREIGN_KEY_VIOLATION = "23503";
 
@@ -75,8 +78,7 @@ function writeFailure(action: string, error: PostgrestError): { ok: false; error
 
 // The rows of a list read as absences, latest start first. An answer as long as the read limit may have been cut off, so it
 // is an error and not a short list.
-function toSortedAbsences(data: unknown, action: string): Absence[] {
-  const absences = toAbsences(data);
+function toSortedAbsences(absences: Absence[], action: string): Absence[] {
   if (absences.length >= READ_LIMIT) {
     throw new Error(`Reading absences failed (${action}): the answer reached the read limit of ${READ_LIMIT} rows.`);
   }
@@ -84,44 +86,73 @@ function toSortedAbsences(data: unknown, action: string): Absence[] {
 }
 
 /**
- * Every absence the session may see, ordered by `sortAbsences`. Throws when the database fails, and when the answer is as
- * long as the read limit of 1000 rows, because it may then be cut off.
+ * Refuses an answer that is shorter than the exact number of rows the database counted for the same request, because the
+ * server cut it off (its `max_rows`, which the hosted project sets on its own) and whoever judges the absences would judge
+ * an incomplete set. `exactCount` is the `count` of a request made with `{ count: "exact" }`; it is `null` when the database
+ * gave none, and then nothing shows the answer to be complete, so that is refused too. A count below the number of rows is not
+ * a cut-off answer (rows came in between the two readings), so it is let through. Throws an `Error` that names `action`.
  */
-export async function listAbsences(supabase: SupabaseClient): Promise<Absence[]> {
-  const { data, error } = await supabase.from(TABLE).select(COLUMNS);
+export function assertCompleteRead(rowCount: number, exactCount: number | null, action: string): void {
+  if (exactCount === null) {
+    throw new Error(
+      `Reading absences failed (${action}): the database gave no exact count to check the answer against.`,
+    );
+  }
+  if (rowCount < exactCount) {
+    throw new Error(`Reading absences failed (${action}): the answer has ${rowCount} of ${exactCount} rows.`);
+  }
+}
+
+/**
+ * The newest absences the session may see (at most `limit`, the latest start first, then `id`; the database orders and cuts
+ * them) in the order of `sortAbsences`, and `truncated`, true when more exist than were returned (one row beyond the limit is
+ * read to tell). With `endingFrom` (`YYYY-MM-DD`) only the absences that end on or after that day are read: those that are
+ * over by then are left out, which is the page's default view of the last twelve months. Throws when the database fails, and
+ * a RangeError for a `limit` that is not a whole number from 1 up to below the read limit of 1000 rows, as the answer would
+ * be cut off silently beyond it.
+ */
+export async function listAbsencesPage(
+  supabase: SupabaseClient,
+  { endingFrom, limit = ABSENCE_LIST_LIMIT }: { endingFrom?: string; limit?: number } = {},
+): Promise<{ absences: Absence[]; truncated: boolean }> {
+  if (!Number.isInteger(limit) || limit < 1 || limit >= READ_LIMIT) {
+    throw new RangeError(`The limit must be a whole number from 1 to ${READ_LIMIT - 1}, got ${limit}`);
+  }
+  let query = supabase.from(TABLE).select(COLUMNS);
+  if (endingFrom !== undefined) {
+    query = query.gte("end_date", endingFrom);
+  }
+  // One row more than the limit tells whether there is anything beyond it.
+  const { data, error } = await query
+    .order("start_date", { ascending: false })
+    .order("id", { ascending: true })
+    .limit(limit + 1);
   if (error) {
     throw readFailure("list", error);
   }
-  return toSortedAbsences(data, "list");
+  const absences = toAbsences(data);
+  return { absences: sortAbsences(absences.slice(0, limit)), truncated: absences.length > limit };
 }
 
 /**
  * Every absence the session may see that shares a day with the days `from` to `to` (`YYYY-MM-DD`, both included): it starts
  * on or before `to` and ends on or after `from`. These are the absences of every employee, so the caller keeps those of
- * the people it needs. Ordered by `sortAbsences`. Throws when the database fails, and when the answer is as long as the
- * read limit of 1000 rows, because it may then be cut off.
+ * the people it needs (`absencesOfRoster`). Ordered by `sortAbsences`. Throws when the database fails, when the answer is
+ * shorter than the exact count the database gives with it (`assertCompleteRead`), and when the answer is as long as the read
+ * limit of 1000 rows, because it may then be cut off.
  */
 export async function listAbsencesOverlapping(supabase: SupabaseClient, from: string, to: string): Promise<Absence[]> {
-  const { data, error } = await supabase.from(TABLE).select(COLUMNS).lte("start_date", to).gte("end_date", from);
+  const { data, error, count } = await supabase
+    .from(TABLE)
+    .select(COLUMNS, { count: "exact" })
+    .lte("start_date", to)
+    .gte("end_date", from);
   if (error) {
     throw readFailure("overlapping", error);
   }
-  return toSortedAbsences(data, "overlapping");
-}
-
-/**
- * The absences of the people in `employeeIds` (the roster of a schedule), in the order they come in; those of anybody else are
- * left out. It is the filter that `listAbsencesOverlapping` leaves to its caller (the database answers with the absences of
- * everybody, and a long `in (...)` list in the address of a request is not something this project has tried), and it runs on
- * the rows that read has already passed the read limit with, so a truncated answer never gets this far. The input is only
- * read; the rows themselves are passed through, not copied.
- */
-export function absencesOfRoster<T extends Pick<Absence, "employeeId">>(
-  absences: readonly T[],
-  employeeIds: readonly string[],
-): T[] {
-  const roster = new Set(employeeIds);
-  return absences.filter(({ employeeId }) => roster.has(employeeId));
+  const absences = toAbsences(data);
+  assertCompleteRead(absences.length, count, "overlapping");
+  return toSortedAbsences(absences, "overlapping");
 }
 
 /** The absence, or null when there is none visible with this id (also for an id that is not a UUID). */
