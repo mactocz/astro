@@ -459,8 +459,8 @@ Planowany równolegle jest S-08 (`schedule-approval`), implementowany po scaleni
 
 #### Automated
 
-- [x] 6.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 6.2 Smoke przechodzi lokalnie: `npm run smoke`
+- [x] 6.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — b4635c8
+- [x] 6.2 Smoke przechodzi lokalnie: `npm run smoke` — b4635c8
 - [ ] 6.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
 
 #### Manual
