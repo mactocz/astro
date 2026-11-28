@@ -272,6 +272,13 @@ export function generateSchedule(input: GeneratorInput): GenerationResult {
   };
 }
 
+/** The Polish sentence after a removal of the generated assignments; `removed` is the number the database took off. */
+export function formatRemovalSummary(removed: number): string {
+  return removed === 0
+    ? "Nie było już wygenerowanych przypisań do usunięcia."
+    : `Usunięte wygenerowane przypisania: ${removed}.`;
+}
+
 /**
  * The Polish sentences that tell the planner what a generation did, one per item of the list. With additions: how many were
  * added, how many people are still missing (or that the staffing is complete) and, only when there are any, how many people

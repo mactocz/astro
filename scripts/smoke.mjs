@@ -34,7 +34,8 @@
 // schedule takes no write (database and routes), keeps its copy of shifts and people and is read only on every page,
 // that the routes of a generated proposal keep to the role gate, store it with the source generated only for a page that
 // is up to date (all of it or nothing, an entry made by hand staying manual), remove only the generated entries and refuse
-// an approved schedule, and that public registration stays closed. Zero
+// an approved schedule, what the assignment page shows of the generator (the section "Generowanie" with its two buttons
+// and the mark of a generated entry on a draft, none of it once approved), and that public registration stays closed. Zero
 // dependencies on purpose. It creates real accounts and removes its own accounts, employee, shift and schedule rows
 // with the service-role key, so it only runs against a LOCAL Supabase, and the app under test must read the same stack
 // (.env / .dev.vars), including SUPABASE_SERVICE_ROLE_KEY: the invitation route reads it from there. Values come from
@@ -6292,6 +6293,83 @@ const deniedGeneratedCalls = (actor, status, error) => [
   generatedCall(actor, "DELETE", "is refused", {}, answersRefusal(status, error)),
 ];
 
+// What the assignment page shows of the generator. A draft has the section "Generowanie" above the people's table, with no
+// table of its own, the two buttons ("Usuń wygenerowane" disabled while the grid has no generated entry) and the one
+// hidden description; a generated shift button points to that description and has an icon besides the tick, and its
+// aria-label and text are those of any other button. An approved schedule has none of it. The pressed buttons are read
+// with the helpers of the other page steps, which must go on working with the section in the page.
+const generatedEntryId = "generated-entry-description";
+const generatedNote =
+  "Ikona gwiazdek przy zmianie oznacza wpis wygenerowany. „Usuń wygenerowane” usuwa tylko takie wpisy, a ręczne zostawia.";
+const generateDays = ["pon. 02.11", "wt. 03.11", "śr. 04.11"];
+const generateButtonLabel = ([day, who]) =>
+  buttonLabel(`${generateLabel}-${who} Smoke`, generateDays[day], `${generateLabel} ${shiftHours("06:00", "14:00")}`);
+const generateButtonLabels = (entries) => entries.map(generateButtonLabel).sort();
+const generationSectionOf = (html) => {
+  const at = html.indexOf('aria-labelledby="generation-heading"');
+  return at === -1 ? undefined : html.slice(html.lastIndexOf("<section", at), html.indexOf("</section>", at));
+};
+// The pressed shift buttons of the people's table, each with whether it points to the description and its icon count.
+const pressedMarksOf = (html) =>
+  elementsOf(cutAtCoverage(html)[0], "button")
+    .map((button) => ({ button, tag: tagsOf(button, "button")[0] }))
+    .filter(({ tag }) => attributeOf(tag, "aria-pressed") === "true")
+    .map(({ button, tag }) => ({
+      label: attributeOf(tag, "aria-label"),
+      describedBy: attributeOf(tag, "aria-describedby") ?? null,
+      icons: tagsOf(button, "svg").length,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+const hasGenerationMarks = (html, pressed, generated) => {
+  const marked = new Set(generateButtonLabels(generated));
+  return (
+    JSON.stringify(pressedLabelsOf(html)) === JSON.stringify(generateButtonLabels(pressed)) &&
+    pressedMarksOf(html).every(
+      ({ label, describedBy, icons }) =>
+        describedBy === (marked.has(label) ? generatedEntryId : null) && icons === (marked.has(label) ? 2 : 1),
+    )
+  );
+};
+const showsDraftGeneration = (pressed, generated) => (html) => {
+  const section = generationSectionOf(html);
+  if (section === undefined) {
+    return false;
+  }
+  const buttons = elementsOf(section, "button");
+  return (
+    JSON.stringify(textsOf(section, "h2")) === JSON.stringify(["Generowanie"]) &&
+    html.indexOf('aria-labelledby="generation-heading"') < html.indexOf("<table") &&
+    tagsOf(section, "table").length === 0 &&
+    JSON.stringify(buttons.map((button) => [textOf(button), isDisabledElement(button, "button")])) ===
+      JSON.stringify([
+        ["Wygeneruj", false],
+        ["Usuń wygenerowane", generated.length === 0],
+      ]) &&
+    tagsOf(section, "span").some((tag) => attributeOf(tag, "id") === generatedEntryId) &&
+    textsOf(section, "span").includes("wpis wygenerowany") &&
+    textsOf(cutAtCoverage(html)[0], "p").includes(generatedNote) &&
+    hasGenerationMarks(html, pressed, generated)
+  );
+};
+const showsNoGeneration = (pressed) => (html) =>
+  generationSectionOf(html) === undefined &&
+  !html.includes(generatedEntryId) &&
+  !textsOf(html, "button").some((text) => text === "Wygeneruj" || text === "Usuń wygenerowane") &&
+  !textsOf(html, "p").includes(generatedNote) &&
+  hasGenerationMarks(html, pressed, []);
+const visitGenerationPage = (what, bodyCheck, describe) => [
+  `${planner.label}: GET the assignment page of the generation schedule ${what}`,
+  () => request(planner, `/schedules/${generateScheduleId}/assign`),
+  {
+    status: 200,
+    cacheControl: "no-store",
+    bodyCheck,
+    describe,
+    excerpt: (html) =>
+      JSON.stringify({ section: generationSectionOf(html) ?? null, pressed: pressedMarksOf(html) }, null, 1),
+  },
+];
+
 const generationRouteSteps = [
   ...["first", "second"].map((who) =>
     plannerInsertsKeepingId(
@@ -6338,6 +6416,11 @@ const generationRouteSteps = [
       describe: "the fingerprint of the data it shows",
     },
   ],
+  visitGenerationPage(
+    "with an assignment made by hand",
+    showsDraftGeneration([generateManual], []),
+    'the section "Generowanie" with "Usuń wygenerowane" disabled and no entry marked as generated',
+  ),
 
   // The shape of the request.
   plannerGenerates("with a form body", () => ({ form: { basis: "x" } }), answersRefusal(415, "unsupported_media_type")),
@@ -6395,6 +6478,11 @@ const generationRouteSteps = [
 
   plannerGenerates("stores the proposal", () => ({ json: firstProposal() }), answersCount("added", 2)),
   plannerReadsGenerateAssignments("after the proposal", manualAndProposed),
+  visitGenerationPage(
+    "with the stored proposal",
+    showsDraftGeneration([generateManual, ...generateProposed], generateProposed),
+    '"Usuń wygenerowane" enabled and exactly the two generated entries described and marked with an icon',
+  ),
   plannerGenerates(
     "sent again from the same page",
     () => ({ json: firstProposal() }),
@@ -6439,6 +6527,11 @@ const generationRouteSteps = [
   ),
   plannerRemovesGenerated("of the approved schedule", answersRefusal(409, "schedule_approved")),
   plannerReadsGenerateAssignments("of the approved schedule", manualAndProposed),
+  visitGenerationPage(
+    "once it is approved",
+    showsNoGeneration([generateManual, ...generateProposed]),
+    "no generation section, no mark and no note, with the three assignments still on",
+  ),
   signOut(planner),
 ];
 

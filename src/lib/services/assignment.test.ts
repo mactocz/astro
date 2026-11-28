@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  assignmentKey,
   employeeDayKey,
   groupByEmployeeDay,
   readGenerationRequest,
   sortAssignments,
   summarizeCoverage,
+  toAssignmentEntries,
   validateAssignmentInput,
+  withEntry,
+  withGeneratedEntries,
+  withoutGeneratedEntries,
 } from "@/lib/services/assignment";
 import { PERIOD_DAYS } from "@/lib/services/schedule";
 import { expectDeterministic, seededShuffle } from "@/lib/testing/determinism";
@@ -279,6 +284,62 @@ describe("readGenerationRequest", () => {
     ["an addition that is null", { ...body, additions: [null] }],
   ])("refuses %s", (_label, raw) => {
     expect(readGenerationRequest(raw)).toBeNull();
+  });
+});
+
+describe("the entries of the assignment grid", () => {
+  const manual = (shiftId: string, dayOffset: number, employeeId: string): Assignment => ({
+    shiftId,
+    dayOffset,
+    employeeId,
+    source: "manual",
+  });
+  const generated = (shiftId: string, dayOffset: number, employeeId: string): Assignment => ({
+    ...manual(shiftId, dayOffset, employeeId),
+    source: "generated",
+  });
+  const keyOfAnna = assignmentKey(ANNA, 0, NIGHT);
+  const loaded = [manual(NIGHT, 0, ANNA), generated(MORNING, 1, BARTEK)];
+
+  it("keeps each source and takes an entry without one as made by hand", () => {
+    const entries = toAssignmentEntries([assignment(NIGHT, 0, ANNA), generated(MORNING, 1, BARTEK)]);
+
+    expect([...entries.values()]).toStrictEqual(loaded);
+    expect(entries.get(keyOfAnna)).toStrictEqual(manual(NIGHT, 0, ANNA));
+  });
+
+  it("takes an entry off and puts it back with its source", () => {
+    const entries = toAssignmentEntries(loaded);
+    const key = assignmentKey(BARTEK, 1, MORNING);
+    const before = entries.get(key);
+
+    const without = withEntry(entries, key, undefined);
+
+    expect([...without.values()]).toStrictEqual([manual(NIGHT, 0, ANNA)]);
+    expect(withEntry(without, key, before).get(key)).toStrictEqual(generated(MORNING, 1, BARTEK));
+    expect([...entries.values()]).toStrictEqual(loaded);
+  });
+
+  it("gives the same map when it is already as asked", () => {
+    const entries = toAssignmentEntries(loaded);
+
+    expect(withEntry(entries, keyOfAnna, entries.get(keyOfAnna))).toBe(entries);
+    expect(withEntry(entries, assignmentKey(CEZARY, 0, NIGHT), undefined)).toBe(entries);
+  });
+
+  it("adds a stored proposal as generated and leaves what is there with its source", () => {
+    const entries = toAssignmentEntries(loaded);
+
+    const after = withGeneratedEntries(entries, [assignment(NIGHT, 0, ANNA), assignment(NIGHT, 0, CEZARY)]);
+
+    expect([...after.values()]).toStrictEqual([...loaded, generated(NIGHT, 0, CEZARY)]);
+    expect([...entries.values()]).toStrictEqual(loaded);
+  });
+
+  it("takes off every generated entry and nothing else", () => {
+    const entries = toAssignmentEntries([...loaded, generated(NIGHT, 0, CEZARY)]);
+
+    expect([...withoutGeneratedEntries(entries).values()]).toStrictEqual([manual(NIGHT, 0, ANNA)]);
   });
 });
 

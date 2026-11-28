@@ -1,6 +1,13 @@
 import { isUuid } from "@/lib/postgrest";
 import { PERIOD_DAYS, compareCells, compareText } from "@/lib/services/schedule";
-import type { AssignmentField, AssignmentFieldErrors, AssignmentInput, CoverageCell, StaffingCell } from "@/types";
+import type {
+  Assignment,
+  AssignmentField,
+  AssignmentFieldErrors,
+  AssignmentInput,
+  CoverageCell,
+  StaffingCell,
+} from "@/types";
 
 // One short message per field, shown next to the field and returned by the API.
 const FIELD_ERRORS = {
@@ -117,6 +124,67 @@ export function sortAssignments<T extends AssignmentInput>(list: readonly T[]): 
 /** The key of one employee on one day, the key of the object that `groupByEmployeeDay` returns. */
 export function employeeDayKey(employeeId: string, dayOffset: number): string {
   return `${employeeId}/${dayOffset}`;
+}
+
+/** The key of one assignment (employee, day and shift). */
+export function assignmentKey(employeeId: string, dayOffset: number, shiftId: string): string {
+  return `${employeeDayKey(employeeId, dayOffset)}/${shiftId}`;
+}
+
+/** An assignment as the page hands it to the grid: an approved schedule comes without `source`. */
+export type ShownAssignment = AssignmentInput & Partial<Pick<Assignment, "source">>;
+
+/** The assignments the grid holds, by `assignmentKey`, each with who put it there. */
+export type AssignmentEntries = ReadonlyMap<string, Assignment>;
+
+const keyOf = ({ employeeId, dayOffset, shiftId }: AssignmentInput): string =>
+  assignmentKey(employeeId, dayOffset, shiftId);
+
+/** The entries of what the page loaded; one without a `source` counts as made by hand. */
+export function toAssignmentEntries(list: readonly ShownAssignment[]): AssignmentEntries {
+  return new Map(
+    list.map(({ shiftId, dayOffset, employeeId, source = "manual" }): [string, Assignment] => {
+      const entry = { shiftId, dayOffset, employeeId, source };
+      return [keyOf(entry), entry];
+    }),
+  );
+}
+
+/**
+ * The entries with `entry` under `key`, or with nothing there when it is undefined; the same map when it already is as
+ * asked. Taking back a click passes the entry as it was before it, so its `source` comes back with it.
+ */
+export function withEntry(entries: AssignmentEntries, key: string, entry: Assignment | undefined): AssignmentEntries {
+  if (entries.get(key) === entry) {
+    return entries;
+  }
+  const next = new Map(entries);
+  if (entry === undefined) {
+    next.delete(key);
+  } else {
+    next.set(key, entry);
+  }
+  return next;
+}
+
+/** The entries with a stored proposal in them, as `generated`; an assignment that is there already keeps its `source`. */
+export function withGeneratedEntries(
+  entries: AssignmentEntries,
+  additions: readonly AssignmentInput[],
+): AssignmentEntries {
+  const next = new Map(entries);
+  for (const { shiftId, dayOffset, employeeId } of additions) {
+    const entry: Assignment = { shiftId, dayOffset, employeeId, source: "generated" };
+    if (!next.has(keyOf(entry))) {
+      next.set(keyOf(entry), entry);
+    }
+  }
+  return next;
+}
+
+/** The entries without the generated ones; those made by hand stay. */
+export function withoutGeneratedEntries(entries: AssignmentEntries): AssignmentEntries {
+  return new Map([...entries].filter(([, { source }]) => source !== "generated"));
 }
 
 /**

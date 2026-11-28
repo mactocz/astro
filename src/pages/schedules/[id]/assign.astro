@@ -18,9 +18,10 @@ import {
 import { getSchedule } from "@/lib/schedules";
 import { absencesOfRoster } from "@/lib/services/absence";
 import { approvalBasis, formatApprovalDay } from "@/lib/services/approval";
+import type { ShownAssignment } from "@/lib/services/assignment";
 import { PERIOD_DAYS, addDays, formatPeriod } from "@/lib/services/schedule";
 import { listShifts } from "@/lib/shifts";
-import type { AbsenceOption, AssignmentInput, EmployeeOption, ShiftOption } from "@/types";
+import type { AbsenceOption, EmployeeOption, ShiftOption } from "@/types";
 
 const { supabase } = Astro.locals;
 if (!supabase) {
@@ -34,7 +35,7 @@ const schedule = id === undefined ? null : await getSchedule(supabase, id);
 
 let shiftOptions: ShiftOption[] = [];
 let employeeOptions: EmployeeOption[] = [];
-let assignments: AssignmentInput[] = [];
+let assignments: ShownAssignment[] = [];
 let absenceOptions: AbsenceOption[] = [];
 // Set for an approved schedule: who approved it and when, and what the island shows instead of counting.
 let banner: string | null = null;
@@ -72,8 +73,9 @@ if (schedule?.status === "approved") {
   // The read answers with the absences of everybody, so the page keeps those of the people of this schedule, and the island
   // gets only the five fields it needs (an L4 is health data): no id, no creation time, nothing about an account.
   absenceOptions = toAbsenceOptions(absencesOfRoster(overlapping, schedule.employeeIds));
-  // The island gets plain data. `source` stays on the server: the page does not show it, and every entry made here is manual.
-  assignments = stored.map(({ shiftId, dayOffset, employeeId }) => ({ shiftId, dayOffset, employeeId }));
+  // The island gets plain data, `source` included: the grid marks the entries the generator has proposed (S-09) and can
+  // take them all off.
+  assignments = stored;
   basis = await approvalBasis({ schedule, shifts: shiftOptions, employees: employeeOptions, absences: absenceOptions });
 } else {
   // The project has no 404 page, so a missing schedule gets its own message with this status.

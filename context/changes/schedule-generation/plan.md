@@ -262,25 +262,25 @@ Brak migracji. Starsza wersja aplikacji ignoruje `source`.
 
 #### Automated
 
-- [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 2.2 Smoke z krokami tras przechodzi: `npm run smoke`
+- [x] 2.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 268ddbe
+- [x] 2.2 Smoke z krokami tras przechodzi: `npm run smoke` — 268ddbe
 
 #### Manual
 
-- [x] 2.3 Kolejność sprawdzeń w trasie i kody odpowiedzi zostały przejrzane i zatwierdzone przez autora
+- [x] 2.3 Kolejność sprawdzeń w trasie i kody odpowiedzi zostały przejrzane i zatwierdzone przez autora — 268ddbe
 
 ### Phase 3: Interfejs i dokumentacja
 
 #### Automated
 
-- [ ] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [ ] 3.2 Smoke przechodzi: `npm run smoke`
+- [x] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
+- [x] 3.2 Smoke przechodzi: `npm run smoke`
 - [ ] 3.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
 
 #### Manual
 
-- [ ] 3.4 W przeglądarce: generowanie na pustym i częściowo obsadzonym grafiku, oznaczenia, podsumowanie, ponowne generowanie, usunięcie wygenerowanych, nieaktualna karta, klawiatura i czytnik
-- [ ] 3.5 Na telefonie (lub emulacji) sekcja i oznaczenia są czytelne
+- [x] 3.4 W przeglądarce: generowanie na pustym i częściowo obsadzonym grafiku, oznaczenia, podsumowanie, ponowne generowanie, usunięcie wygenerowanych, nieaktualna karta, klawiatura i czytnik
+- [x] 3.5 Na telefonie (lub emulacji) sekcja i oznaczenia są czytelne
 
 ### Phase 4: Wdrożenie
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { sortAssignments, summarizeCoverage } from "@/lib/services/assignment";
-import { formatGenerationSummary, generateSchedule, type GeneratorInput } from "@/lib/services/generator";
+import {
+  formatGenerationSummary,
+  formatRemovalSummary,
+  generateSchedule,
+  type GeneratorInput,
+} from "@/lib/services/generator";
 import { anchorKey, evaluateSchedule } from "@/lib/services/rules";
 import { shiftInterval, type ShiftTimes } from "@/lib/services/work-hours";
 import { expectDeterministic, seededShuffle } from "@/lib/testing/determinism";
@@ -562,5 +567,15 @@ describe("formatGenerationSummary", () => {
       "Osoby z dodanymi zmianami ponad normę tygodniową: 1.",
       "Przypisania mimo niezatwierdzonego wniosku o nieobecność: 1.",
     ]);
+  });
+});
+
+describe("formatRemovalSummary", () => {
+  it("counts what was removed", () => {
+    expect(formatRemovalSummary(3)).toBe("Usunięte wygenerowane przypisania: 3.");
+  });
+
+  it("says that there was nothing left to remove", () => {
+    expect(formatRemovalSummary(0)).toBe("Nie było już wygenerowanych przypisań do usunięcia.");
   });
 });
