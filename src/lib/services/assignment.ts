@@ -1,6 +1,13 @@
 import { isUuid } from "@/lib/postgrest";
 import { PERIOD_DAYS, compareCells, compareText } from "@/lib/services/schedule";
-import type { AssignmentField, AssignmentFieldErrors, AssignmentInput, CoverageCell, StaffingCell } from "@/types";
+import type {
+  Assignment,
+  AssignmentField,
+  AssignmentFieldErrors,
+  AssignmentInput,
+  CoverageCell,
+  StaffingCell,
+} from "@/types";
 
 // One short message per field, shown next to the field and returned by the API.
 const FIELD_ERRORS = {
@@ -65,6 +72,47 @@ export function validateAssignmentInput(
   return { ok: true, value: { shiftId: shiftId.value, dayOffset: dayOffset.value, employeeId: employeeId.value } };
 }
 
+/** What the page sends to store a proposal (S-09): what it has on the screen and the assignments to add. */
+export interface GenerationRequest {
+  basis: string;
+  assignments: AssignmentInput[];
+  additions: AssignmentInput[];
+}
+
+// Every item validated and normalised, or null when the value is not a list of assignments.
+function readAssignmentList(value: unknown): AssignmentInput[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const read: AssignmentInput[] = [];
+  for (const item of value) {
+    const result = validateAssignmentInput(item);
+    if (!result.ok) {
+      return null;
+    }
+    read.push(result.value);
+  }
+  return read;
+}
+
+/**
+ * The body of a request that stores a proposal, `{ basis, assignments, additions }`, or null when it is not one: `basis`
+ * is a string, both lists hold only valid assignments and `additions` is not empty. Other keys are left out. It only
+ * checks the shape: whether the page is up to date and the cells exist is decided against the database.
+ */
+export function readGenerationRequest(body: unknown): GenerationRequest | null {
+  if (typeof body !== "object" || body === null) {
+    return null;
+  }
+  const { basis, assignments, additions } = body as Record<string, unknown>;
+  const shown = readAssignmentList(assignments);
+  const added = readAssignmentList(additions);
+  if (typeof basis !== "string" || shown === null || added === null || added.length === 0) {
+    return null;
+  }
+  return { basis, assignments: shown, additions: added };
+}
+
 /**
  * A new list ordered by shift id, then day, then employee id. The result does not depend on the order of `list`, which is
  * left unchanged. Works on any item with these keys, so on a full assignment as well as on an input.
@@ -76,6 +124,67 @@ export function sortAssignments<T extends AssignmentInput>(list: readonly T[]): 
 /** The key of one employee on one day, the key of the object that `groupByEmployeeDay` returns. */
 export function employeeDayKey(employeeId: string, dayOffset: number): string {
   return `${employeeId}/${dayOffset}`;
+}
+
+/** The key of one assignment (employee, day and shift). */
+export function assignmentKey(employeeId: string, dayOffset: number, shiftId: string): string {
+  return `${employeeDayKey(employeeId, dayOffset)}/${shiftId}`;
+}
+
+/** An assignment as the page hands it to the grid: an approved schedule comes without `source`. */
+export type ShownAssignment = AssignmentInput & Partial<Pick<Assignment, "source">>;
+
+/** The assignments the grid holds, by `assignmentKey`, each with who put it there. */
+export type AssignmentEntries = ReadonlyMap<string, Assignment>;
+
+const keyOf = ({ employeeId, dayOffset, shiftId }: AssignmentInput): string =>
+  assignmentKey(employeeId, dayOffset, shiftId);
+
+/** The entries of what the page loaded; one without a `source` counts as made by hand. */
+export function toAssignmentEntries(list: readonly ShownAssignment[]): AssignmentEntries {
+  return new Map(
+    list.map(({ shiftId, dayOffset, employeeId, source = "manual" }): [string, Assignment] => {
+      const entry = { shiftId, dayOffset, employeeId, source };
+      return [keyOf(entry), entry];
+    }),
+  );
+}
+
+/**
+ * The entries with `entry` under `key`, or with nothing there when it is undefined; the same map when it already is as
+ * asked. Taking back a click passes the entry as it was before it, so its `source` comes back with it.
+ */
+export function withEntry(entries: AssignmentEntries, key: string, entry: Assignment | undefined): AssignmentEntries {
+  if (entries.get(key) === entry) {
+    return entries;
+  }
+  const next = new Map(entries);
+  if (entry === undefined) {
+    next.delete(key);
+  } else {
+    next.set(key, entry);
+  }
+  return next;
+}
+
+/** The entries with a stored proposal in them, as `generated`; an assignment that is there already keeps its `source`. */
+export function withGeneratedEntries(
+  entries: AssignmentEntries,
+  additions: readonly AssignmentInput[],
+): AssignmentEntries {
+  const next = new Map(entries);
+  for (const { shiftId, dayOffset, employeeId } of additions) {
+    const entry: Assignment = { shiftId, dayOffset, employeeId, source: "generated" };
+    if (!next.has(keyOf(entry))) {
+      next.set(keyOf(entry), entry);
+    }
+  }
+  return next;
+}
+
+/** The entries without the generated ones; those made by hand stay. */
+export function withoutGeneratedEntries(entries: AssignmentEntries): AssignmentEntries {
+  return new Map([...entries].filter(([, { source }]) => source !== "generated"));
 }
 
 /**

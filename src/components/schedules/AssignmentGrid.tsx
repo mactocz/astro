@@ -1,22 +1,23 @@
-import { CalendarOff, Check, OctagonAlert, TriangleAlert } from "lucide-react";
+import { CalendarOff, Check, OctagonAlert, Sparkles, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { ServerError } from "@/components/auth/ServerError";
 import { useApproval } from "@/components/hooks/useApproval";
-import { assignmentKey, useAssignments } from "@/components/hooks/useAssignments";
+import { useAssignments } from "@/components/hooks/useAssignments";
+import { useGeneration } from "@/components/hooks/useGeneration";
 import { useViolations } from "@/components/hooks/useViolations";
 import { useWorkload, type WorkloadText } from "@/components/hooks/useWorkload";
 import { ApprovalSection } from "@/components/schedules/ApprovalSection";
+import { GENERATED_ENTRY_ID, GenerationSection } from "@/components/schedules/GenerationSection";
 import { ViolationList } from "@/components/schedules/ViolationList";
 import { unavailableShift } from "@/lib/schedule-options";
 import { absenceMarkers, formatAbsenceMarker } from "@/lib/services/absence";
-import { employeeDayKey } from "@/lib/services/assignment";
+import { assignmentKey, employeeDayKey, type ShownAssignment } from "@/lib/services/assignment";
 import { summarizeViolations } from "@/lib/services/rules";
 import { PERIOD_DAYS, dayColumns } from "@/lib/services/schedule";
 import { formatCellMarker, formatViolationCounts } from "@/lib/services/violation-view";
 import { cn } from "@/lib/utils";
 import type {
   AbsenceOption,
-  AssignmentInput,
   CoverageCell,
   EmployeeOption,
   Schedule,
@@ -31,8 +32,8 @@ interface Props {
   shifts: ShiftOption[];
   /** Every employee, in the order to list them; the grid shows the ones that are in the schedule. */
   employees: EmployeeOption[];
-  /** What the page loaded: the assignments of the schedule. */
-  assignments: AssignmentInput[];
+  /** What the page loaded: the assignments of the schedule, with `source` for a draft (S-09). */
+  assignments: ShownAssignment[];
   /** What the page loaded: the absences of the people of the schedule that touch it, with only what the grid needs. */
   absences: AbsenceOption[];
   /**
@@ -40,7 +41,7 @@ interface Props {
    * approval instead of counting them. `shifts` and `employees` are then the copies of the approval.
    */
   approved?: { violations: Violation[]; hours: Record<string, WorkloadText> };
-  /** The fingerprint of the data of a draft as the page loaded it, which an approval sends back. */
+  /** The fingerprint of the data of a draft as the page loaded it, which an approval and a generation send back. */
   basis: string;
 }
 
@@ -57,6 +58,11 @@ const shiftButtonIdleClass = "border-white/20 bg-white/5 text-blue-100/80 hover:
 // What the paragraph under the people's table says about the column "Godziny", always. The same words are in the smoke test.
 const HOURS_NOTE =
   "Godziny: suma zmian rozpoczętych w tym grafiku względem normy tygodniowej etatu (40 h pomniejszone o 8 h za każde święto w dzień inny niż niedziela i za każdy dzień zatwierdzonej nieobecności od poniedziałku do piątku, proporcjonalnie do etatu). Przekroczenie normy pokazuje lista wskazań.";
+
+// What the paragraph under the people's table of a draft says about the mark of a generated entry. The same words are in
+// the smoke test.
+const GENERATED_NOTE =
+  "Ikona gwiazdek przy zmianie oznacza wpis wygenerowany. „Usuń wygenerowane” usuwa tylko takie wpisy, a ręczne zostawia.";
 
 // Added under the note on an approved schedule: the norms are frozen, and the absences behind them are not shown.
 const APPROVED_HOURS_NOTE =
@@ -185,11 +191,20 @@ function PersonHours({ hours }: { hours: WorkloadText | undefined }) {
 export default function AssignmentGrid({ schedule, shifts, employees, assignments, absences, approved, basis }: Props) {
   const readOnly = approved !== undefined;
   const approval = useApproval(schedule.id);
-  const { list, byEmployeeDay, coverage, busy, error, toggle } = useAssignments({
+  const { list, byEmployeeDay, coverage, generatedKeys, busy, error, toggle, addGenerated, removeGenerated } =
+    useAssignments({
+      scheduleId: schedule.id,
+      staffing: schedule.staffing,
+      initial: assignments,
+    });
+  const generation = useGeneration({
     scheduleId: schedule.id,
-    staffing: schedule.staffing,
-    initial: assignments,
+    basis,
+    onAdded: addGenerated,
+    onRemoved: removeGenerated,
   });
+  // While the schedule is being approved, or a proposal stored or removed, nothing changes under it.
+  const locked = approval.pending || generation.pending;
   // The rules read the optimistic list of the hook, so they follow every click, a click that is taken back included. They get
   // the shifts of the dictionary only, never the placeholder of `shiftLayout`, which has no hours. The absences are what the
   // page loaded: nothing in the grid changes them.
@@ -215,6 +230,26 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
     [coverage],
   );
 
+  // An open confirmation of the approval closes, so it does not come back after the request and take the focus. The
+  // generator gets what the rules get: the shifts of the dictionary only.
+  function generate() {
+    approval.cancel();
+    void generation.generate({
+      startDate: schedule.startDate,
+      staffing: schedule.staffing,
+      assignments: list,
+      shifts,
+      employees,
+      absences,
+      employeeIds: schedule.employeeIds,
+    });
+  }
+
+  function removeProposal() {
+    approval.cancel();
+    void generation.remove();
+  }
+
   return (
     <div>
       {readOnly ? null : (
@@ -222,6 +257,19 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
           Kliknij zmianę, żeby przypisać do niej pracownika w danym dniu. Kliknij ją ponownie, żeby zdjąć przypisanie.
           Każda zmiana zapisuje się od razu.
         </p>
+      )}
+
+      {/* Above the people's table and outside the sections of the findings and the coverage, which are read on their own. */}
+      {readOnly ? null : (
+        <GenerationSection
+          generation={generation}
+          generatedCount={generatedKeys.size}
+          onGenerate={generate}
+          onRemove={removeProposal}
+          failed={violations.failed}
+          saving={busy.size > 0}
+          approving={approval.pending}
+        />
       )}
 
       <ServerError message={error} />
@@ -273,7 +321,9 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                         <div className="flex flex-col gap-1">
                           {dayShifts.map((shift) => {
                             const pressed = pressedShiftIds?.includes(shift.id) ?? false;
-                            const inFlight = busy.has(assignmentKey(employee.id, column.offset, shift.id));
+                            const key = assignmentKey(employee.id, column.offset, shift.id);
+                            const inFlight = busy.has(key);
+                            const generated = !readOnly && generatedKeys.has(key);
                             return (
                               <button
                                 key={shift.id}
@@ -281,17 +331,20 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                                 disabled={readOnly}
                                 aria-pressed={pressed}
                                 aria-label={`${employee.name}, ${column.label}, ${shiftTitle(shift)}`}
+                                // The name stays as it is; that the entry is generated is its description.
+                                aria-describedby={generated ? GENERATED_ENTRY_ID : undefined}
                                 // Not `disabled` while the request is in flight: the button would drop the keyboard focus. A
                                 // click in the meantime is ignored by the hook.
                                 aria-busy={inFlight ? true : undefined}
-                                // While the approval is on its way nothing changes under it; an open confirmation closes,
-                                // so it does not come back after the save and take the focus.
-                                aria-disabled={approval.pending ? true : undefined}
+                                // While an approval or a generation is on its way nothing changes under it; an open
+                                // confirmation closes, so it does not come back after the save and take the focus.
+                                aria-disabled={locked ? true : undefined}
                                 onClick={() => {
-                                  if (approval.pending) {
+                                  if (locked) {
                                     return;
                                   }
                                   approval.cancel();
+                                  generation.cancel();
                                   void toggle(employee.id, column.offset, shift.id);
                                 }}
                                 className={cn(
@@ -305,6 +358,9 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
                                   {pressed ? <Check className="size-3" /> : null}
                                 </span>
                                 <span className="min-w-0 break-words">{shiftTitle(shift)}</span>
+                                {generated ? (
+                                  <Sparkles aria-hidden="true" className="mt-px ml-auto size-3 shrink-0" />
+                                ) : null}
                               </button>
                             );
                           })}
@@ -328,7 +384,14 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
       </div>
 
       <p className="mt-2 text-xs text-blue-100/50">{HOURS_NOTE}</p>
-      {readOnly ? <p className="mt-1 text-xs text-blue-100/50">{APPROVED_HOURS_NOTE}</p> : null}
+      {readOnly ? (
+        <p className="mt-1 text-xs text-blue-100/50">{APPROVED_HOURS_NOTE}</p>
+      ) : (
+        <p className="mt-1 text-xs text-blue-100/50">
+          <Sparkles aria-hidden="true" className="mr-1 inline size-3" />
+          {GENERATED_NOTE}
+        </p>
+      )}
 
       <ViolationList violations={violations.violations} counts={violations.counts} failed={violations.failed} />
 
@@ -393,7 +456,8 @@ export default function AssignmentGrid({ schedule, shifts, employees, assignment
           assignments={list}
           violations={violations.violations}
           failed={violations.failed}
-          saving={busy.size > 0}
+          // A proposal that is being stored or removed is assignments being saved.
+          saving={busy.size > 0 || generation.pending}
         />
       )}
     </div>

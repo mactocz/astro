@@ -202,6 +202,7 @@ describe("decideAccess default deny", () => {
     "/schedules/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90/assign",
     "/api/schedules/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90/assignments",
     "/api/schedules/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90/approve",
+    "/api/schedules/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90/generated",
     "/absences",
     "/absences/new",
     "/absences/0b5e2d6e-7c1a-4f8e-9a53-2d1f6c3b8e90",

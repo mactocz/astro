@@ -29,8 +29,15 @@ interface AssignmentRow {
 }
 
 type WriteResult<Failure extends string> = { ok: true } | { ok: false; error: Failure };
-export type AddAssignmentResult = WriteResult<"unknown_reference" | "schedule_approved" | "failed">;
+type AddFailure = "unknown_reference" | "schedule_approved" | "failed";
+export type AddAssignmentResult = WriteResult<AddFailure>;
 export type RemoveAssignmentResult = WriteResult<"schedule_approved" | "failed">;
+export type AddGeneratedResult = { ok: true; added: number } | { ok: false; error: AddFailure };
+export type RemoveGeneratedResult =
+  { ok: true; removed: number } | { ok: false; error: "schedule_approved" | "failed" };
+
+// The source of an entry the generator has proposed (S-09).
+const GENERATED: AssignmentSource = "generated";
 
 function toAssignments(data: unknown): Assignment[] {
   return (data as AssignmentRow[]).map((row) => ({
@@ -49,6 +56,26 @@ function readFailure(action: string, error: PostgrestError): Error {
 function writeFailure(action: string, error: PostgrestError): { ok: false; error: "failed" } {
   logDatabaseError("assignments", action, error);
   return { ok: false, error: "failed" };
+}
+
+// Why the database refused an insert.
+async function insertFailure(
+  supabase: SupabaseClient,
+  scheduleId: string,
+  action: string,
+  error: PostgrestError,
+): Promise<{ ok: false; error: AddFailure }> {
+  if (error.code === FOREIGN_KEY_VIOLATION) {
+    return { ok: false, error: "unknown_reference" };
+  }
+  if (error.code === PERMISSION_DENIED && (await isScheduleApproved(supabase, scheduleId))) {
+    return { ok: false, error: "schedule_approved" };
+  }
+  return writeFailure(action, error);
+}
+
+function toRow(scheduleId: string, { shiftId, dayOffset, employeeId }: AssignmentInput) {
+  return { schedule_id: scheduleId, shift_id: shiftId, day_offset: dayOffset, employee_id: employeeId };
 }
 
 /**
@@ -106,25 +133,59 @@ export async function addAssignment(
 ): Promise<AddAssignmentResult> {
   // ignoreDuplicates makes PostgREST write INSERT ... ON CONFLICT DO NOTHING, which needs no update privilege (the planner
   // has none on this table).
-  const { error } = await supabase.from(TABLE).upsert(
-    {
-      schedule_id: scheduleId,
-      shift_id: input.shiftId,
-      day_offset: input.dayOffset,
-      employee_id: input.employeeId,
-    },
-    { onConflict: KEY_COLUMNS, ignoreDuplicates: true },
-  );
+  const { error } = await supabase
+    .from(TABLE)
+    .upsert(toRow(scheduleId, input), { onConflict: KEY_COLUMNS, ignoreDuplicates: true });
   if (error) {
-    if (error.code === FOREIGN_KEY_VIOLATION) {
-      return { ok: false, error: "unknown_reference" };
-    }
-    if (error.code === PERMISSION_DENIED && (await isScheduleApproved(supabase, scheduleId))) {
-      return { ok: false, error: "schedule_approved" };
-    }
-    return writeFailure("add", error);
+    return insertFailure(supabase, scheduleId, "add", error);
   }
   return { ok: true };
+}
+
+/**
+ * Adds the proposed assignments (the input is already validated and normalised) with the source `generated`, in one
+ * statement, so either all of them are stored or none. What is already there, a manual entry too, is left as it is.
+ * `added` is the number of new entries, counted by the database without reading the rows back, so `max_rows` does not cap
+ * it. `unknown_reference` and `schedule_approved` as for `addAssignment`.
+ */
+export async function addGeneratedAssignments(
+  supabase: SupabaseClient,
+  scheduleId: string,
+  list: readonly AssignmentInput[],
+): Promise<AddGeneratedResult> {
+  const { error, count } = await supabase.from(TABLE).upsert(
+    list.map((input) => ({ ...toRow(scheduleId, input), source: GENERATED })),
+    { onConflict: KEY_COLUMNS, ignoreDuplicates: true, count: "exact" },
+  );
+  if (error) {
+    return insertFailure(supabase, scheduleId, "add generated", error);
+  }
+  return { ok: true, added: count ?? 0 };
+}
+
+/**
+ * Takes every assignment with the source `generated` off the schedule, in one statement; the manual ones stay. `removed`
+ * is the number of entries, counted by the database. Removing when there is none is not an error; `schedule_approved`
+ * when the schedule is approved and so locked.
+ */
+export async function removeGeneratedAssignments(
+  supabase: SupabaseClient,
+  scheduleId: string,
+): Promise<RemoveGeneratedResult> {
+  const { error, count } = await supabase
+    .from(TABLE)
+    .delete({ count: "exact" })
+    .eq("schedule_id", scheduleId)
+    .eq("source", GENERATED);
+  if (error) {
+    return writeFailure("remove generated", error);
+  }
+  const removed = count ?? 0;
+  // As in `removeAssignment`: a delete the policy of an approved schedule turned into a no-op raises no error.
+  if (removed === 0 && (await isScheduleApproved(supabase, scheduleId))) {
+    return { ok: false, error: "schedule_approved" };
+  }
+  return { ok: true, removed };
 }
 
 /**

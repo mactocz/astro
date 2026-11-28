@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  assignmentKey,
   employeeDayKey,
   groupByEmployeeDay,
+  readGenerationRequest,
   sortAssignments,
   summarizeCoverage,
+  toAssignmentEntries,
   validateAssignmentInput,
+  withEntry,
+  withGeneratedEntries,
+  withoutGeneratedEntries,
 } from "@/lib/services/assignment";
 import { PERIOD_DAYS } from "@/lib/services/schedule";
 import { expectDeterministic, seededShuffle } from "@/lib/testing/determinism";
@@ -236,6 +242,104 @@ describe("validateAssignmentInput repeatability", () => {
     validateAssignmentInput(input);
 
     expect(input).toStrictEqual(before);
+  });
+});
+
+describe("readGenerationRequest", () => {
+  const body = { basis: "abc", assignments: [validInput], additions: [assignment(MORNING, 0, BARTEK)] };
+
+  it("reads the fingerprint, the assignments of the page and the ones to add", () => {
+    expect(readGenerationRequest(body)).toStrictEqual(body);
+  });
+
+  it("accepts a page with no assignments", () => {
+    expect(readGenerationRequest({ ...body, assignments: [] })).toStrictEqual({ ...body, assignments: [] });
+  });
+
+  it("normalises every item and leaves out other keys", () => {
+    const raw = {
+      ...body,
+      assignments: [{ ...validInput, shiftId: NIGHT.toUpperCase(), source: "manual" }],
+      additions: [{ ...assignment(MORNING, 0, BARTEK.toUpperCase()), source: "manual" }],
+      confirmedKeys: ["x"],
+    };
+
+    expect(readGenerationRequest(raw)).toStrictEqual(body);
+  });
+
+  it.each<[string, unknown]>([
+    ["nothing", undefined],
+    ["null", null],
+    ["a string", "body"],
+    ["a list", [body]],
+    ["a body without a fingerprint", { ...body, basis: undefined }],
+    ["a fingerprint that is not text", { ...body, basis: 1 }],
+    ["a body without the assignments of the page", { ...body, assignments: undefined }],
+    ["assignments that are not a list", { ...body, assignments: validInput }],
+    ["an assignment of the page that is not valid", { ...body, assignments: [{ ...validInput, dayOffset: 7 }] }],
+    ["a body without additions", { ...body, additions: undefined }],
+    ["additions that are not a list", { ...body, additions: validInput }],
+    ["an empty list of additions", { ...body, additions: [] }],
+    ["one invalid addition among valid ones", { ...body, additions: [validInput, { ...validInput, shiftId: "x" }] }],
+    ["an addition that is null", { ...body, additions: [null] }],
+  ])("refuses %s", (_label, raw) => {
+    expect(readGenerationRequest(raw)).toBeNull();
+  });
+});
+
+describe("the entries of the assignment grid", () => {
+  const manual = (shiftId: string, dayOffset: number, employeeId: string): Assignment => ({
+    shiftId,
+    dayOffset,
+    employeeId,
+    source: "manual",
+  });
+  const generated = (shiftId: string, dayOffset: number, employeeId: string): Assignment => ({
+    ...manual(shiftId, dayOffset, employeeId),
+    source: "generated",
+  });
+  const keyOfAnna = assignmentKey(ANNA, 0, NIGHT);
+  const loaded = [manual(NIGHT, 0, ANNA), generated(MORNING, 1, BARTEK)];
+
+  it("keeps each source and takes an entry without one as made by hand", () => {
+    const entries = toAssignmentEntries([assignment(NIGHT, 0, ANNA), generated(MORNING, 1, BARTEK)]);
+
+    expect([...entries.values()]).toStrictEqual(loaded);
+    expect(entries.get(keyOfAnna)).toStrictEqual(manual(NIGHT, 0, ANNA));
+  });
+
+  it("takes an entry off and puts it back with its source", () => {
+    const entries = toAssignmentEntries(loaded);
+    const key = assignmentKey(BARTEK, 1, MORNING);
+    const before = entries.get(key);
+
+    const without = withEntry(entries, key, undefined);
+
+    expect([...without.values()]).toStrictEqual([manual(NIGHT, 0, ANNA)]);
+    expect(withEntry(without, key, before).get(key)).toStrictEqual(generated(MORNING, 1, BARTEK));
+    expect([...entries.values()]).toStrictEqual(loaded);
+  });
+
+  it("gives the same map when it is already as asked", () => {
+    const entries = toAssignmentEntries(loaded);
+
+    expect(withEntry(entries, keyOfAnna, entries.get(keyOfAnna))).toBe(entries);
+    expect(withEntry(entries, assignmentKey(CEZARY, 0, NIGHT), undefined)).toBe(entries);
+  });
+
+  it("adds a stored proposal as generated and leaves what is there with its source", () => {
+    const entries = toAssignmentEntries(loaded);
+
+    const after = withGeneratedEntries(entries, [assignment(NIGHT, 0, ANNA), assignment(NIGHT, 0, CEZARY)]);
+
+    expect([...after.values()]).toStrictEqual([...loaded, generated(NIGHT, 0, CEZARY)]);
+    expect([...entries.values()]).toStrictEqual(loaded);
+  });
+
+  it("takes off every generated entry and nothing else", () => {
+    const entries = toAssignmentEntries([...loaded, generated(NIGHT, 0, CEZARY)]);
+
+    expect([...withoutGeneratedEntries(entries).values()]).toStrictEqual([manual(NIGHT, 0, ANNA)]);
   });
 });
 

@@ -1,26 +1,18 @@
 import type { APIRoute } from "astro";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { listAbsencesOverlapping } from "@/lib/absences";
 import { approveSchedule } from "@/lib/approvals";
-import { listAssignments } from "@/lib/assignments";
-import { listEmployees } from "@/lib/employees";
 import { jsonResponse, readJsonBody } from "@/lib/json-response";
 import { isUuid } from "@/lib/postgrest";
-import { toAbsenceOptions, toEmployeeOptions } from "@/lib/schedule-options";
 import { getSchedule } from "@/lib/schedules";
-import { absencesOfRoster } from "@/lib/services/absence";
 import {
-  approvalBasis,
   buildApprovalPayload,
   decideApproval,
   readApprovalRequest,
-  sameAssignments,
   type ApprovalRequest,
 } from "@/lib/services/approval";
 import { safeEvaluate } from "@/lib/services/safe-evaluate";
-import { PERIOD_DAYS, addDays } from "@/lib/services/schedule";
 import { summarizeWorkload } from "@/lib/services/workload";
-import { listShifts } from "@/lib/shifts";
+import { readShownSchedule } from "@/lib/shown-schedule";
 import type { Schedule } from "@/types";
 
 export const prerender = false;
@@ -30,21 +22,11 @@ export const prerender = false;
 // page has on the screen, which must still be what the database holds.
 async function approve(supabase: SupabaseClient, schedule: Schedule, request: ApprovalRequest): Promise<Response> {
   // The same reads as the assignment page, so that the findings and their texts are the ones the planner saw.
-  const [shifts, employees, assignments, overlapping] = await Promise.all([
-    listShifts(supabase),
-    listEmployees(supabase),
-    listAssignments(supabase, schedule.id),
-    listAbsencesOverlapping(supabase, schedule.startDate, addDays(schedule.startDate, PERIOD_DAYS)),
-  ]);
-  const roster = new Set(schedule.employeeIds);
-  const people = toEmployeeOptions(employees).filter((employee) => roster.has(employee.id));
-  const absences = toAbsenceOptions(absencesOfRoster(overlapping, schedule.employeeIds));
-
-  // A page opened before a change, or one that lost the answer to a click, shows something else than the database holds.
-  const basis = await approvalBasis({ schedule, shifts, employees: people, absences });
-  if (basis !== request.basis || !sameAssignments(assignments, request.assignments)) {
+  const data = await readShownSchedule(supabase, schedule, request);
+  if (data === null) {
     return jsonResponse(409, { error: "schedule_changed" });
   }
+  const { shifts, employees: people, assignments, absences } = data;
 
   const { startDate, staffing } = schedule;
   const evaluation = safeEvaluate({ startDate, staffing, assignments, shifts, employees: people, absences });
