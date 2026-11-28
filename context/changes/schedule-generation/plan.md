@@ -273,14 +273,14 @@ Brak migracji. Starsza wersja aplikacji ignoruje `source`.
 
 #### Automated
 
-- [x] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build`
-- [x] 3.2 Smoke przechodzi: `npm run smoke`
-- [ ] 3.3 CI na pull requeście jest zielone (job `ci` i job `smoke`)
+- [x] 3.1 Bramka przechodzi: `npx astro sync && npm run lint && npx astro check && npm test && npm run build` — 1d648a1
+- [x] 3.2 Smoke przechodzi: `npm run smoke` — 1d648a1
+- [x] 3.3 CI na pull requeście jest zielone (job `ci` i job `smoke`) — 1d648a1
 
 #### Manual
 
-- [x] 3.4 W przeglądarce: generowanie na pustym i częściowo obsadzonym grafiku, oznaczenia, podsumowanie, ponowne generowanie, usunięcie wygenerowanych, nieaktualna karta, klawiatura i czytnik
-- [x] 3.5 Na telefonie (lub emulacji) sekcja i oznaczenia są czytelne
+- [x] 3.4 W przeglądarce: generowanie na pustym i częściowo obsadzonym grafiku, oznaczenia, podsumowanie, ponowne generowanie, usunięcie wygenerowanych, nieaktualna karta, klawiatura i czytnik — 1d648a1
+- [x] 3.5 Na telefonie (lub emulacji) sekcja i oznaczenia są czytelne — 1d648a1
 
 ### Phase 4: Wdrożenie
 
